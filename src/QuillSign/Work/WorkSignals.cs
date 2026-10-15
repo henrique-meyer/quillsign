@@ -104,5 +104,10 @@ public sealed class AzureWorkSignals(QueueClient queue, BlobContainerClient hint
         await EnsureLocalAsync(cancellationToken);
         await queue.GetPropertiesAsync(cancellationToken);
         await hints.GetPropertiesAsync(cancellationToken: cancellationToken);
+        // An explicit operator probe exercises the complete wakeup path. There is
+        // deliberately no SQL work row or email: the worker removes this orphan hint.
+        var probe = Guid.NewGuid();
+        await PutHintAsync(probe, DateTimeOffset.UtcNow, cancellationToken);
+        await PublishAsync(probe, TimeSpan.Zero, cancellationToken);
     }
 }

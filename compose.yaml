@@ -43,7 +43,7 @@ services:
       target: development
     profiles: [workers]
     environment: *app-environment
-    command: [dotnet, QuillSign.dll, work, listen]
+    command: [work, listen]
     restart: unless-stopped
     networks: [services]
     depends_on:

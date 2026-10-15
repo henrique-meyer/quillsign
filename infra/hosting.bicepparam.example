@@ -21,3 +21,5 @@ param customDomainName = ''
 param managedCertificateName = ''
 param enableManagedCertificate = false
 param databaseConnectionSecretUri = ''
+param applicationEnvironment = []
+param provisionManagedCertificate = true

@@ -95,7 +95,7 @@ pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce
 pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action ListenWork
 ```
 
-`RecoverWork` runs storage-only wakeup recovery; `VerifyWork` checks storage, database access, and payload protection. The helper supplies local Compose settings without printing credentials. `ListenWork` is Development-only and polls the emulator queue, never idle SQL. The optional Compose `workers` profile runs the same listener when an application SQL connection is configured. Hosted jobs use `dotnet QuillSign.dll work once` and `work recover`; work is disabled by default outside configured environments. Sender verification still follows in its own story.
+`RecoverWork` runs storage-only wakeup recovery; `VerifyWork` checks storage, database access, and payload protection, then queues a synthetic wakeup with no email. Run `WorkOnce` to consume it locally. The helper supplies local Compose settings without printing credentials. `ListenWork` is Development-only and polls the emulator queue, never idle SQL. The optional Compose `workers` profile runs the same listener when an application SQL connection is configured. Hosted jobs use `dotnet QuillSign.dll work once` and `work recover`; work is disabled by default outside configured environments. Sender verification still follows in its own story.
 
 ### Document storage and application keys
 

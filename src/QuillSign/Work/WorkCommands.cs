@@ -35,7 +35,6 @@ public static class WorkCommands
             if (args[0] == "recover") count = await signals.RecoverAsync(DateTimeOffset.UtcNow, timeout.Token);
             else if (args[0] == "verify")
             {
-                await signals.VerifyAsync(timeout.Token);
                 await using var scope = app.Services.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<QuillSignDbContext>();
                 if ((await db.Database.GetPendingMigrationsAsync(timeout.Token)).Any()) throw new InvalidOperationException("Apply migrations before verifying work.");
@@ -51,6 +50,7 @@ public static class WorkCommands
                 }
                 var protection = scope.ServiceProvider.GetRequiredService<IDataProtectionProvider>().CreateProtector("QuillSign.Work.RuntimeProbe");
                 if (protection.Unprotect(protection.Protect("synthetic-probe")) != "synthetic-probe") throw new InvalidOperationException("Key-ring verification failed.");
+                await signals.VerifyAsync(timeout.Token);
             }
             else
             {

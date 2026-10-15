@@ -74,6 +74,7 @@ jobs:
           ./scripts/dev/Use-LocalDatabase.ps1 -Action RecoverWork
           ./scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce
           ./scripts/dev/Use-LocalDatabase.ps1 -Action VerifyWork
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce
       - name: Service diagnostics
         if: failure()
         run: |
