@@ -10,6 +10,7 @@ param runtimeIdentityName = ''
 param deploymentIdentityName = ''
 param workspaceName = ''
 param insightsName = ''
+param failureAlertName = ''
 param budgetName = ''
 param budgetStartDate = ''
 param alertEmails = []

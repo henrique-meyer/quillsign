@@ -10,6 +10,7 @@ param runtimeIdentityName string
 param deploymentIdentityName string
 param workspaceName string
 param insightsName string
+param failureAlertName string
 param budgetName string
 param budgetStartDate string
 param alertEmails array = []
@@ -193,6 +194,14 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
     WorkspaceResourceId: workspace.id
     SamplingPercentage: 10
     DisableLocalAuth: true
+  }
+}
+
+module isolatedFailureAlert './modules/smart-detection.bicep' = {
+  name: 'isolated-failure-alert'
+  params: {
+    alertRuleName: failureAlertName
+    insightsResourceId: insights.id
   }
 }
 
