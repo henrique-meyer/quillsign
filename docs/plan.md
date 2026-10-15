@@ -43,3 +43,13 @@ Status: In Progress. Owner selected portal budget tracking without email notific
 Provision new resources in the dedicated group: a Container Apps environment using only the Consumption profile without a custom VNet, private Blob storage and lifecycle rules, RBAC Key Vault, runtime and deployment managed identities, scoped role assignments, GitHub production OIDC, capped monitoring, and a resource-group budget. Deploy a real .NET 10 Razor Pages bootstrap using the existing brand assets and a public GHCR image. Return exact DNS records through ignored deployment output. Preserve free SQL settings and keep health checks independent of SQL. Do not enable signing or uploads during this foundation step.
 
 Validate Bicep, deployment scope and settings, build/image CI, the running app revision and distinctive health JSON, and the bootstrap browser page. Scan secrets, merge the PR, and close Jira. Converter/database networking and AI remain separately approved work; AWS SES gets its own story after sender configuration is supplied. Any owner DNS or package-visibility step must be recorded precisely.
+
+## QUILS-5: Provision isolated SES email identity and send-only credentials
+
+Status: Implemented and deployed; Jira closes when this PR merges. Domain verification is pending owner DNS. Sending remains disabled until the feedback handler and sandbox exit are ready.
+
+Create a new domain identity with Easy DKIM and custom MAIL FROM, a configuration set with tracking disabled and suppression enabled, an SNS feedback destination, and a dedicated send-only IAM user scoped to the sender and identity. Tag supported resources into the project's AWS group. Store credentials only in the project's Key Vault and return actual DNS records privately. No email sends or production-access submission in this step; the HTTPS feedback subscription awaits its signature-validating application handler.
+
+Validate CloudFormation, native SES/IAM/group state and credential storage, scan for secrets, merge the PR, then close Jira. DNS verification and SES sandbox exit are explicit launch gates.
+
+Validation: CloudFormation reached CREATE_COMPLETE. Native reads verified the dedicated identity, DKIM and MAIL FROM configuration, disabled sending, suppression, excluded tracking, SNS destination, and supported-resource group membership. IAM simulation allowed the configured sender and denied another address; the user has no managed policies or group memberships. Credential values were verified in the project vault, and the temporary secrets-writing grant was removed. No email was sent. Account limits remain 200/day and one/second in the sandbox.
