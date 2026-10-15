@@ -2,9 +2,11 @@
 
 This subscription-scoped Bicep deployment creates one dedicated application resource group and a new SQL logical server/database inside it. It does not reference resources from other groups.
 
-The database uses the Azure SQL free offer: General Purpose serverless, 0.5 minimum and 2 maximum vCores, 32 GiB maximum data storage, locally redundant backups, seven-day point-in-time retention, and idle auto-pause after 15 minutes. `useFreeLimit` is fixed to `true` and `freeLimitExhaustionBehavior` to `AutoPause`. The database becomes unavailable until next month if its allowance is exhausted; the template cannot opt into paid overages.
+The database uses the Azure SQL free offer: General Purpose serverless, 0.5 minimum and 2 maximum vCores, 32 GiB maximum data storage, locally redundant backups, seven-day point-in-time retention, and idle auto-pause after 60 minutes. The free offer requires that default idle delay even where ordinary serverless databases allow a shorter delay. `useFreeLimit` is fixed to `true` and `freeLimitExhaustionBehavior` to `AutoPause`. The database becomes unavailable until next month if its allowance is exhausted; the template cannot opt into paid overages.
 
 Administration uses Microsoft Entra-only authentication and TLS 1.2 or newer. Public network access starts disabled and no firewall rules are created. Application connectivity is subsequent approved work. The administrator values on the server are creation-time settings; changing an existing administrator requires the dedicated administrator API rather than relying on a server redeployment.
+
+New Azure SQL databases use service-managed transparent data encryption by default. Verify that it is enabled after deployment; the template avoids a redundant encryption update during database initialization.
 
 ## Local configuration
 
@@ -30,7 +32,7 @@ The preview is for verification; cloud changes require explicit approval before 
 
 ## Verification
 
-Read the deployed database and verify `useFreeLimit: true`, exhaustion behavior `AutoPause`, 32 GiB maximum size, minimum capacity 0.5, maximum capacity 2, local backup redundancy, and auto-pause delay 15. Also check Entra-only administration, disabled public networking, no firewall rules, enabled transparent encryption, and seven-day backup retention.
+Read the deployed database and verify `useFreeLimit: true`, exhaustion behavior `AutoPause`, 32 GiB maximum size, minimum capacity 0.5, maximum capacity 2, local backup redundancy, and auto-pause delay 60. Also check Entra-only administration, disabled public networking, no firewall rules, enabled transparent encryption, and seven-day backup retention.
 
 Keep actual deployment results and cloud identifiers in ignored local notes. Before committing or pushing, scan tracked files and Git history with Gitleaks. Pull-request CI compiles Bicep and scans for secrets without cloud credentials. Application build, tests, and Docker checks will be added when the application exists.
 

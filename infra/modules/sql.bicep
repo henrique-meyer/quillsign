@@ -57,7 +57,8 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
     maxSizeBytes: 34359738368
     // ARM represents this fractional vCore value as a JSON number.
     minCapacity: json('0.5')
-    autoPauseDelay: 15
+    // The free offer requires the default 60-minute idle delay.
+    autoPauseDelay: 60
     requestedBackupStorageRedundancy: 'Local'
     zoneRedundant: false
     readScale: 'Disabled'
@@ -73,10 +74,6 @@ resource retention 'Microsoft.Sql/servers/databases/backupShortTermRetentionPoli
   }
 }
 
-resource encryption 'Microsoft.Sql/servers/databases/transparentDataEncryption@2023-08-01' = {
-  parent: database
-  name: 'current'
-  properties: {
-    state: 'Enabled'
-  }
-}
+// Azure enables service-managed TDE for every new database.
+// Verify the effective encryption state after deployment instead of issuing
+// a redundant encryption update while database provisioning is settling.
