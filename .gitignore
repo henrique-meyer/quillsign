@@ -426,3 +426,22 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# Local planning and agent notes (not published)
+/AGENTS.md
+/requirements.md
+/infrastructure.md
+/PLAN*.md
+
+# Local secrets and config
+.env
+.env.*
+!.env.example
+appsettings.Development.json
+appsettings.Local.json
+*.pfx
+*.p12
+*.key
+*.pem
+infra/*.bicepparam
+.data/
