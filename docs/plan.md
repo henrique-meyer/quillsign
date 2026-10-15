@@ -102,9 +102,11 @@ Validation: Local Compose configuration, Python syntax, initializer preservation
 
 ## QUILS-9: Add EF Core SQL Server persistence and initial migrations
 
-Status: To Do. Depends on QUILS-8.
+Status: Implementation complete. Depends on completed QUILS-8.
 
 Implement the requirements' envelope, signer, recipient, field, auth-token, audit-event, outbox/work, and suppression records with EF Core 10 and SQL Server migrations. Represent relationships, case-insensitive party email uniqueness, unique token hashes and audit sequences, normalized field bounds, concurrency controls, append-only hash-chain support, and lease/retry metadata. Apply migrations to a fresh local database and document the separate migration command; do not auto-run privileged production migrations on web startup. Test meaningful constraints against SQL Server. Keep connection strings private and health checks independent of SQL.
+
+Validation: All 21 tests passed against a freshly migrated local SQL Server database, covering constraints, ownership, concurrency, and canonical audit hashes. The migration also applied to the local development database, the model matches its migration, and the dependency vulnerability scan is clean. CI repeats migration/model and SQL integration checks. Runtime permissions remain QUILS-10; durable claims/dispatch remain QUILS-14.
 
 ## QUILS-10: Connect the hosted app to Azure SQL with scoped permissions
 

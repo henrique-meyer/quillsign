@@ -6,6 +6,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_HTTP_PORTS: "8080"
+      ConnectionStrings__Database: ${ConnectionStrings__Database:-}
     ports:
       - "127.0.0.1:${QUILLSIGN_APP_PORT:-5080}:8080"
     networks: [services, conversion]
