@@ -123,7 +123,7 @@ resource dispatch 'Microsoft.App/jobs@2025-07-01' = if (deployJobs) {
             name: 'work-queue'
             type: 'azure-queue'
             identity: worker.id
-            metadata: { accountName: storageAccountName, queueName: queueName, queueLength: '1', queueLengthStrategy: 'visible' }
+            metadata: { accountName: storageAccountName, queueName: queueName, queueLength: '1', queueLengthStrategy: 'visibleonly' }
           }]
         }
       }

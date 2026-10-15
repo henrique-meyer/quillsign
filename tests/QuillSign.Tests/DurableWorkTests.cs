@@ -258,6 +258,26 @@ public sealed class DurableWorkTests(SqlDatabaseFixture fixture) : IClassFixture
     }
 
     [Fact]
+    public async Task Temporary_key_ring_failure_retries_without_activating_a_token_or_sending()
+    {
+        await using var run = new Harness(fixture);
+        var id = await run.EnqueueAsync();
+        run.PayloadUnavailable = true;
+        await run.OnceAsync();
+        await using (var db = fixture.Open())
+        {
+            Assert.Equal(WorkStatus.Queued, (await db.WorkItems.SingleAsync(x => x.Id == id)).Status);
+            Assert.False(await db.AuthTokens.AnyAsync(x => x.EnvelopeId == run.EnvelopeId));
+        }
+        Assert.Equal(0, run.Sender.Calls);
+        run.PayloadUnavailable = false;
+        run.Clock.Advance(TimeSpan.FromSeconds(16));
+        await run.Signals.PublishAsync(id, TimeSpan.Zero, default);
+        await run.OnceAsync();
+        Assert.Equal(1, run.Sender.Calls);
+    }
+
+    [Fact]
     public async Task Retry_exhaustion_is_terminal_and_empty_queue_does_not_connect_to_sql()
     {
         await using var run = new Harness(fixture, maximumAttempts: 1);
@@ -304,6 +324,7 @@ public sealed class DurableWorkTests(SqlDatabaseFixture fixture) : IClassFixture
         public FakeSender Sender { get; } = new();
         public FaultSignals Signals { get; }
         public ConnectionCounter Connections { get; } = new();
+        public bool PayloadUnavailable { get; set; }
         public Guid EnvelopeId { get; } = Guid.NewGuid();
         public string Recipient { get; } = "synthetic-" + Guid.NewGuid().ToString("N") + "@example.invalid";
 
@@ -340,6 +361,9 @@ public sealed class DurableWorkTests(SqlDatabaseFixture fixture) : IClassFixture
             builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment);
             builder.Services.AddSingleton<TimeProvider>(Clock);
             builder.Services.AddSingleton<IWorkSignals>(Signals);
+            builder.Services.AddScoped(sp => new EmailPayloadProtection(PayloadUnavailable
+                ? new UnavailableProtection(sp.GetRequiredService<IDataProtectionProvider>())
+                : sp.GetRequiredService<IDataProtectionProvider>()));
             if (!realSmtp) builder.Services.AddScoped<IEmailSender>(_ => Sender);
             App = builder.Build();
         }
@@ -395,6 +419,16 @@ public sealed class DurableWorkTests(SqlDatabaseFixture fixture) : IClassFixture
         public int Opens { get; private set; }
         public override ValueTask<InterceptionResult> ConnectionOpeningAsync(DbConnection connection, ConnectionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
         { Opens++; return base.ConnectionOpeningAsync(connection, eventData, result, cancellationToken); }
+    }
+    private sealed class UnavailableProtection(IDataProtectionProvider inner) : IDataProtectionProvider
+    {
+        public IDataProtector CreateProtector(string purpose) => new UnavailableProtector(inner.CreateProtector(purpose));
+        private sealed class UnavailableProtector(IDataProtector innerProtector) : IDataProtector
+        {
+            public IDataProtector CreateProtector(string purpose) => new UnavailableProtector(innerProtector.CreateProtector(purpose));
+            public byte[] Protect(byte[] plaintext) => innerProtector.Protect(plaintext);
+            public byte[] Unprotect(byte[] protectedData) => throw new System.Security.Cryptography.CryptographicException("Synthetic key-ring outage.");
+        }
     }
     private sealed class FaultSignals(IWorkSignals inner) : IWorkSignals
     {

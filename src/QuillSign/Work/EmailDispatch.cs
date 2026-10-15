@@ -70,7 +70,9 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
             payload = protection.Unprotect(email.PayloadJson);
             outgoing = (await template.RenderAsync(email.To, payload.Token, cancellationToken)) with { EnvelopeId = email.EnvelopeId };
         }
-        catch (Exception e) when (e is CryptographicException or JsonException or ArgumentException or InvalidOperationException)
+        catch (CryptographicException)
+        { return new(WorkOutcome.Retry, "payload-unavailable"); }
+        catch (Exception e) when (e is JsonException or ArgumentException or InvalidOperationException)
         { return new(WorkOutcome.Failed, "invalid-payload"); }
         if (email.EnvelopeId is null || payload.TokenId == Guid.Empty) return new(WorkOutcome.Failed, "invalid-token-scope");
         if (await db.Suppressions.AnyAsync(x => x.Email == email.To, cancellationToken)) return new(WorkOutcome.Failed, "recipient-suppressed");
