@@ -1,0 +1,9 @@
+[
+  {"ParameterKey":"IdentityDomain","ParameterValue":""},
+  {"ParameterKey":"SenderAddress","ParameterValue":""},
+  {"ParameterKey":"MailFromDomain","ParameterValue":""},
+  {"ParameterKey":"ConfigurationSetName","ParameterValue":""},
+  {"ParameterKey":"FeedbackTopicName","ParameterValue":""},
+  {"ParameterKey":"SenderUserName","ParameterValue":""},
+  {"ParameterKey":"ProjectTagValue","ParameterValue":""}
+]

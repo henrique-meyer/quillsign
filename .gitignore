@@ -446,4 +446,5 @@ appsettings.Local.json
 infra/*.bicepparam
 infra/*.json
 infra/aws/deployment.local.ps1
+infra/aws/*.local.json
 .data/

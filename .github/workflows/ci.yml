@@ -62,4 +62,4 @@ jobs:
       - name: Validate CloudFormation
         run: |
           python -m pip install cfn-lint==1.57.2
-          cfn-lint infra/aws/resource-group.cfn.yaml
+          cfn-lint infra/aws/*.cfn.yaml

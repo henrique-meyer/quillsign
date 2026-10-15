@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Dedicated SES identity, feedback destination, and send-only IAM user.
+Parameters:
+  IdentityDomain:
+    Type: String
+  SenderAddress:
+    Type: String
+  MailFromDomain:
+    Type: String
+  ConfigurationSetName:
+    Type: String
+  FeedbackTopicName:
+    Type: String
+  SenderUserName:
+    Type: String
+  ProjectTagValue:
+    Type: String
+Resources:
+  ConfigurationSet:
+    Type: AWS::SES::ConfigurationSet
+    Properties:
+      Name: !Ref ConfigurationSetName
+      ReputationOptions:
+        ReputationMetricsEnabled: true
+      SendingOptions:
+        SendingEnabled: false
+      SuppressionOptions:
+        SuppressedReasons: [BOUNCE, COMPLAINT]
+      VdmOptions:
+        DashboardOptions:
+          EngagementMetrics: DISABLED
+        GuardianOptions:
+          OptimizedSharedDelivery: DISABLED
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+  Identity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref IdentityDomain
+      DkimAttributes:
+        SigningEnabled: true
+      DkimSigningAttributes:
+        NextSigningKeyLength: RSA_2048_BIT
+      ConfigurationSetAttributes:
+        ConfigurationSetName: !Ref ConfigurationSet
+      MailFromAttributes:
+        MailFromDomain: !Ref MailFromDomain
+        BehaviorOnMxFailure: REJECT_MESSAGE
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+  FeedbackTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Ref FeedbackTopicName
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+  FeedbackPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref FeedbackTopic]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref FeedbackTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${ConfigurationSet}
+  FeedbackDestination:
+    Type: AWS::SES::ConfigurationSetEventDestination
+    DependsOn: FeedbackPolicy
+    Properties:
+      ConfigurationSetName: !Ref ConfigurationSet
+      EventDestination:
+        Name: feedback
+        Enabled: true
+        MatchingEventTypes: [send, delivery, bounce, complaint, reject, renderingFailure, deliveryDelay]
+        SnsDestination:
+          TopicARN: !Ref FeedbackTopic
+  SenderUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Ref SenderUserName
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+      Policies:
+        - PolicyName: send-only
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ses:SendEmail, ses:SendRawEmail]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${IdentityDomain}
+                  - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${ConfigurationSet}
+                Condition:
+                  StringEquals:
+                    ses:FromAddress: !Ref SenderAddress
+Outputs:
+  DkimName1:
+    Value: !GetAtt Identity.DkimDNSTokenName1
+  DkimValue1:
+    Value: !GetAtt Identity.DkimDNSTokenValue1
+  DkimName2:
+    Value: !GetAtt Identity.DkimDNSTokenName2
+  DkimValue2:
+    Value: !GetAtt Identity.DkimDNSTokenValue2
+  DkimName3:
+    Value: !GetAtt Identity.DkimDNSTokenName3
+  DkimValue3:
+    Value: !GetAtt Identity.DkimDNSTokenValue3
+  FeedbackTopicArn:
+    Value: !Ref FeedbackTopic
