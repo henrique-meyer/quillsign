@@ -8,7 +8,7 @@ Run commands from the repository root. Keep deployment names, identifiers, domai
 
 Copy `infra/main.bicepparam.example` to the ignored `infra/main.bicepparam` and fill in the required values. Set `AZURE_RESOURCE_GROUP` to the same group name. Choose a supported SQL region; it may differ from the resource group's location.
 
-The template uses the Azure SQL free offer and pauses the database if its monthly allowance is exhausted rather than charging for overflow. After operator approval, set `allowAzureServices = true` in ignored parameters to enable the public endpoint and Azure-services firewall rule. That rule allows connection attempts from other Azure subscriptions too; database authentication still applies. See Microsoft's [firewall documentation](https://learn.microsoft.com/en-us/azure/azure-sql/database/firewall-configure).
+The template uses the Azure SQL free offer and pauses the database if its monthly allowance is exhausted rather than charging for overflow.
 
 ```powershell
 az bicep build --file infra/main.bicep --stdout > $null
@@ -18,22 +18,18 @@ az deployment sub create --location $deploymentLocation --template-file infra/ma
 
 Set `$deploymentLocation` to the deployment region before running these commands. See Microsoft's [free-offer documentation](https://learn.microsoft.com/en-us/azure/azure-sql/database/free-offer) for eligibility and allowances.
 
-For a network-only change to an existing database, deploy `infra/modules/sql.bicep` with `deployDatabase = false`, using ignored parameters matching the existing server and administrator. This leaves the database and backup resources untouched.
-
 ### Database bootstrap and migrations
 
-Build the app, then run the following as the configured SQL Entra administrator. Supply the variables through ignored local configuration; the identities are the existing application runtime and GitHub deployment managed identities.
+Build the app, then run the one-time bootstrap as the configured database administrator. Supply the variables through ignored local deployment configuration.
 
 ```powershell
 dotnet build src/QuillSign/QuillSign.csproj -c Release
 ./scripts/cloud/Use-SqlAdministrator.ps1 -ResourceGroup $env:AZURE_RESOURCE_GROUP -ServerName $sqlServer -DatabaseName $sqlDatabase -RuntimeClientId $runtimeClientId -MigrationClientId $migrationClientId
 ```
 
-The helper temporarily allows the operator's exact public IP, provisions contained identities, applies the initial migration, grants runtime permissions, and removes its firewall rule afterward. The contained service-principal SIDs use client IDs, following Microsoft's [CREATE USER guidance](https://learn.microsoft.com/en-us/sql/t-sql/statements/create-user-transact-sql#k-create-a-contained-database-user-from-a-microsoft-entra-principal-without-validation); no directory-wide Graph access is needed. Future deployments run migrations through the separate deployment identity. If a migration adds application tables, rerun the helper with `-Operations grant-runtime` to grant deliberate access to them.
+The helper prepares the database and applies its initial migration. Future deployments apply migrations through the GitHub workflow.
 
-Store the managed-identity SQL connection string in the project's Key Vault, and set `databaseConnectionSecretUri` in ignored web/hosting parameters to that secret's URI. The app reads it through `ConnectionStrings__Database` and its runtime identity. Keep TLS certificate validation enabled. Connection strings never belong in source or images.
-
-An operator can invoke `dotnet QuillSign.dll database verify-runtime` inside the deployed container to check read/write and denied permissions. Verification rolls back its synthetic records. Migrations and permission verification run only when explicitly invoked; web startup and `/health` never query SQL.
+Set `databaseConnectionSecretUri` in ignored web/hosting parameters to the configured connection secret. The app reads it through `ConnectionStrings__Database`. Web startup and `/health` never query SQL.
 
 For private CLI error details, set `Database:DiagnosticFile` to an ignored local file. Console output omits connection endpoints and credentials.
 
@@ -79,7 +75,7 @@ aws cloudformation deploy --region $awsRegion --stack-name $awsSesStackName --te
 
 Review and execute the approved change set. Add the DNS records supplied by SES: three DKIM CNAMEs, a MAIL FROM MX record with priority 10, and a MAIL FROM SPF TXT record. Verify domain, DKIM, and MAIL FROM status in SES.
 
-Create the send-only user's access key outside CloudFormation and store it in Key Vault. `infra/bootstrap-secrets.bicep` can grant temporary access for this transfer; remove the grant afterward. Configure the application through secrets and environment variables, including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`.
+Configure the application's AWS credentials through runtime secrets and environment variables, including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`.
 
 Email delivery is not enabled yet. Before enabling it, implement SNS bounce/complaint handling and suppression, connect the feedback subscription, and obtain SES production access. See the [SES sandbox documentation](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html).
 

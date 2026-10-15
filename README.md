@@ -56,7 +56,7 @@ The initializer generates local SQL and Azurite credentials in ignored `.env` co
 | SMTP capture | `localhost:1025` | `mailpit:1025` |
 | Gotenberg | Through the app container only | `gotenberg:3000` |
 
-The app still serves the bootstrap page. Persistence and storage are exercised through integration tests; sender, upload, conversion, and email workflows follow in their own stories. The converter uses an isolated local network. Office uploads remain unavailable in the app.
+The app still serves the bootstrap page. Persistence and storage are exercised through integration tests; sender, upload, conversion, and email workflows follow in their own stories. Office uploads remain unavailable in the app.
 
 Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
 
@@ -73,7 +73,7 @@ pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action Test
 
 The helper reads local SQL/Azurite settings through Compose and supplies credentials only to the child process. Migrate applies the committed migrations to `QuillSignDev`; Test creates and removes an isolated database and exercises SQL constraints, concurrency, private document streaming, and protected session persistence. SQL administrator credentials are for local development only.
 
-For application database features, set `ConnectionStrings__Database` through environment variables or ignored `appsettings.Development.json`, using `appsettings.example.json` as a template. Container connections use the `sql` service hostname; host CLI connections use the published SQL port. Starting the app never applies migrations or connects to SQL, and `/health` stays database independent. Hosted connectivity and runtime/migration permissions are tracked separately.
+For application database features, set `ConnectionStrings__Database` through environment variables or ignored `appsettings.Development.json`, using `appsettings.example.json` as a template. Container connections use the `sql` service hostname; host CLI connections use the published SQL port. Starting the app never applies migrations or connects to SQL, and `/health` stays database independent.
 
 Restore the pinned EF CLI with `dotnet tool restore`. Generate migrations using `dotnet ef migrations add <Name> --project src/QuillSign/QuillSign.csproj`; CI rejects model changes without a matching migration. Audit events use a documented canonical hash format and reject tracked edits/deletes; database permission enforcement and privileged retention are separate work.
 
