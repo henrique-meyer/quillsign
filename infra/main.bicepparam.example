@@ -1,0 +1,11 @@
+using './main.bicep'
+
+// Copy to main.bicepparam (ignored) and fill every empty field locally.
+param resourceGroupName = ''
+param location = ''
+param sqlLocation = ''
+param sqlServerName = ''
+param sqlDatabaseName = ''
+param sqlAdministratorObjectId = ''
+param sqlAdministratorName = ''
+param sqlAdministratorType = 'User'
