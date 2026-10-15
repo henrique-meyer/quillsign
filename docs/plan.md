@@ -4,7 +4,7 @@ Tasks are recorded here and in Jira before implementation. Private deployment na
 
 ## QUILS-3: Create QuillSign SVG logos and matching PNG exports
 
-Status: Implemented, including the coral-red product accent; Jira closes when this PR merges.
+Status: Done. Branding PRs merged and Jira story closed, including the coral-red product accent.
 
 Create QuillSign branding inspired by the existing DocPilot assets, with a distinct signing motif and product accent. Keep the navy tile and cream document; use a coral-red feather with a darker red facet so QuillSign is visibly distinct from DocPilot's gold. Deliver `assets/logo.svg` as the app icon, `assets/logo-mark.svg` as a transparent header mark, and matching `assets/logo.png` and `assets/logo-mark.png` exports. This story covers asset creation and raster exports; application integration is separate work.
 
@@ -28,10 +28,29 @@ Other app, storage, vault, logging, email, AI, DNS, and converter resources requ
 
 ## QUILS-2: Create the dedicated AWS resource group
 
-Status: Implemented and deployed; Jira closes when this PR merges. CloudFormation lint, Bicep compilation, and secret-scan CI checks passed.
+Status: Done. Infrastructure PR merged and Jira story closed. CloudFormation lint, Bicep compilation, and secret-scan CI checks passed.
 
 Create a new tag-based AWS Resource Group in the project's SES region using the owner-supplied name from ignored configuration. Tag project-owned resources consistently, use dedicated names and permissions, and document which resource types the group supports. Group membership organizes resources; IAM permissions provide security isolation.
 
 Deliver a reusable infrastructure definition, local parameter example, and verification of the group/query. Keep real resource names and account identifiers out of git. Do not repurpose unrelated AWS resources. Email identities, IAM credentials, and event destinations are subsequent approved work. Scan, commit, push, merge the PR, then move the story to Done.
 
 Validation: AWS CLI authentication and CloudFormation template validation succeeded. The new stack reached `CREATE_COMPLETE`. Native Resource Groups reads verified the requested name, the `TAG_FILTERS_1_0` query, the unique project filter, the group's own project tag, and zero unrelated members. Actual names, account identifiers, ARNs, and deployment output remain in ignored local files.
+
+## QUILS-4: Provision the demo hosting, storage, security, and deployment foundation
+
+Status: Done. Hosting foundation deployed and verified; the merged PR completes the Jira story. Owner selected portal budget tracking without email notifications.
+
+Provision new resources in the dedicated group: a Container Apps environment using only the Consumption profile without a custom VNet, private Blob storage and lifecycle rules, RBAC Key Vault, runtime and deployment managed identities, scoped role assignments, GitHub production OIDC, capped monitoring, and a resource-group budget. Deploy a real .NET 10 Razor Pages bootstrap using the existing brand assets and a public GHCR image. Return exact DNS records through ignored deployment output. Preserve free SQL settings and keep health checks independent of SQL. Do not enable signing or uploads during this foundation step.
+
+Validate Bicep, deployment scope and settings, build/image CI, the running app revision and distinctive health JSON, and the bootstrap browser page. Scan secrets, merge the PR, and close Jira. Converter/database networking and AI remain separately approved work; AWS SES gets its own story after sender configuration is supplied. Any owner DNS or package-visibility step must be recorded precisely.
+
+Validation: The environment has no infrastructure resource group or custom VNet. Native reads verified private containers, disabled shared keys, scoped runtime and deployment permissions, RBAC/purge-protected Key Vault, capped monitoring, and the portal budget. Anonymous GHCR pull, the 0.5 CPU/1 GiB web app with 0..2 replicas, Running/Healthy revision, distinctive health JSON, browser page and assets, custom DNS, managed certificate, and HTTPS at the custom domain all passed. The GitHub production environment and four stable OIDC secrets are configured. Local build/publish, Bicep/Azure validation, deployment-script syntax, Docker CI, CloudFormation lint, and secret scanning passed. Signing, uploads, converter/database networking, background wakeups, and AI are subsequent work.
+## QUILS-5: Provision isolated SES email identity and send-only credentials
+
+Status: Done. Infrastructure PR merged and Jira story closed. All five owner-added DNS records resolve correctly, and SES verified DKIM and custom MAIL FROM. Sending remains disabled until the feedback handler and sandbox exit are ready.
+
+Create a new domain identity with Easy DKIM and custom MAIL FROM, a configuration set with tracking disabled and suppression enabled, an SNS feedback destination, and a dedicated send-only IAM user scoped to the sender and identity. Tag supported resources into the project's AWS group. Store credentials only in the project's Key Vault and return actual DNS records privately. No email sends or production-access submission in this step; the HTTPS feedback subscription awaits its signature-validating application handler.
+
+Validate CloudFormation, native SES/IAM/group state and credential storage, scan for secrets, merge the PR, then close Jira. DNS verification and SES sandbox exit are explicit launch gates.
+
+Validation: CloudFormation reached CREATE_COMPLETE. Native reads verified the dedicated identity, DKIM and MAIL FROM configuration, disabled sending, suppression, excluded tracking, SNS destination, and supported-resource group membership. IAM simulation allowed the configured sender and denied another address; the user has no managed policies or group memberships. Credential values were verified in the project vault, and the temporary secrets-writing grant was removed. No email was sent. Account limits remain 200/day and one/second in the sandbox.
