@@ -46,9 +46,10 @@ Validate Bicep, deployment scope and settings, build/image CI, the running app r
 
 ## QUILS-5: Provision isolated SES email identity and send-only credentials
 
-Status: In Progress while Azure hosting provisions. Account metadata confirms SES sandbox restrictions.
+Status: Implemented and deployed; Jira closes when this PR merges. Domain verification is pending owner DNS. Sending remains disabled until the feedback handler and sandbox exit are ready.
 
 Create a new domain identity with Easy DKIM and custom MAIL FROM, a configuration set with tracking disabled and suppression enabled, an SNS feedback destination, and a dedicated send-only IAM user scoped to the sender and identity. Tag supported resources into the project's AWS group. Store credentials only in the project's Key Vault and return actual DNS records privately. No email sends or production-access submission in this step; the HTTPS feedback subscription awaits its signature-validating application handler.
 
 Validate CloudFormation, native SES/IAM/group state and credential storage, scan for secrets, merge the PR, then close Jira. DNS verification and SES sandbox exit are explicit launch gates.
 
+Validation: CloudFormation reached CREATE_COMPLETE. Native reads verified the dedicated identity, DKIM and MAIL FROM configuration, disabled sending, suppression, excluded tracking, SNS destination, and supported-resource group membership. IAM simulation allowed the configured sender and denied another address; the user has no managed policies or group memberships. Credential values were verified in the project vault, and the temporary secrets-writing grant was removed. No email was sent. Account limits remain 200/day and one/second in the sandbox.
