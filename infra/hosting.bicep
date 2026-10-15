@@ -14,7 +14,7 @@ param failureAlertName string
 param budgetName string
 param budgetStartDate string
 param alertEmails array = []
-param githubRepository string
+param githubFederationSubject string
 param image string = ''
 param deployWeb bool = false
 param dataProtectionKeyName string
@@ -36,13 +36,11 @@ resource deployment 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31
   tags: tags
 }
 
-resource federation 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
-  parent: deployment
+module federation './modules/github-federation.bicep' = {
   name: 'github-production'
-  properties: {
-    issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:${githubRepository}:environment:production'
-    audiences: [ 'api://AzureADTokenExchange' ]
+  params: {
+    deploymentIdentityName: deployment.name
+    federationSubject: githubFederationSubject
   }
 }
 
