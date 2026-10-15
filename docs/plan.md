@@ -57,7 +57,7 @@ Validation: CloudFormation reached CREATE_COMPLETE. Native reads verified the de
 
 ## QUILS-6: Refresh README with current project status and setup
 
-Status: Documentation complete; PR validation and merge pending.
+Status: Documentation complete.
 
 Refresh the public README with the implemented .NET 10 bootstrap, practical local commands, a concise Azure hosting/data and AWS email overview, CI/deployment, and clearly labeled planned signing features. Consolidate cloud setup into infra/README.md; remove standalone hosting and AWS/SES guides and repair links. Keep infrastructure documentation focused on reusable configuration, deployment, DNS/HTTPS, and email setup. Remove demo-specific network/storage/security settings, monitoring limits, role inventories, provisioning audit narratives, and repeated operational detail. Keep private deployment values out of git. No cloud or runtime changes.
 
