@@ -110,9 +110,9 @@ Validation: All 21 tests passed against a freshly migrated local SQL Server data
 
 ## QUILS-10: Connect the hosted app to Azure SQL with scoped permissions
 
-Status: In Progress; connectivity proposal awaits owner approval. Depends on completed QUILS-9.
+Status: In Progress. Owner approved Allow Azure services for the demo. Depends on completed QUILS-9.
 
-Propose the network path and its cost plus distinct runtime/migration permissions before requesting owner approval. After approval, implement only the approved change, configure managed-identity connectivity, and safely apply migrations. Verify runtime read/write access, denied schema changes, and intended audit-table permissions. Preserve the free offer, disabled paid overflow, idle auto-pause, and database-independent health checks; add no recurring SQL polling. Keep connection checks and private deployment values in ignored files. No network resource is approved by this story.
+Enable the existing SQL public endpoint and Allow Azure services firewall rule, approved for this demo. This allows connection attempts from other Azure customers too; Entra authentication and scoped database permissions remain enforced. No paid networking service or additional SQL resource is required. Configure managed-identity connectivity with distinct runtime/migration permissions and safely apply migrations. Remove temporary exact operator-IP access after administrative setup. Verify runtime read/write access, denied schema changes, and SELECT/INSERT-only audit-table access with denied UPDATE/DELETE. Preserve the free offer, disabled paid overflow, idle auto-pause, and database-independent health checks; add no recurring SQL polling or startup migrations. Keep connection checks and private deployment values in ignored files and project secrets. No AWS changes or live email tests are included.
 
 ## QUILS-12: Integrate Blob storage and persistent Data Protection keys
 

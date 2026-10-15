@@ -36,6 +36,8 @@ param sqlAdministratorName string
 ])
 param sqlAdministratorType string = 'User'
 
+param allowAzureServices bool = false
+
 resource applicationGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: resourceGroupName
   location: location
@@ -51,5 +53,6 @@ module database './modules/sql.bicep' = {
     administratorObjectId: sqlAdministratorObjectId
     administratorName: sqlAdministratorName
     administratorType: sqlAdministratorType
+    allowAzureServices: allowAzureServices
   }
 }

@@ -9,3 +9,4 @@ param sqlDatabaseName = ''
 param sqlAdministratorObjectId = ''
 param sqlAdministratorName = ''
 param sqlAdministratorType = 'User'
+param allowAzureServices = false

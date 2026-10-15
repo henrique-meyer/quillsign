@@ -17,6 +17,7 @@ jobs:
           az bicep build --file infra/main.bicep --stdout > /dev/null
           az bicep build --file infra/hosting.bicep --stdout > /dev/null
           az bicep build --file infra/bootstrap-secrets.bicep --stdout > /dev/null
+          az bicep build --file infra/sql-administrator-access.bicep --stdout > /dev/null
 
   application:
     runs-on: ubuntu-latest

@@ -7,3 +7,4 @@ param image = ''
 param customDomainName = ''
 param managedCertificateName = ''
 param enableManagedCertificate = false
+param databaseConnectionSecretUri = ''

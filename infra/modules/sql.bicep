@@ -21,14 +21,19 @@ param administratorName string
 ])
 param administratorType string
 
+@description('Enable the public SQL endpoint and Allow Azure services only with operator approval.')
+param allowAzureServices bool = false
+
+@description('Leave existing database/backup resources untouched during a network-only deployment.')
+param deployDatabase bool = true
+
 resource server 'Microsoft.Sql/servers@2023-08-01' = {
   name: serverName
   location: location
   properties: {
     version: '12.0'
     minimalTlsVersion: '1.2'
-    // App connectivity will be introduced with the app's approved networking.
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: allowAzureServices ? 'Enabled' : 'Disabled'
     administrators: {
       administratorType: 'ActiveDirectory'
       azureADOnlyAuthentication: true
@@ -40,7 +45,18 @@ resource server 'Microsoft.Sql/servers@2023-08-01' = {
   }
 }
 
-resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
+// This is Azure-wide network access, including other subscriptions. Entra
+// authentication and database permissions still govern every connection.
+resource azureServices 'Microsoft.Sql/servers/firewallRules@2023-08-01' = if (allowAzureServices) {
+  parent: server
+  name: 'AllowAzureServices'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
+resource database 'Microsoft.Sql/servers/databases@2023-08-01' = if (deployDatabase) {
   parent: server
   name: databaseName
   location: location
@@ -66,7 +82,7 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01' = {
   }
 }
 
-resource retention 'Microsoft.Sql/servers/databases/backupShortTermRetentionPolicies@2023-08-01' = {
+resource retention 'Microsoft.Sql/servers/databases/backupShortTermRetentionPolicies@2023-08-01' = if (deployDatabase) {
   parent: database
   name: 'default'
   properties: {

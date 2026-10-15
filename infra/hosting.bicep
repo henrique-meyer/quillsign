@@ -21,6 +21,7 @@ param dataProtectionKeyName string
 param customDomainName string = ''
 param managedCertificateName string = ''
 param enableManagedCertificate bool = false
+param databaseConnectionSecretUri string = ''
 
 var tags = { project: 'quillsign' }
 
@@ -232,6 +233,7 @@ module web './modules/web.bicep' = if (deployWeb) {
     customDomainName: customDomainName
     managedCertificateName: managedCertificateName
     enableManagedCertificate: enableManagedCertificate
+    databaseConnectionSecretUri: databaseConnectionSecretUri
   }
 }
 

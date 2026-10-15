@@ -11,11 +11,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Apply migrations through the deployment identity
+        env:
+          AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          servers=$(az sql server list -g "$AZURE_RESOURCE_GROUP" -o json)
+          test "$(jq 'length' <<< "$servers")" = 1
+          server=$(jq -r '.[0].name' <<< "$servers")
+          fqdn=$(jq -r '.[0].fullyQualifiedDomainName' <<< "$servers")
+          databases=$(az sql db list -g "$AZURE_RESOURCE_GROUP" -s "$server" -o json | jq '[.[] | select(.name != "master")]')
+          test "$(jq 'length' <<< "$databases")" = 1
+          database=$(jq -r '.[0].name' <<< "$databases")
+          export ConnectionStrings__Database="Server=tcp:${fqdn},1433;Database=${database};Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;Connect Timeout=90;Pooling=False;"
+          dotnet run --project src/QuillSign/QuillSign.csproj -c Release -- database migrate
       - name: Deploy and verify the application
         env:
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}

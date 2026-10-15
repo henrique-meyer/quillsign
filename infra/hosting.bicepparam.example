@@ -20,3 +20,4 @@ param deployWeb = false
 param customDomainName = ''
 param managedCertificateName = ''
 param enableManagedCertificate = false
+param databaseConnectionSecretUri = ''
