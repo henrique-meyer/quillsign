@@ -444,4 +444,5 @@ appsettings.Local.json
 *.key
 *.pem
 infra/*.bicepparam
+infra/*.json
 .data/
