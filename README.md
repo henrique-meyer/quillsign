@@ -6,7 +6,7 @@ An open-source e-signature app being built around sequential signing, no account
 
 QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app currently serves a branded demo startup page and a database-independent `/health` endpoint returning `{"status":"ok"}`. Document upload, email verification, and signing are not implemented yet.
 
-The demo's cloud resources are provisioned: Azure hosts the app and data, and Amazon SES provides email. Application database, storage, and email integration are still pending. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
+The demo's cloud resources are provisioned: Azure hosts the app and data, and Amazon SES provides email. EF Core persistence, private Blob storage, and persistent application keys have local integration tests; hosted connectivity/configuration and email integration are still pending. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
 
 ## Planned signing flow
 
@@ -56,7 +56,7 @@ The initializer generates local SQL and Azurite credentials in ignored `.env` co
 | SMTP capture | `localhost:1025` | `mailpit:1025` |
 | Gotenberg | Through the app container only | `gotenberg:3000` |
 
-The app still serves the bootstrap page; EF Core, storage, conversion, and email integrations follow in their own stories. The converter uses an isolated local network. Office uploads remain unavailable in the app.
+The app still serves the bootstrap page. Persistence and storage are exercised through integration tests; sender, upload, conversion, and email workflows follow in their own stories. The converter uses an isolated local network. Office uploads remain unavailable in the app.
 
 Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
 
@@ -71,11 +71,19 @@ pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action Migrate
 pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action Test
 ```
 
-The helper reads local SQL settings through Compose and supplies credentials only to the child process. Migrate applies the committed migrations to `QuillSignDev`; Test creates and removes an isolated database and exercises actual SQL constraints and concurrency. SQL administrator credentials are for local development only.
+The helper reads local SQL/Azurite settings through Compose and supplies credentials only to the child process. Migrate applies the committed migrations to `QuillSignDev`; Test creates and removes an isolated database and exercises SQL constraints, concurrency, private document streaming, and protected session persistence. SQL administrator credentials are for local development only.
 
 For application database features, set `ConnectionStrings__Database` through environment variables or ignored `appsettings.Development.json`, using `appsettings.example.json` as a template. Container connections use the `sql` service hostname; host CLI connections use the published SQL port. Starting the app never applies migrations or connects to SQL, and `/health` stays database independent. Hosted connectivity and runtime/migration permissions are tracked separately.
 
 Restore the pinned EF CLI with `dotnet tool restore`. Generate migrations using `dotnet ef migrations add <Name> --project src/QuillSign/QuillSign.csproj`; CI rejects model changes without a matching migration. Audit events use a documented canonical hash format and reject tracked edits/deletes; database permission enforcement and privileged retention are separate work.
+
+### Document storage and application keys
+
+Compose configures Azurite automatically. The `IBlobStore` adapter checks a verified sender's envelope scope before storage access, uses opaque document references, and streams bounded blocks. It never returns public document URLs. Uploads become readable only after their declared size is verified; existing objects cannot be overwritten. Sender verification and the upload UI are separate work.
+
+For host-side development, configure `Storage:Provider` as `Azurite` and `Storage:ConnectionString` in ignored local settings, pointing to the published emulator endpoint. Hosted configuration uses `Azure`, `Storage:BlobServiceUri`, and optionally `Storage:ManagedIdentityClientId`; credentials come from managed identity. `Storage:MaximumBlobBytes` defaults to 25 MiB. See `appsettings.example.json` for the configuration keys; environment variables replace `:` with `__`.
+
+Data Protection persists its key ring in the separate `keys` container. Hosted storage requires a versionless `DataProtection:KeyVaultKeyIdentifier` to wrap keys in Key Vault; retain older key versions so existing sessions remain readable. `DataProtection:ApplicationName` must match across replicas and remain stable across deployments; its default includes the ASP.NET Core environment name. Azurite is Development-only, with an unencrypted local key ring. Without storage configuration, the bootstrap remains usable; document/session workflows must require persistent storage. Hosted settings and permissions require approval before deployment.
 
 ## Build and deployment
 
@@ -86,7 +94,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 ## Remaining work
 
 - Hosted database connectivity and runtime/migration permissions.
-- Document storage, persistent application keys, and the sender/signing workflows.
+- Hosted storage/key configuration and the sender/signing workflows.
 - Office conversion and background processing.
 - Signature-validated SNS feedback handling, email adapters, and SES production access before enabling delivery.
 - PDF stamping, audit evidence, completion certificates, sealing, and verification.

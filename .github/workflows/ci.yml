@@ -62,7 +62,7 @@ jobs:
         run: docker compose up -d --build --wait --wait-timeout 240
       - name: Exercise services, isolation, and persistence
         run: python scripts/dev/smoke.py
-      - name: Verify EF migrations and database constraints
+      - name: Verify migrations, storage, and protected sessions
         shell: pwsh
         run: ./scripts/dev/Use-LocalDatabase.ps1 -Action Test
       - name: Service diagnostics

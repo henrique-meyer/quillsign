@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 Push-Location (Join-Path $PSScriptRoot '../..')
 $previousConnection = [Environment]::GetEnvironmentVariable('ConnectionStrings__Database')
 $previousTestConnection = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_DATABASE')
+$previousTestStorage = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_STORAGE')
 try {
     # Let Compose parse .env and honor process precedence, without printing resolved secrets.
     $resolved = docker compose config --format json | ConvertFrom-Json
@@ -24,11 +25,16 @@ try {
         dotnet ef database update --project src/QuillSign/QuillSign.csproj
     } else {
         $env:QUILLSIGN_TEST_DATABASE = $connection.ConnectionString
+        # Azure's connection format is not ADO.NET's (which would quote the base64 key).
+        $hostBlob = 'BlobEndpoint=http://127.0.0.1:' + $resolved.services.azurite.ports[0].published + '/quillsigndev'
+        $env:QUILLSIGN_TEST_STORAGE = [regex]::Replace(
+            $resolved.services.app.environment.Storage__ConnectionString, 'BlobEndpoint=[^;]+', $hostBlob)
         dotnet test tests/QuillSign.Tests/QuillSign.Tests.csproj -c Release --nologo
     }
     if ($LASTEXITCODE -ne 0) { throw "Local database action failed: $Action" }
 } finally {
     [Environment]::SetEnvironmentVariable('ConnectionStrings__Database', $previousConnection)
     [Environment]::SetEnvironmentVariable('QUILLSIGN_TEST_DATABASE', $previousTestConnection)
+    [Environment]::SetEnvironmentVariable('QUILLSIGN_TEST_STORAGE', $previousTestStorage)
     Pop-Location
 }

@@ -110,15 +110,17 @@ Validation: All 21 tests passed against a freshly migrated local SQL Server data
 
 ## QUILS-10: Connect the hosted app to Azure SQL with scoped permissions
 
-Status: To Do. Depends on QUILS-9.
+Status: In Progress; connectivity proposal awaits owner approval. Depends on completed QUILS-9.
 
 Propose the network path and its cost plus distinct runtime/migration permissions before requesting owner approval. After approval, implement only the approved change, configure managed-identity connectivity, and safely apply migrations. Verify runtime read/write access, denied schema changes, and intended audit-table permissions. Preserve the free offer, disabled paid overflow, idle auto-pause, and database-independent health checks; add no recurring SQL polling. Keep connection checks and private deployment values in ignored files. No network resource is approved by this story.
 
 ## QUILS-12: Integrate Blob storage and persistent Data Protection keys
 
-Status: To Do. Depends on QUILS-8 and QUILS-9.
+Status: Implementation complete. Hosted configuration remains subject to approval. Depends on completed QUILS-8 and QUILS-9.
 
 Add an application storage abstraction for Azure Blob and local Azurite with private envelope-scoped access and bounded streaming. Use managed identity when hosted. Persist Data Protection keys in Blob and protect hosted keys through Key Vault; keep the key ring separate from document purge. Verify protected sessions across restarts/replicas, unauthorized access, and storage failures. Keep the unconfigured bootstrap usable. Obtain approval before additional cloud settings or permissions change.
+
+Validation: All 46 SQL/Azurite tests pass, including bounded nonseekable uploads, declared-size mismatch, interrupted/cancelled writes, overwrite prevention, private reads, envelope access, and storage failures. Protected authentication tickets survive provider restart and key rotation across replicas; other application names/purposes are rejected. The Compose app serves its page and health response, and package vulnerability scans are clean. Hosted configuration requires managed identity and Key Vault protection; no cloud resources or settings changed. Sender sessions are issued in QUILS-15, and document workflow state/validation remains QUILS-16.
 
 ## QUILS-13: Add SES and local SMTP adapters with SNS feedback handling
 
