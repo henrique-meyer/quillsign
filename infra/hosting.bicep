@@ -16,7 +16,10 @@ param alertEmails array = []
 param githubRepository string
 param image string = ''
 param deployWeb bool = false
-param dataProtectionKeyName string = 'data-protection'
+param dataProtectionKeyName string
+param customDomainName string = ''
+param managedCertificateName string = ''
+param enableManagedCertificate bool = false
 
 var tags = { project: 'quillsign' }
 
@@ -193,7 +196,7 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// No custom VNet or workload profiles: Consumption-only without customer-managed network resources.
+// Consumption profile without a custom VNet or customer-managed network resources.
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
@@ -207,6 +210,7 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
       }
     }
     zoneRedundant: false
+    workloadProfiles: [{ name: 'Consumption', workloadProfileType: 'Consumption' }]
   }
 }
 
@@ -219,7 +223,17 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = if (deployWeb) {
     managedEnvironmentId: environment.id
     configuration: {
       activeRevisionsMode: 'Single'
-      ingress: { external: true, targetPort: 8080, transport: 'auto', allowInsecure: false }
+      ingress: {
+        external: true
+        targetPort: 8080
+        transport: 'auto'
+        allowInsecure: false
+        customDomains: empty(customDomainName) ? [] : [{
+          name: customDomainName
+          bindingType: enableManagedCertificate ? 'SniEnabled' : 'Disabled'
+          certificateId: enableManagedCertificate ? managedCertificate!.id : null
+        }]
+      }
     }
     template: {
       containers: [{
@@ -239,6 +253,14 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = if (deployWeb) {
       scale: { minReplicas: 0, maxReplicas: 2, rules: [{ name: 'http', http: { metadata: { concurrentRequests: '20' } } }] }
     }
   }
+}
+
+// Enable only after DNS verification and an initial Disabled hostname binding.
+resource managedCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (enableManagedCertificate) {
+  parent: environment
+  name: managedCertificateName
+  location: location
+  properties: { subjectName: customDomainName, domainControlValidation: 'CNAME' }
 }
 
 resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
