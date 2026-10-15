@@ -73,7 +73,7 @@ Prepare the next milestone: a verified sender can upload one PDF and review its 
 
 Validate the plan and secret scans, commit/push/merge its PR, and close this planning story.
 
-Validation: Native Jira reads verified all eight implementation stories as To Do, their acceptance criteria, and all sixteen directed dependency links. The separate license follow-up is queued as QUILS-11. No implementation or cloud changes were made.
+Validation: Native Jira reads verified all eight implementation stories as To Do, their acceptance criteria, and all fifteen directed dependency links. Story titles and the dependency graph were checked against this plan. The separate license follow-up is queued as QUILS-11. No implementation or cloud changes were made.
 
 ### Next milestone: verified sender, PDF upload, and preview
 
