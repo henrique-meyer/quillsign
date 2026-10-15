@@ -18,7 +18,7 @@ Other app, storage, vault, logging, email, AI, DNS, and converter resources requ
 
 ## QUILS-2: Create the dedicated AWS resource group
 
-Status: To Do, queued after QUILS-1.
+Status: In Progress, following completed QUILS-1.
 
 Create a new tag-based AWS Resource Group in the project's SES region using the owner-supplied name from ignored configuration. Tag project-owned resources consistently, use dedicated names and permissions, and document which resource types the group supports. Group membership organizes resources; IAM permissions provide security isolation.
 
