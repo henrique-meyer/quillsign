@@ -64,3 +64,84 @@ Refresh the public README with the implemented .NET 10 bootstrap, practical loca
 Validate claims against repository files and deployment evidence, check Markdown links and secret scans, commit/push/merge the documentation PR, and close Jira in the same pass.
 
 Validation: Local Markdown links resolve and whitespace checks pass. The README distinguishes implemented and planned behavior; infrastructure instructions are consolidated without the demo's operational inventory. No application or cloud resources changed.
+
+## QUILS-7: Plan the application foundation and first sender workflow
+
+Status: Planning complete.
+
+Prepare the next milestone: a verified sender can upload one PDF and review its preview. Create ordered, nonduplicated Jira stories with acceptance criteria and dependencies for local development, persistence, hosted SQL connectivity, storage, email, background work, sender verification, and PDF upload/preview. Mirror them below and leave implementation stories To Do. Field editing, signing, sealing, Office conversion, and AI follow in later milestones. Planning does not authorize cloud changes.
+
+Validate the plan and secret scans, commit/push/merge its PR, and close this planning story.
+
+Validation: Native Jira reads verified all eight implementation stories as To Do, their acceptance criteria, and all fifteen directed dependency links. Story titles and the dependency graph were checked against this plan. The separate license follow-up is queued as QUILS-11. No implementation or cloud changes were made.
+
+### Next milestone: verified sender, PDF upload, and preview
+
+Implement the stories in this order, respecting their dependencies. Hosted rollout also requires QUILS-10; local feature development can continue independently of its approval gate. Cloud changes and live email tests require owner approval. This backlog does not approve additional resources or enable public email delivery.
+
+| Order | Story | Work | Depends on |
+| --- | --- | --- | --- |
+| 1 | QUILS-8 | Local Docker Compose stack | Completed bootstrap |
+| 2 | QUILS-9 | EF Core persistence and migrations | QUILS-8 |
+| 3 | QUILS-10 | Hosted SQL connectivity and permissions | QUILS-9 |
+| 4 | QUILS-12 | Blob storage and persistent Data Protection | QUILS-8, QUILS-9 |
+| 5 | QUILS-13 | SES/SMTP adapters and SNS feedback | QUILS-8, QUILS-9 |
+| 6 | QUILS-14 | Durable event-driven work and email dispatch | QUILS-9, QUILS-13 |
+| 7 | QUILS-15 | Sender verification and scoped sessions | QUILS-9, QUILS-12, QUILS-13, QUILS-14 |
+| 8 | QUILS-16 | PDF upload and preview confirmation | QUILS-9, QUILS-12, QUILS-15 |
+
+Field editing, signer setup, sequential signing, sealing/verification, isolated Office conversion, retention maintenance, and AI remain later milestones. Perform the relevant PDF/seal and conversion feasibility spikes before implementing those features.
+
+## QUILS-8: Set up the local Docker Compose development stack
+
+Status: To Do.
+
+Run the .NET 10 app, SQL Server Developer, Azurite, Gotenberg, and Mailpit locally with documented commands, ignored configuration, health checks, persistent development volumes, and reset instructions. A clean checkout must need no hosted services or credentials. SQL Server Developer is development/test only. Verify service startup, shutdown, and reachability; conversion must have no public internet access or Office uploads remain disabled. Application integrations follow in separate stories.
+
+## QUILS-9: Add EF Core SQL Server persistence and initial migrations
+
+Status: To Do. Depends on QUILS-8.
+
+Implement the requirements' envelope, signer, recipient, field, auth-token, audit-event, outbox/work, and suppression records with EF Core 10 and SQL Server migrations. Represent relationships, case-insensitive party email uniqueness, unique token hashes and audit sequences, normalized field bounds, concurrency controls, append-only hash-chain support, and lease/retry metadata. Apply migrations to a fresh local database and document the separate migration command; do not auto-run privileged production migrations on web startup. Test meaningful constraints against SQL Server. Keep connection strings private and health checks independent of SQL.
+
+## QUILS-10: Connect the hosted app to Azure SQL with scoped permissions
+
+Status: To Do. Depends on QUILS-9.
+
+Propose the network path and its cost plus distinct runtime/migration permissions before requesting owner approval. After approval, implement only the approved change, configure managed-identity connectivity, and safely apply migrations. Verify runtime read/write access, denied schema changes, and intended audit-table permissions. Preserve the free offer, disabled paid overflow, idle auto-pause, and database-independent health checks; add no recurring SQL polling. Keep connection checks and private deployment values in ignored files. No network resource is approved by this story.
+
+## QUILS-12: Integrate Blob storage and persistent Data Protection keys
+
+Status: To Do. Depends on QUILS-8 and QUILS-9.
+
+Add an application storage abstraction for Azure Blob and local Azurite with private envelope-scoped access and bounded streaming. Use managed identity when hosted. Persist Data Protection keys in Blob and protect hosted keys through Key Vault; keep the key ring separate from document purge. Verify protected sessions across restarts/replicas, unauthorized access, and storage failures. Keep the unconfigured bootstrap usable. Obtain approval before additional cloud settings or permissions change.
+
+## QUILS-13: Add SES and local SMTP adapters with SNS feedback handling
+
+Status: To Do. Depends on QUILS-8 and QUILS-9.
+
+Implement IEmailSender with SES v2 as default and SMTP/Mailpit locally, HTML/text verification templates, and configurable sender/base URL. ACS remains a later optional adapter. Validate SNS signatures and confirmation destinations; handle feedback idempotently and reject invalid messages without attacker-directed outbound requests. Persist bounce/complaint suppression and reject suppressed deliveries. Test invalid/duplicate feedback and suppression without live mail. Keep SES sending disabled until subscription, durable dispatch, and approved production access are ready; AWS changes and real sends need owner approval.
+
+## QUILS-14: Implement durable event-driven work and email dispatch
+
+Status: To Do. Depends on QUILS-9 and QUILS-13.
+
+Record the wakeup/recovery design before worker implementation: SQL Server atomic leases, retry/backoff, lease expiry, crash recovery, provider ambiguity, and delivery semantics. Implement email dispatch with reusable work contracts and local tests for competing workers, duplicate wakeups, crashes, delayed mail, exhausted retries, and suppression. Start magic-link validity at actual dispatch and protect sensitive payloads. Idle workers must not poll SQL; maintenance is batched. Propose exact hosted wakeup resources, schedule, sizing, and cost for approval before deployment. Do not promise exactly-once SES delivery without supported deduplication, implicitly approve a queue, or enable public delivery.
+
+## QUILS-15: Build sender email verification and envelope-scoped sessions
+
+Status: To Do. Depends on QUILS-9, QUILS-12, QUILS-13, and QUILS-14. Hosted rollout also requires QUILS-10.
+
+Implement no-account sender email entry, magic-link verification, and a short-lived session for one new draft. Use 256-bit tokens, hashed auth-token storage, 15-minute validity from dispatch, and atomic single use scoped to email/envelope/purpose. Reject invalid, expired, replayed, concurrently consumed, and cross-envelope access. Add secure HttpOnly sessions, antiforgery, neutral request responses, configurable rate limits/daily caps, suppression, and creation/verification audit events. No accounts, passwords, or CAPTCHA. Browser notices use short-lived HttpOnly cookies and clean redirects; JSON clients receive bodies. Exercise the Mailpit-to-draft browser flow and failure cases. Public delivery remains gated on SES readiness.
+
+## QUILS-16: Build verified-sender PDF upload and preview confirmation
+
+Status: To Do. Depends on QUILS-9, QUILS-12, and QUILS-15. Hosted rollout also requires QUILS-10.
+
+Let the verified sender upload/read/replace one PDF in their own draft, preview it with PDF.js, and explicitly confirm it. Enforce content sniffing, configurable byte/page limits, bounded streaming, safe filenames, and access isolation. Reject malformed, encrypted, XFA, and already-signed PDFs; this slice excludes images and Office conversion. Record original/normalized hashes, page dimensions/count, and upload/confirmation audit events. Replacement clears obsolete confirmation/incompatible draft state; failures must not leave falsely completed records. Confirming the preview does not send or freeze a signing copy. Exercise the responsive/accessible browser flow, restarts, isolation, invalid/oversize inputs, and storage failures using synthetic fixtures.
+
+## QUILS-11: Change the project license to AGPL-3.0-or-later
+
+Status: To Do. Owner-requested follow-up after QUILS-7 planning.
+
+Replace the root license with the complete authoritative GNU AGPL version 3 text, preserve the existing copyright attribution, and update current project-license references and existing metadata to AGPL-3.0-or-later. Keep third-party dependency licenses accurate. Update ignored source-of-truth notes without committing them. Validate the text and references, scan for secrets, merge a small PR, and close the story. No runtime or cloud changes.
