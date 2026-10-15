@@ -42,6 +42,30 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
 
+  local-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Initialize local-only configuration
+        shell: pwsh
+        run: ./scripts/dev/Initialize-LocalEnvironment.ps1
+      - name: Start development services
+        run: docker compose up -d --build --wait --wait-timeout 240
+      - name: Exercise services, isolation, and persistence
+        run: python scripts/dev/smoke.py
+      - name: Service diagnostics
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail 100
+      - name: Remove test stack and its volumes
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
   secrets:
     runs-on: ubuntu-latest
     steps:

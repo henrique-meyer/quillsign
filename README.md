@@ -36,7 +36,31 @@ docker run --rm -p 8080:8080 quillsign
 
 Open <http://localhost:8080>. The container runs as a non-root user.
 
-EF Core with the SQL Server provider is the chosen persistence layer. Local SQL Server Developer, Azurite, and Gotenberg containers are planned; a Compose development stack has not been added yet.
+### Development services
+
+With Docker running Linux containers and PowerShell 7 installed, start the complete local stack:
+
+```sh
+pwsh -File scripts/dev/Initialize-LocalEnvironment.ps1
+docker compose up -d --build --wait --wait-timeout 240
+```
+
+The initializer generates local SQL and Azurite credentials in ignored `.env` configuration, preserving existing values and process-variable precedence. Optional port settings are listed in `.env.example`. Initial image downloads can take several minutes; allow at least 6 GB of Docker memory. The SQL Server image requires Linux amd64; ARM hosts need compatible emulation. SQL Server Developer is for development/testing only.
+
+| Service | Local endpoint | Container endpoint |
+| --- | --- | --- |
+| App | <http://localhost:5080> | `app:8080` |
+| SQL Server | `localhost,14333` | `sql:1433` |
+| Blob emulator | <http://localhost:10000/quillsigndev> | `azurite:10000/quillsigndev` |
+| Mailpit inbox | <http://localhost:8025> | `mailpit:8025` |
+| SMTP capture | `localhost:1025` | `mailpit:1025` |
+| Gotenberg | Through the app container only | `gotenberg:3000` |
+
+The app still serves the bootstrap page; EF Core, storage, conversion, and email integrations follow in their own stories. The converter uses an isolated local network. Office uploads remain unavailable in the app.
+
+Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
+
+To run the same service, conversion/isolation, SMTP, and stop/start persistence checks as CI, install Python 3.12+ and run `python scripts/dev/smoke.py` with the stack running. This briefly stops and restarts the stack and leaves one synthetic message in Mailpit. EF Core with the SQL Server provider is the chosen persistence layer; application database integration is next.
 
 ## Build and deployment
 

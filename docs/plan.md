@@ -94,9 +94,11 @@ Field editing, signer setup, sequential signing, sealing/verification, isolated 
 
 ## QUILS-8: Set up the local Docker Compose development stack
 
-Status: To Do.
+Status: Implementation complete; full stack validation runs in CI.
 
 Run the .NET 10 app, SQL Server Developer, Azurite, Gotenberg, and Mailpit locally with documented commands, ignored configuration, health checks, persistent development volumes, and reset instructions. A clean checkout must need no hosted services or credentials. SQL Server Developer is development/test only. Verify service startup, shutdown, and reachability; conversion must have no public internet access or Office uploads remain disabled. Application integrations follow in separate stories.
+
+Validation: Local Compose configuration, Python syntax, initializer preservation/idempotence, and whitespace checks passed. CI starts all five services, checks app assets/health and SMTP capture, converts a synthetic document, verifies converter isolation, and checks SQL/blob/mail persistence after a stop/start. Docker Desktop was unavailable locally, so runtime checks use the Linux CI runner. No cloud changes.
 
 ## QUILS-9: Add EF Core SQL Server persistence and initial migrations
 
