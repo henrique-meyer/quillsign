@@ -77,7 +77,7 @@ Review and execute the approved change set. Add the DNS records supplied by SES:
 
 Configure the application's AWS credentials through runtime secrets and environment variables, including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`.
 
-Email delivery is not enabled yet. Before enabling it, implement SNS bounce/complaint handling and suppression, connect the feedback subscription, and obtain SES production access. See the [SES sandbox documentation](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html).
+Email delivery is not enabled yet. The app includes SES/SMTP adapters and the `/webhooks/ses` feedback endpoint; practical application settings are in the root README and `appsettings.example.json`. Before enabling public delivery, complete durable dispatch, configure and confirm the feedback subscription, and obtain SES production access. Cloud changes and live sends require operator approval. See the [SES sandbox documentation](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html).
 
 ## GitHub deployment
 
