@@ -85,10 +85,10 @@ For a complete browser flow using the local services, migrate first, then run th
 
 ```powershell
 pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action RunApp -AppPort 5081
-pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action ListenWork -AppPort 5081
+pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action ListenWork -AppPort 5081 -NoBuild
 ```
 
-Open <http://localhost:5081>, enter a synthetic address such as `sender@example.invalid`, and open the captured message in <http://localhost:8025>. Follow its verification link to the draft. Use the same `AppPort` in both terminals so worker-generated links reach the app. The helper configures local SQL, Azurite, and SMTP without printing credentials.
+Start `RunApp` first so it builds the application; `-NoBuild` lets the listener use that build while the app is running. Open <http://localhost:5081>, enter a synthetic address such as `sender@example.invalid`, and open the captured message in <http://localhost:8025>. Follow its verification link to the draft. Use the same `AppPort` in both terminals so worker-generated links reach the app. The helper configures local SQL, Azurite, and SMTP without printing credentials.
 
 Verification links work once and expire 15 minutes after dispatch. Sender sessions last two hours without sliding renewal and only open their own draft. The default cap is five requests per address per UTC day, plus 20 HTTP requests per IP per ten-minute window. Configure these limits through the `Sender` section in `appsettings.example.json`. Suppressed and capped requests receive the same neutral inbox message. Browser notices appear once after a clean redirect; JSON clients receive the message body and still require antiforgery tokens for POST requests.
 

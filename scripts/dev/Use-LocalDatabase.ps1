@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Migrate', 'Test', 'WorkOnce', 'RecoverWork', 'ListenWork', 'VerifyWork', 'RunApp')][string]$Action = 'Migrate',
-    [ValidateRange(1, 65535)][int]$AppPort
+    [ValidateRange(1, 65535)][int]$AppPort,
+    [switch]$NoBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,11 +62,12 @@ try {
             $env:Email__Smtp__Host = '127.0.0.1'
             $env:Email__Smtp__Port = $env:QUILLSIGN_TEST_SMTP_PORT
             $env:Email__Smtp__UseStartTls = 'false'
+            [string[]]$buildArguments = if ($NoBuild) { @('--no-build') } else { @() }
             if ($Action -eq 'RunApp') {
-                dotnet run --project src/QuillSign/QuillSign.csproj -c Release -p:UseAppHost=false -- --urls $env:Email__BaseUrl
+                dotnet run --project src/QuillSign/QuillSign.csproj -c Release -p:UseAppHost=false @buildArguments -- --urls $env:Email__BaseUrl
             } else {
                 $command = @{ WorkOnce = 'once'; RecoverWork = 'recover'; ListenWork = 'listen'; VerifyWork = 'verify' }[$Action]
-                dotnet run --project src/QuillSign/QuillSign.csproj -c Release -p:UseAppHost=false -- work $command
+                dotnet run --project src/QuillSign/QuillSign.csproj -c Release -p:UseAppHost=false @buildArguments -- work $command
             }
         }
     }
