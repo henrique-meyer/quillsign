@@ -1,0 +1,8 @@
+@page "/draft/{publicId}"
+@model QuillSign.Pages.Draft.IndexModel
+@{ ViewData["Title"] = "Your draft"; }
+<p class="eyebrow">YOUR DOCUMENT</p>
+<h1>Your draft<br />starts here.</h1>
+<p class="intro">Email verified for <strong>@Model.SenderEmail</strong>.</p>
+<aside aria-label="Draft status"><strong>You're ready for the next step.</strong><p>Document upload will be available soon. Signing and sending are still being developed.</p></aside>
+<p><a href="/">Start a new document</a></p>

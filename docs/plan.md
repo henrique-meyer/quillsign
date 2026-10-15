@@ -133,9 +133,13 @@ Validation: All 114 local SQL/Azurite/Mailpit tests passed, including key-ring o
 
 ## QUILS-15: Build sender email verification and envelope-scoped sessions
 
-Status: To Do. Depends on QUILS-9, QUILS-12, QUILS-13, and QUILS-14. Hosted rollout also requires QUILS-10.
+Status: Implementation complete. Depends on completed QUILS-9, QUILS-12, QUILS-13, and QUILS-14. Hosted SQL is connected; public email delivery remains disabled pending SES readiness.
 
 Implement no-account sender email entry, magic-link verification, and a short-lived session for one new draft. Use 256-bit tokens, hashed auth-token storage, 15-minute validity from dispatch, and atomic single use scoped to email/envelope/purpose. Reject invalid, expired, replayed, concurrently consumed, and cross-envelope access. Add secure HttpOnly sessions, antiforgery, neutral request responses, configurable rate limits/daily caps, suppression, and creation/verification audit events. No accounts, passwords, or CAPTCHA. Browser notices use short-lived HttpOnly cookies and clean redirects; JSON clients receive bodies. Exercise the Mailpit-to-draft browser flow and failure cases. Public delivery remains gated on SES readiness.
+
+Implementation defaults: a two-hour non-sliding sender session and five verification requests per address per UTC day, both configurable. Serialize durable address caps in SQL and keep HTTP rate limiting separate. Create the draft, initial audit event, and outbox/work atomically using the existing hint protocol; publish only after commit. The verification link consumes its hashed token and records verification atomically, then redirects to a clean draft URL. The UI clearly indicates when email delivery is unavailable. Preserve the existing branding and disclaimers; PDF upload is QUILS-16.
+
+Validation: All 131 SQL/Azurite/Mailpit tests pass, including concurrent address caps and single-use verification, invalid token scope/state, transaction rollback, audit hashes, antiforgery, neutral JSON responses, one-time browser notices, rate limits, session isolation, tampering, expiry, and shared-key replica/restart behavior. The actual browser-to-Mailpit-to-draft flow passed, including link replay and notice consumption. Existing branding renders in CLI development runs. Build and dependency checks passed. Public delivery remains disabled; no AWS changes or real email were needed.
 
 ## QUILS-16: Build verified-sender PDF upload and preview confirmation
 
