@@ -7,6 +7,7 @@ public static class DatabaseCommands
 {
     public static async Task<int> RunAsync(string[] args)
     {
+        IConfiguration? configuration = null;
         if (args.Length != 1 || args[0] is not ("provision-identities" or "migrate" or "grant-runtime" or "verify-runtime"))
         {
             Console.Error.WriteLine("Usage: database provision-identities|migrate|grant-runtime|verify-runtime");
@@ -15,6 +16,7 @@ public static class DatabaseCommands
         try
         {
             var builder = WebApplication.CreateBuilder();
+            configuration = builder.Configuration;
             builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.None);
             builder.Services.AddQuillSignDatabase(builder.Configuration);
             using var provider = builder.Services.BuildServiceProvider();
@@ -39,6 +41,13 @@ public static class DatabaseCommands
         {
             // Connection exceptions can include private endpoints; do not print their text.
             var code = exception is SqlException sql ? $", SQL error {sql.Number}" : "";
+            var diagnosticFile = configuration?["Database:DiagnosticFile"];
+            if (!string.IsNullOrWhiteSpace(diagnosticFile))
+            {
+                try { await File.WriteAllTextAsync(diagnosticFile, exception.ToString()); }
+                catch (Exception diagnosticError) when (diagnosticError is IOException or UnauthorizedAccessException)
+                { Console.Error.WriteLine("Could not write the private diagnostic file."); }
+            }
             Console.Error.WriteLine($"Database command failed ({exception.GetType().Name}{code}).");
             return 1;
         }

@@ -6,7 +6,7 @@ An open-source e-signature app being built around sequential signing, no account
 
 QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app currently serves a branded demo startup page and a database-independent `/health` endpoint returning `{"status":"ok"}`. Document upload, email verification, and signing are not implemented yet.
 
-The demo's cloud resources are provisioned: Azure hosts the app and data, and Amazon SES provides email. EF Core persistence, private Blob storage, and persistent application keys have local integration tests; hosted connectivity/configuration and email integration are still pending. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
+The demo's cloud resources are provisioned: Azure hosts the app and data, and Amazon SES provides email. Hosted SQL connectivity and migrations are verified. Private Blob storage and persistent application keys have local integration tests; hosted storage/key configuration and email integration are still pending. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
 
 ## Planned signing flow
 
@@ -93,7 +93,6 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- Hosted database connectivity and runtime/migration permissions.
 - Hosted storage/key configuration and the sender/signing workflows.
 - Office conversion and background processing.
 - Signature-validated SNS feedback handling, email adapters, and SES production access before enabling delivery.

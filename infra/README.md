@@ -35,6 +35,8 @@ Store the managed-identity SQL connection string in the project's Key Vault, and
 
 An operator can invoke `dotnet QuillSign.dll database verify-runtime` inside the deployed container to check read/write and denied permissions. Verification rolls back its synthetic records. Migrations and permission verification run only when explicitly invoked; web startup and `/health` never query SQL.
 
+For private CLI error details, set `Database:DiagnosticFile` to an ignored local file. Console output omits connection endpoints and credentials.
+
 ## Hosting
 
 Copy `infra/hosting.bicepparam.example` to the ignored `infra/hosting.bicepparam` and supply the required values. This template provisions app hosting, Blob storage, Key Vault, and supporting services in the project's Azure resource group.
