@@ -18,8 +18,10 @@ Other app, storage, vault, logging, email, AI, DNS, and converter resources requ
 
 ## QUILS-2: Create the dedicated AWS resource group
 
-Status: In Progress, following completed QUILS-1. CloudFormation lint, Bicep compilation, and secret-scan CI checks passed. Deployment awaits AWS CLI authentication.
+Status: Implemented and deployed; Jira closes when this PR merges. CloudFormation lint, Bicep compilation, and secret-scan CI checks passed.
 
 Create a new tag-based AWS Resource Group in the project's SES region using the owner-supplied name from ignored configuration. Tag project-owned resources consistently, use dedicated names and permissions, and document which resource types the group supports. Group membership organizes resources; IAM permissions provide security isolation.
 
 Deliver a reusable infrastructure definition, local parameter example, and verification of the group/query. Keep real resource names and account identifiers out of git. Do not repurpose unrelated AWS resources. Email identities, IAM credentials, and event destinations are subsequent approved work. Scan, commit, push, merge the PR, then move the story to Done.
+
+Validation: AWS CLI authentication and CloudFormation template validation succeeded. The new stack reached `CREATE_COMPLETE`. Native Resource Groups reads verified the requested name, the `TAG_FILTERS_1_0` query, the unique project filter, the group's own project tag, and zero unrelated members. Actual names, account identifiers, ARNs, and deployment output remain in ignored local files.
