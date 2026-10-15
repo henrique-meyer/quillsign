@@ -4,7 +4,7 @@ Tasks are recorded here and in Jira before implementation. Private deployment na
 
 ## QUILS-1: Provision the free Azure SQL database foundation
 
-Status: Implemented and deployed; Jira closes when this PR merges.
+Status: Done. Infrastructure PR merged and Jira story closed.
 
 Create a dedicated application resource group, a new logical SQL server, and one Azure SQL General Purpose serverless database. Check the subscription's free-offer allocation and region first. Use the free offer with monthly exhaustion set to `AutoPause`, 32 GiB maximum storage, the smallest supported serverless minimum, idle auto-pause, locally redundant backups, and seven-day point-in-time retention.
 
@@ -18,7 +18,7 @@ Other app, storage, vault, logging, email, AI, DNS, and converter resources requ
 
 ## QUILS-2: Create the dedicated AWS resource group
 
-Status: In Progress, following completed QUILS-1.
+Status: In Progress, following completed QUILS-1. CloudFormation lint, Bicep compilation, and secret-scan CI checks passed. Deployment awaits AWS CLI authentication.
 
 Create a new tag-based AWS Resource Group in the project's SES region using the owner-supplied name from ignored configuration. Tag project-owned resources consistently, use dedicated names and permissions, and document which resource types the group supports. Group membership organizes resources; IAM permissions provide security isolation.
 
