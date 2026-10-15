@@ -1,8 +1,10 @@
 using QuillSign.Data;
+using QuillSign.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages();
 builder.Services.AddQuillSignDatabase(builder.Configuration);
+builder.Services.AddQuillSignStorage(builder.Configuration, builder.Environment);
 var app = builder.Build();
 
 app.Use(async (context, next) =>

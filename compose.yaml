@@ -7,6 +7,8 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_HTTP_PORTS: "8080"
       ConnectionStrings__Database: ${ConnectionStrings__Database:-}
+      Storage__Provider: Azurite
+      Storage__ConnectionString: DefaultEndpointsProtocol=http;AccountName=quillsigndev;AccountKey=${AZURITE_ACCOUNT_KEY:?Run scripts/dev/Initialize-LocalEnvironment.ps1 first};BlobEndpoint=http://azurite:10000/quillsigndev;
     ports:
       - "127.0.0.1:${QUILLSIGN_APP_PORT:-5080}:8080"
     networks: [services, conversion]
