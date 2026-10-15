@@ -30,8 +30,11 @@ jobs:
           revision=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$app" --query properties.latestRevisionName -o tsv)
           host=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$app" --query properties.configuration.ingress.fqdn -o tsv)
           for attempt in {1..30}; do
+            healthy=false
+            if curl --max-time 30 -fsS "https://$host/health" | jq -e '.status == "ok"'; then healthy=true; fi
             state=$(az containerapp revision show -g "$AZURE_RESOURCE_GROUP" -n "$app" --revision "$revision" --query properties.runningState -o tsv)
-            if [ "$state" = Running ] && curl -fsS "https://$host/health" | jq -e '.status == "ok"'; then exit 0; fi
+            ready=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$app" --query properties.latestReadyRevisionName -o tsv)
+            if [ "$state" = Running ] && [ "$ready" = "$revision" ] && [ "$healthy" = true ]; then exit 0; fi
             if [ "$state" = Failed ] || [ "$state" = ActivationFailed ]; then exit 1; fi
             sleep 10
           done

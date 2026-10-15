@@ -8,6 +8,8 @@ param customDomainName string = ''
 param managedCertificateName string = ''
 param enableManagedCertificate bool = false
 var tags = { project: 'quillsign' }
+// ARM still validates conditional resource IDs when certificate creation is disabled.
+var certificateResourceName = empty(managedCertificateName) ? '${webAppName}-tls' : managedCertificateName
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = { name: environmentName }
 resource runtime 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = { name: runtimeIdentityName }
 
@@ -55,7 +57,7 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
 // Enable only after DNS verification and an initial Disabled hostname binding.
 resource managedCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (enableManagedCertificate) {
   parent: environment
-  name: managedCertificateName
+  name: certificateResourceName
   location: location
   properties: { subjectName: customDomainName, domainControlValidation: 'CNAME' }
 }
