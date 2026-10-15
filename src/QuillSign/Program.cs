@@ -1,6 +1,12 @@
 using QuillSign.Data;
 using QuillSign.Storage;
 
+if (args.Length > 0 && args[0] == "database")
+{
+    Environment.ExitCode = await DatabaseCommands.RunAsync(args[1..]);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages();
 builder.Services.AddQuillSignDatabase(builder.Configuration);

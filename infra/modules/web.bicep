@@ -7,6 +7,7 @@ param image string
 param customDomainName string = ''
 param managedCertificateName string = ''
 param enableManagedCertificate bool = false
+param databaseConnectionSecretUri string = ''
 var tags = { project: 'quillsign' }
 // ARM still validates conditional resource IDs when certificate creation is disabled.
 var certificateResourceName = empty(managedCertificateName) ? '${webAppName}-tls' : managedCertificateName
@@ -22,6 +23,11 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: environment.id
     configuration: {
       activeRevisionsMode: 'Single'
+      secrets: empty(databaseConnectionSecretUri) ? [] : [{
+        name: 'database-connection'
+        keyVaultUrl: databaseConnectionSecretUri
+        identity: runtime.id
+      }]
       ingress: {
         external: true
         targetPort: 8080
@@ -39,7 +45,10 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
         name: 'web'
         image: image
         resources: { cpu: json('0.5'), memory: '1Gi' }
-        env: [{ name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }]
+        env: concat([{ name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }], empty(databaseConnectionSecretUri) ? [] : [{
+          name: 'ConnectionStrings__Database'
+          secretRef: 'database-connection'
+        }])
         probes: [for probe in [ 'Liveness', 'Readiness', 'Startup' ]: {
           type: probe
           httpGet: { path: '/health', port: 8080 }
