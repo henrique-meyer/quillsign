@@ -115,9 +115,11 @@ Validation: All 46 SQL/Azurite tests pass, including bounded nonseekable uploads
 
 ## QUILS-13: Add SES and local SMTP adapters with SNS feedback handling
 
-Status: To Do. Depends on QUILS-8 and QUILS-9.
+Status: Implementation complete. Depends on completed QUILS-8 and QUILS-9. Local/simulated delivery only; hosted sending remains disabled.
 
-Implement IEmailSender with SES v2 as default and SMTP/Mailpit locally, HTML/text verification templates, and configurable sender/base URL. ACS remains a later optional adapter. Validate SNS signatures and confirmation destinations; handle feedback idempotently and reject invalid messages without attacker-directed outbound requests. Persist bounce/complaint suppression and reject suppressed deliveries. Test invalid/duplicate feedback and suppression without live mail. Keep SES sending disabled until subscription, durable dispatch, and approved production access are ready; AWS changes and real sends need owner approval.
+Implement IEmailSender with SES v2 as default and SMTP/Mailpit locally, HTML/text Razor verification templates, and configurable sender/base URL. Templates render at dispatch; durable dispatch later assigns token validity. ACS remains a later optional adapter. Validate SNS signatures and confirmation destinations; auto-confirmation is an explicit disabled-by-default option. Handle feedback idempotently, including concurrent duplicates and reordered events. Suppress permanent bounces and complaints; transient bounces do not permanently block recipients. Reject suppressed deliveries. Test invalid/duplicate feedback, templates, provider requests, and suppression using local Mailpit and signed fixtures without live AWS mail. Keep SES sending disabled until subscription, durable dispatch, and approved production access are ready; AWS changes and real sends need owner approval.
+
+Validation: All 98 tests passed against local SQL Server, Azurite, and Mailpit. Coverage includes rendered Razor HTML/text messages, SMTP capture, simulated SES requests, both SNS signature versions, invalid sources/signatures, certificate trust/cache/failures, concurrent duplicates, reordered feedback, suppression, rollback, and retryable outages. Build and dependency checks passed. No cloud configuration or live email changed; durable dispatch and sender verification remain subsequent work.
 
 ## QUILS-14: Implement durable event-driven work and email dispatch
 

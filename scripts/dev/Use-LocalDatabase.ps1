@@ -7,6 +7,8 @@ Push-Location (Join-Path $PSScriptRoot '../..')
 $previousConnection = [Environment]::GetEnvironmentVariable('ConnectionStrings__Database')
 $previousTestConnection = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_DATABASE')
 $previousTestStorage = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_STORAGE')
+$previousTestSmtpPort = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_SMTP_PORT')
+$previousTestMailPort = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_MAIL_PORT')
 try {
     # Let Compose parse .env and honor process precedence, without printing resolved secrets.
     $resolved = docker compose config --format json | ConvertFrom-Json
@@ -29,6 +31,8 @@ try {
         $hostBlob = 'BlobEndpoint=http://127.0.0.1:' + $resolved.services.azurite.ports[0].published + '/quillsigndev'
         $env:QUILLSIGN_TEST_STORAGE = [regex]::Replace(
             $resolved.services.app.environment.Storage__ConnectionString, 'BlobEndpoint=[^;]+', $hostBlob)
+        $env:QUILLSIGN_TEST_SMTP_PORT = $resolved.services.mailpit.ports[0].published
+        $env:QUILLSIGN_TEST_MAIL_PORT = $resolved.services.mailpit.ports[1].published
         dotnet test tests/QuillSign.Tests/QuillSign.Tests.csproj -c Release --nologo
     }
     if ($LASTEXITCODE -ne 0) { throw "Local database action failed: $Action" }
@@ -36,5 +40,7 @@ try {
     [Environment]::SetEnvironmentVariable('ConnectionStrings__Database', $previousConnection)
     [Environment]::SetEnvironmentVariable('QUILLSIGN_TEST_DATABASE', $previousTestConnection)
     [Environment]::SetEnvironmentVariable('QUILLSIGN_TEST_STORAGE', $previousTestStorage)
+    [Environment]::SetEnvironmentVariable('QUILLSIGN_TEST_SMTP_PORT', $previousTestSmtpPort)
+    [Environment]::SetEnvironmentVariable('QUILLSIGN_TEST_MAIL_PORT', $previousTestMailPort)
     Pop-Location
 }

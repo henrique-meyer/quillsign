@@ -1,0 +1,9 @@
+@model QuillSign.Email.SenderMagicLinkModel
+@{ Layout = null; }
+QuillSign
+
+Verify your email to start your document:
+@Html.Raw(Model.Link.AbsoluteUri)
+
+This single-use link is valid for 15 minutes after this email is sent.
+If you did not request this email, you can ignore it.

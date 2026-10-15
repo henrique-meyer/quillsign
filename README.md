@@ -6,7 +6,7 @@ An open-source e-signature app being built around sequential signing, no account
 
 QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app currently serves a branded demo startup page and a database-independent `/health` endpoint returning `{"status":"ok"}`. Document upload, email verification, and signing are not implemented yet.
 
-The demo's cloud resources are provisioned: Azure hosts the app and data, and Amazon SES provides email. Hosted SQL connectivity and migrations are verified. Private Blob storage and persistent application keys have local integration tests; hosted storage/key configuration and email integration are still pending. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
+The demo's cloud resources are provisioned: Azure hosts the app and data, and Amazon SES provides email. Hosted SQL connectivity and migrations are verified. Blob storage, persistent application keys, email adapters, and delivery feedback have local integration tests. Hosted storage/key configuration and public email delivery are still pending. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
 
 ## Planned signing flow
 
@@ -15,7 +15,7 @@ The demo's cloud resources are provisioned: Azure hosts the app and data, and Am
 3. Fill sender-owned fields before sending; each signer reviews, consents, and signs sequentially.
 4. Seal the completed PDF once, record the audit trail, and deliver the executed document and certificate of completion to every party.
 
-The planned editor uses PDF.js and interact.js. PDFsharp and BouncyCastle provide stamping, sealing, and timestamp support; Gotenberg handles Office conversion. Azure OpenAI will suggest signer roles and field locations for the sender to accept. Amazon SES v2 is the default email provider, with ACS and SMTP planned as optional adapters. There is no CAPTCHA; email verification, rate limits, daily caps, and suppression are planned abuse controls.
+The planned editor uses PDF.js and interact.js. PDFsharp and BouncyCastle provide stamping, sealing, and timestamp support; Gotenberg handles Office conversion. Azure OpenAI will suggest signer roles and field locations for the sender to accept. Amazon SES v2 is the default email provider, SMTP supports local development, and ACS remains an optional future adapter. There is no CAPTCHA; verified email, rate limits, daily caps, and suppression form the planned abuse controls.
 
 ## Run locally
 
@@ -56,7 +56,7 @@ The initializer generates local SQL and Azurite credentials in ignored `.env` co
 | SMTP capture | `localhost:1025` | `mailpit:1025` |
 | Gotenberg | Through the app container only | `gotenberg:3000` |
 
-The app still serves the bootstrap page. Persistence and storage are exercised through integration tests; sender, upload, conversion, and email workflows follow in their own stories. Office uploads remain unavailable in the app.
+The app still serves the bootstrap page. Persistence, storage, and email are exercised through integration tests; sender verification, upload, and conversion workflows follow in their own stories. Office uploads remain unavailable in the app.
 
 Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
 
@@ -77,6 +77,12 @@ For application database features, set `ConnectionStrings__Database` through env
 
 Restore the pinned EF CLI with `dotnet tool restore`. Generate migrations using `dotnet ef migrations add <Name> --project src/QuillSign/QuillSign.csproj`; CI rejects model changes without a matching migration. Audit events use a documented canonical hash format and reject tracked edits/deletes; database permission enforcement and privileged retention are separate work.
 
+### Email development
+
+Compose selects SMTP and captures messages in Mailpit using a synthetic sender. `Use-LocalDatabase.ps1 -Action Test` exercises rendered HTML/text verification messages, local SMTP capture, simulated SES requests, signed SNS feedback, and suppression. No AWS credentials or live email are used by tests. The sender verification page and durable dispatch are subsequent work.
+
+Outside Compose, email is disabled by default. Use the `Email` section of `appsettings.example.json` for provider, sender, base URL, SMTP, SES configuration set, and SNS topic settings. `Email:BaseUrl` builds verification links; templates render when dispatching. `/webhooks/ses` processes authenticated delivery feedback and suppresses permanent bounces and complaints. Transient bounces do not permanently suppress recipients. Feedback and subscription auto-confirmation are disabled by default. Public SES delivery remains gated on durable dispatch, a confirmed feedback subscription, and approved SES readiness.
+
 ### Document storage and application keys
 
 Compose configures Azurite automatically. The `IBlobStore` adapter checks a verified sender's envelope scope before storage access, uses opaque document references, and streams bounded blocks. It never returns public document URLs. Uploads become readable only after their declared size is verified; existing objects cannot be overwritten. Sender verification and the upload UI are separate work.
@@ -95,7 +101,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 - Hosted storage/key configuration and the sender/signing workflows.
 - Office conversion and background processing.
-- Signature-validated SNS feedback handling, email adapters, and SES production access before enabling delivery.
+- Durable email dispatch, a confirmed feedback subscription, and SES production access before enabling public delivery.
 - PDF stamping, audit evidence, completion certificates, sealing, and verification.
 - Optional AI suggestions.
 

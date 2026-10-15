@@ -1,0 +1,13 @@
+@model QuillSign.Email.SenderMagicLinkModel
+@{ Layout = null; }
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Verify your email</title></head>
+<body>
+<p>QuillSign</p>
+<h1>Start your document</h1>
+<p><a href="@Model.Link.AbsoluteUri">Verify your email and continue</a></p>
+<p>This single-use link is valid for 15 minutes after this email is sent.</p>
+<p>If you did not request this email, you can ignore it.</p>
+</body>
+</html>

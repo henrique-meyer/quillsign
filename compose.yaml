@@ -9,6 +9,13 @@ services:
       ConnectionStrings__Database: ${ConnectionStrings__Database:-}
       Storage__Provider: Azurite
       Storage__ConnectionString: DefaultEndpointsProtocol=http;AccountName=quillsigndev;AccountKey=${AZURITE_ACCOUNT_KEY:?Run scripts/dev/Initialize-LocalEnvironment.ps1 first};BlobEndpoint=http://azurite:10000/quillsigndev;
+      Email__Enabled: "true"
+      Email__Provider: Smtp
+      Email__FromEmail: noreply@example.invalid
+      Email__BaseUrl: http://localhost:${QUILLSIGN_APP_PORT:-5080}
+      Email__Smtp__Host: mailpit
+      Email__Smtp__Port: "1025"
+      Email__Smtp__UseStartTls: "false"
     ports:
       - "127.0.0.1:${QUILLSIGN_APP_PORT:-5080}:8080"
     networks: [services, conversion]
