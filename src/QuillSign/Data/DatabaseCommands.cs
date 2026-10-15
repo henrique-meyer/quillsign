@@ -8,9 +8,9 @@ public static class DatabaseCommands
     public static async Task<int> RunAsync(string[] args)
     {
         IConfiguration? configuration = null;
-        if (args.Length != 1 || args[0] is not ("provision-identities" or "migrate" or "grant-runtime" or "verify-runtime"))
+        if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "verify-runtime"))
         {
-            Console.Error.WriteLine("Usage: database provision-identities|migrate|grant-runtime|verify-runtime");
+            Console.Error.WriteLine("Usage: database provision-identities|provision-worker|migrate|grant-runtime|verify-runtime");
             return 2;
         }
         try
@@ -22,7 +22,7 @@ public static class DatabaseCommands
             using var provider = builder.Services.BuildServiceProvider();
             await using var scope = provider.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<QuillSignDbContext>();
-            if (args[0] == "migrate") await db.Database.MigrateAsync();
+            if (args[0] == "migrate") await SqlResume.RunAsync(() => db.Database.MigrateAsync());
             else if (args[0] == "verify-runtime") await VerifyRuntimeAsync(db);
             else
             {
@@ -32,6 +32,8 @@ public static class DatabaseCommands
                     await DatabasePermissions.ProvisionIdentitiesAsync(connection,
                         Guid.Parse(builder.Configuration["Database:RuntimeClientId"] ?? ""),
                         Guid.Parse(builder.Configuration["Database:MigrationClientId"] ?? ""));
+                else if (args[0] == "provision-worker")
+                    await DatabasePermissions.ProvisionWorkerAsync(connection, Guid.Parse(builder.Configuration["Database:WorkerClientId"] ?? ""));
                 else await DatabasePermissions.GrantRuntimeAsync(connection);
             }
             Console.WriteLine($"{{\"operation\":\"{args[0]}\",\"status\":\"ok\"}}");

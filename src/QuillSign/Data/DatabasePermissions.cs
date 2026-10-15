@@ -6,6 +6,7 @@ public static class DatabasePermissions
 {
     public const string RuntimeUser = "app_runtime";
     public const string MigrationUser = "app_migrations";
+    public const string WorkerUser = "app_worker";
 
     // A separate administrator provisions these contained users. Client IDs are used
     // for service principals/managed identities; no Graph directory grants are needed.
@@ -54,6 +55,20 @@ public static class DatabasePermissions
             DENY UPDATE, DELETE ON OBJECT::[dbo].[AuditEvents] TO [app_runtime_role];
             GRANT SELECT ON OBJECT::[dbo].[__EFMigrationsHistory] TO [app_runtime_role];
             DENY INSERT, UPDATE, DELETE ON OBJECT::[dbo].[__EFMigrationsHistory] TO [app_runtime_role];
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    public static async Task ProvisionWorkerAsync(SqlConnection connection, Guid clientId)
+    {
+        if (clientId == Guid.Empty) throw new ArgumentException("Supply the worker client ID.");
+        var sid = "0x" + Convert.ToHexString(clientId.ToByteArray());
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            IF DATABASE_PRINCIPAL_ID(N'app_worker') IS NULL CREATE USER [app_worker] WITH SID = {sid}, TYPE = E;
+            ELSE IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'app_worker' AND sid = {sid} AND type = 'E')
+                THROW 50001, 'Existing database principal does not match the worker identity.', 1;
+            ALTER ROLE [app_runtime_role] ADD MEMBER [app_worker];
             """;
         await command.ExecuteNonQueryAsync();
     }

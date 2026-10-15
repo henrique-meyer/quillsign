@@ -7,7 +7,9 @@ param image string
 param customDomainName string = ''
 param managedCertificateName string = ''
 param enableManagedCertificate bool = false
+param provisionManagedCertificate bool = true
 param databaseConnectionSecretUri string = ''
+param applicationEnvironment array = []
 var tags = { project: 'quillsign' }
 // ARM still validates conditional resource IDs when certificate creation is disabled.
 var certificateResourceName = empty(managedCertificateName) ? '${webAppName}-tls' : managedCertificateName
@@ -36,7 +38,7 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
         customDomains: empty(customDomainName) ? [] : [{
           name: customDomainName
           bindingType: enableManagedCertificate ? 'SniEnabled' : 'Disabled'
-          certificateId: enableManagedCertificate ? managedCertificate!.id : null
+          certificateId: enableManagedCertificate ? resourceId('Microsoft.App/managedEnvironments/managedCertificates', environmentName, certificateResourceName) : null
         }]
       }
     }
@@ -48,7 +50,7 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
         env: concat([{ name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }], empty(databaseConnectionSecretUri) ? [] : [{
           name: 'ConnectionStrings__Database'
           secretRef: 'database-connection'
-        }])
+        }], applicationEnvironment)
         probes: [for probe in [ 'Liveness', 'Readiness', 'Startup' ]: {
           type: probe
           httpGet: { path: '/health', port: 8080 }
@@ -61,10 +63,11 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
       scale: { minReplicas: 0, maxReplicas: 2, rules: [{ name: 'http', http: { metadata: { concurrentRequests: '20' } } }] }
     }
   }
+  dependsOn: [managedCertificate]
 }
 
 // Enable only after DNS verification and an initial Disabled hostname binding.
-resource managedCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (enableManagedCertificate) {
+resource managedCertificate 'Microsoft.App/managedEnvironments/managedCertificates@2024-03-01' = if (enableManagedCertificate && provisionManagedCertificate) {
   parent: environment
   name: certificateResourceName
   location: location

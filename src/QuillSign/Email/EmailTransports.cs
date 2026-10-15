@@ -21,13 +21,16 @@ public sealed class SesEmailTransport(IAmazonSimpleEmailServiceV2 client, EmailO
         };
         if (message.EnvelopeId is { } envelope)
             simple.Headers = [new MessageHeader { Name = "X-QuillSign-Envelope", Value = envelope.ToString("N") }];
-        var response = await client.SendEmailAsync(new SendEmailRequest
+        SendEmailResponse response;
+        try { response = await client.SendEmailAsync(new SendEmailRequest
         {
             FromEmailAddress = new MailboxAddress(options.FromName, EmailAddress.Normalize(options.FromEmail)).ToString(),
             Destination = new Destination { ToAddresses = [message.To] },
             ConfigurationSetName = options.Ses.ConfigurationSet,
             Content = new EmailContent { Simple = simple }
-        }, cancellationToken);
+        }, cancellationToken); }
+        catch (AmazonSimpleEmailServiceV2Exception e) when ((int)e.StatusCode is >= 400 and < 500)
+        { throw new EmailNotSubmittedException((int)e.StatusCode == 429 || e is TooManyRequestsException or LimitExceededException); }
         if (string.IsNullOrWhiteSpace(response.MessageId)) throw new InvalidOperationException("SES returned no delivery identifier.");
         return new EmailDelivery("Ses", response.MessageId);
     }
@@ -43,11 +46,18 @@ public sealed class SmtpEmailTransport(EmailOptions options) : IEmailTransport
         if (message.EnvelopeId is { } envelope) mime.Headers.Add("X-QuillSign-Envelope", envelope.ToString("N"));
         mime.Body = new BodyBuilder { TextBody = message.Text, HtmlBody = message.Html }.ToMessageBody();
         using var smtp = new MailKit.Net.Smtp.SmtpClient { Timeout = 15000 };
-        await smtp.ConnectAsync(options.Smtp.Host, options.Smtp.Port,
+        try
+        {
+            await smtp.ConnectAsync(options.Smtp.Host, options.Smtp.Port,
             options.Smtp.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(options.Smtp.Username))
-            await smtp.AuthenticateAsync(options.Smtp.Username, options.Smtp.Password, cancellationToken);
-        await smtp.SendAsync(mime, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(options.Smtp.Username))
+                await smtp.AuthenticateAsync(options.Smtp.Username, options.Smtp.Password, cancellationToken);
+        }
+        catch (Exception e) when (e is IOException or System.Net.Sockets.SocketException or OperationCanceledException or MailKit.Security.AuthenticationException or MailKit.Net.Smtp.SmtpCommandException or MailKit.Net.Smtp.SmtpProtocolException)
+        { throw new EmailNotSubmittedException(true); }
+        try { await smtp.SendAsync(mime, cancellationToken); }
+        catch (MailKit.Net.Smtp.SmtpCommandException e)
+        { throw new EmailNotSubmittedException((int)e.StatusCode < 500); }
         // Once DATA was accepted, a failed QUIT must not turn success into a retry.
         // Disposal closes this per-send connection without another network operation.
         return new EmailDelivery("Smtp", mime.MessageId);

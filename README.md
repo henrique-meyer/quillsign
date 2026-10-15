@@ -83,6 +83,20 @@ Compose selects SMTP and captures messages in Mailpit using a synthetic sender. 
 
 Outside Compose, email is disabled by default. Use the `Email` section of `appsettings.example.json` for provider, sender, base URL, SMTP, SES configuration set, and SNS topic settings. `Email:BaseUrl` builds verification links; templates render when dispatching. `/webhooks/ses` processes authenticated delivery feedback and suppresses permanent bounces and complaints. Transient bounces do not permanently suppress recipients. Feedback and subscription auto-confirmation are disabled by default. Public SES delivery remains gated on durable dispatch, a confirmed feedback subscription, and approved SES readiness.
 
+### Background work
+
+SQL stores durable work and email outbox records. Opaque queue messages wake a finite worker; Blob hints let recovery republish missed wakeups without querying an idle database. Verification payloads are protected with the persistent application key ring, and token validity begins at dispatch. Definite pre-send failures use bounded backoff. A possibly accepted send is recorded as ambiguous and requires explicit reconciliation/resend, rather than an automatic duplicate.
+
+With the local stack running, migrate first, then run one item or listen for local work:
+
+```powershell
+pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action Migrate
+pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce
+pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action ListenWork
+```
+
+`RecoverWork` runs storage-only wakeup recovery; `VerifyWork` checks storage, database access, and payload protection, then queues a synthetic wakeup with no email. Run `WorkOnce` to consume it locally. The helper supplies local Compose settings without printing credentials. `ListenWork` is Development-only and polls the emulator queue, never idle SQL. The optional Compose `workers` profile runs the same listener when an application SQL connection is configured. Hosted jobs use `dotnet QuillSign.dll work once` and `work recover`; work is disabled by default outside configured environments. Sender verification still follows in its own story.
+
 ### Document storage and application keys
 
 Compose configures Azurite automatically. The `IBlobStore` adapter checks a verified sender's envelope scope before storage access, uses opaque document references, and streams bounded blocks. It never returns public document URLs. Uploads become readable only after their declared size is verified; existing objects cannot be overwritten. Sender verification and the upload UI are separate work.
@@ -101,7 +115,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 - Hosted storage/key configuration and the sender/signing workflows.
 - Office conversion and background processing.
-- Durable email dispatch, a confirmed feedback subscription, and SES production access before enabling public delivery.
+- A confirmed feedback subscription and SES production access before enabling public delivery.
 - PDF stamping, audit evidence, completion certificates, sealing, and verification.
 - Optional AI suggestions.
 

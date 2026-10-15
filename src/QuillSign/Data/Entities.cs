@@ -155,6 +155,7 @@ public sealed class EmailOutbox : IVersionedRecord
     public EmailStatus Status { get; set; }
     public string? Provider { get; set; }
     public string? ProviderMessageId { get; set; }
+    public DateTimeOffset? SubmissionStartedAt { get; set; }
     public int Attempts { get; set; }
     public string? LastError { get; set; }
     public DateTimeOffset AvailableAt { get; set; } = DateTimeOffset.UtcNow;
