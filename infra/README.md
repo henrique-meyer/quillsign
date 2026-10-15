@@ -1,39 +1,80 @@
-# Database foundation
+# Cloud infrastructure
 
-This subscription-scoped Bicep deployment creates one dedicated application resource group and a new SQL logical server/database inside it. It does not reference resources from other groups.
+Azure hosts the application and data services; AWS provides transactional email. Azure definitions use Bicep, and AWS definitions use CloudFormation.
 
-The database uses the Azure SQL free offer: General Purpose serverless, 0.5 minimum and 2 maximum vCores, 32 GiB maximum data storage, locally redundant backups, seven-day point-in-time retention, and idle auto-pause after 60 minutes. The free offer requires that default idle delay even where ordinary serverless databases allow a shorter delay. `useFreeLimit` is fixed to `true` and `freeLimitExhaustionBehavior` to `AutoPause`. The database becomes unavailable until next month if its allowance is exhausted; the template cannot opt into paid overages.
+Run commands from the repository root. Keep deployment names, identifiers, domains, addresses, and credentials in ignored configuration or secrets. Each deployment uses dedicated project resources. Preview changes and obtain owner approval before provisioning.
 
-Administration uses Microsoft Entra-only authentication and TLS 1.2 or newer. Public network access starts disabled and no firewall rules are created. Application connectivity is subsequent approved work. The administrator values on the server are creation-time settings; changing an existing administrator requires the dedicated administrator API rather than relying on a server redeployment.
+## Azure database
 
-New Azure SQL databases use service-managed transparent data encryption by default. Verify that it is enabled after deployment; the template avoids a redundant encryption update during database initialization.
+Copy `infra/main.bicepparam.example` to the ignored `infra/main.bicepparam` and fill in the required values. Set `AZURE_RESOURCE_GROUP` to the same group name. Choose a supported SQL region; it may differ from the resource group's location.
 
-## Local configuration
-
-1. Confirm the intended Azure subscription with `az account show`.
-2. Check free-offer slots and any existing free-offer region constraint. The offer permits up to ten databases per subscription and may constrain their region. SQL provisioning can also be restricted by subscription even if validation succeeds. Set `sqlLocation` to an allowed region; `location` is the group's immutable metadata location and can differ. Do not convert an existing paid database or enable paid overflow as a workaround.
-3. Copy `main.bicepparam.example` to `main.bicepparam` and fill its empty fields locally. The parameters contain real resource names and administrator identity, so the actual file stays ignored.
-4. Set `AZURE_RESOURCE_GROUP` to the same dedicated group used in the ignored parameter file. It remains the stable CI/CD configuration name.
-
-Compile without authenticating or accessing cloud resources:
+The template uses the Azure SQL free offer and pauses the database if its monthly allowance is exhausted rather than charging for overflow. Application connectivity is not implemented yet.
 
 ```powershell
 az bicep build --file infra/main.bicep --stdout > $null
-```
-
-For an approved deployment, use the deployment region from the local parameters and save command output outside tracked files:
-
-```powershell
 az deployment sub what-if --location $deploymentLocation --template-file infra/main.bicep --parameters infra/main.bicepparam
 az deployment sub create --location $deploymentLocation --template-file infra/main.bicep --parameters infra/main.bicepparam
 ```
 
-The preview is for verification; cloud changes require explicit approval before running `create`. Subscription-level resource-group creation permissions are needed in addition to SQL deployment permissions.
+Set `$deploymentLocation` to the deployment region before running these commands. See Microsoft's [free-offer documentation](https://learn.microsoft.com/en-us/azure/azure-sql/database/free-offer) for eligibility and allowances.
 
-## Verification
+## Hosting
 
-Read the deployed database and verify `useFreeLimit: true`, exhaustion behavior `AutoPause`, 32 GiB maximum size, minimum capacity 0.5, maximum capacity 2, local backup redundancy, and auto-pause delay 60. Also check Entra-only administration, disabled public networking, no firewall rules, enabled transparent encryption, and seven-day backup retention.
+Copy `infra/hosting.bicepparam.example` to the ignored `infra/hosting.bicepparam` and supply the required values. This template provisions app hosting, Blob storage, Key Vault, and supporting services in the project's Azure resource group.
 
-Keep actual deployment results and cloud identifiers in ignored local notes. Before committing or pushing, scan tracked files and Git history with Gitleaks. Pull-request CI compiles Bicep and scans for secrets without cloud credentials. Application build, tests, and Docker checks will be added when the application exists.
+```powershell
+az bicep build --file infra/hosting.bicep --stdout > $null
+az deployment group what-if --resource-group $env:AZURE_RESOURCE_GROUP --template-file infra/hosting.bicep --parameters infra/hosting.bicepparam
+az deployment group create --resource-group $env:AZURE_RESOURCE_GROUP --template-file infra/hosting.bicep --parameters infra/hosting.bicepparam
+```
 
-Sources: [Azure SQL free offer](https://learn.microsoft.com/en-us/azure/azure-sql/database/free-offer), [free-offer FAQ](https://learn.microsoft.com/en-us/azure/azure-sql/database/free-offer-faq), [database resource schema](https://learn.microsoft.com/en-us/azure/templates/microsoft.sql/2023-08-01/servers/databases).
+For the initial deployment, set `deployWeb = false`. Once CI publishes a container image, make the GHCR package public in its package settings, set `image` to its full commit-SHA tag, and redeploy with `deployWeb = true`.
+
+For app-only deployments, use `infra/web.bicepparam.example` with `infra/modules/web.bicep`, or use the GitHub workflow below.
+
+### DNS and HTTPS
+
+The deployment outputs `fqdn` and `domainVerificationId`. Use them to add the hostname's CNAME and `asuid` TXT records at your DNS provider. Keep the actual records in local deployment notes.
+
+Set `customDomainName` and deploy the initial hostname binding. Then set `managedCertificateName` and `enableManagedCertificate = true`, preview, and deploy the managed certificate. Keep the app running during certificate issuance. Verify HTTPS and confirm `/health` returns `{"status":"ok"}`.
+
+## AWS resource group
+
+Copy `infra/aws/deployment.local.ps1.example` to the ignored `infra/aws/deployment.local.ps1` and fill in the required values. The group uses a project tag to organize supported AWS resources; use the same tag for email resources.
+
+```powershell
+. ./infra/aws/deployment.local.ps1
+aws cloudformation validate-template --region $awsRegion --template-body file://infra/aws/resource-group.cfn.yaml
+aws cloudformation deploy --region $awsRegion --stack-name $awsStackName --template-file infra/aws/resource-group.cfn.yaml --parameter-overrides "GroupName=$awsGroupName" "ProjectTagValue=$awsProjectTagValue" --tags "Project=$awsProjectTagValue" --no-fail-on-empty-changeset
+```
+
+## AWS email
+
+Copy `infra/aws/ses.parameters.example.json` to the ignored `infra/aws/ses.parameters.local.json`. Set the sending subdomain, its child MAIL FROM domain, dedicated resource names, and the project tag. Set `$awsSesStackName` to the new email stack's name.
+
+Preview a CloudFormation change set before deploying:
+
+```powershell
+aws cloudformation deploy --region $awsRegion --stack-name $awsSesStackName --template-file infra/aws/ses.cfn.yaml --parameter-overrides file://infra/aws/ses.parameters.local.json --capabilities CAPABILITY_NAMED_IAM --no-execute-changeset
+```
+
+Review and execute the approved change set. Add the DNS records supplied by SES: three DKIM CNAMEs, a MAIL FROM MX record with priority 10, and a MAIL FROM SPF TXT record. Verify domain, DKIM, and MAIL FROM status in SES.
+
+Create the send-only user's access key outside CloudFormation and store it in Key Vault. `infra/bootstrap-secrets.bicep` can grant temporary access for this transfer; remove the grant afterward. Configure the application through secrets and environment variables, including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`.
+
+Email delivery is not enabled yet. Before enabling it, implement SNS bounce/complaint handling and suppression, connect the feedback subscription, and obtain SES production access. See the [SES sandbox documentation](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html).
+
+## GitHub deployment
+
+CI builds the app and Docker image, validates the infrastructure templates, and scans for secrets. Trusted push runs publish GHCR images tagged with the full commit SHA. Pull-request checks require no cloud credentials.
+
+Configure the GitHub `production` environment with these Actions secrets:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `AZURE_RESOURCE_GROUP`
+
+Set `githubFederationSubject` in the ignored hosting parameters to the exact subject emitted by GitHub for that environment. Use the `azure/login` token diagnostics to check it; the subject may include immutable owner and repository IDs.
+
+Run the manual **Deploy** workflow from `main` after CI succeeds for that commit. It uses OIDC authentication, deploys the matching image, and checks revision readiness and `/health`.
