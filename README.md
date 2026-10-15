@@ -57,4 +57,6 @@ See the [implementation plan](docs/plan.md) for tracked work. The SVG and PNG br
 
 ## License and demo use
 
-QuillSign is licensed under [MIT](LICENSE). Software is provided as-is. Operators are responsible for checking whether electronic signatures are suitable for their use case and jurisdiction. The public demo is intended for evaluation and periodic data purging; document lifecycle deletion is asynchronous, not an exact retention deadline.
+Copyright (c) 2026 Henrique Meyer. QuillSign is licensed under the [GNU Affero General Public License, version 3 or later](LICENSE) (`AGPL-3.0-or-later`).
+
+Software is provided as-is. Operators are responsible for checking whether electronic signatures are suitable for their use case and jurisdiction. The public demo is intended for evaluation and periodic data purging; document lifecycle deletion is asynchronous, not an exact retention deadline.

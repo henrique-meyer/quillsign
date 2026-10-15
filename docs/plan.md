@@ -142,6 +142,8 @@ Let the verified sender upload/read/replace one PDF in their own draft, preview 
 
 ## QUILS-11: Change the project license to AGPL-3.0-or-later
 
-Status: To Do. Owner-requested follow-up after QUILS-7 planning.
+Status: License update complete. Owner-requested follow-up after completed QUILS-7 planning.
 
-Replace the root license with the complete authoritative GNU AGPL version 3 text, preserve the existing copyright attribution, and update current project-license references and existing metadata to AGPL-3.0-or-later. Keep third-party dependency licenses accurate. Update ignored source-of-truth notes without committing them. Validate the text and references, scan for secrets, merge a small PR, and close the story. No runtime or cloud changes.
+Replace the root license with the complete authoritative GNU AGPL version 3 text, preserve the existing copyright attribution in the README license notice, and update current project-license references. Include LICENSE in the container image and identify it with the OCI license label. Keep third-party dependency licenses accurate. Update ignored source-of-truth notes without committing them. Verify the text against the authoritative source, inspect references/container packaging, scan for secrets, pass CI, merge a small PR, and close the story. No application behavior or cloud changes.
+
+Validation: LICENSE matched GNU's published text byte for byte. The README retains the existing copyright and selects AGPL-3.0-or-later; container packaging includes LICENSE and the matching OCI label. Reference and whitespace checks passed. Ignored local requirements/instructions reflect the decision and remain outside git.

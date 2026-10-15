@@ -5,6 +5,7 @@
 !assets/logo.svg
 !assets/logo-mark.svg
 !Dockerfile
+!LICENSE
 src/**/bin/
 src/**/obj/
 **/appsettings.Development.json
