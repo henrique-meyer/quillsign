@@ -1,0 +1,17 @@
+using './hosting.bicep'
+
+param location = ''
+param environmentName = ''
+param webAppName = ''
+param storageAccountName = ''
+param vaultName = ''
+param runtimeIdentityName = ''
+param deploymentIdentityName = ''
+param workspaceName = ''
+param insightsName = ''
+param budgetName = ''
+param budgetStartDate = ''
+param alertEmails = []
+param githubRepository = ''
+param image = ''
+param deployWeb = false

@@ -35,3 +35,11 @@ Create a new tag-based AWS Resource Group in the project's SES region using the 
 Deliver a reusable infrastructure definition, local parameter example, and verification of the group/query. Keep real resource names and account identifiers out of git. Do not repurpose unrelated AWS resources. Email identities, IAM credentials, and event destinations are subsequent approved work. Scan, commit, push, merge the PR, then move the story to Done.
 
 Validation: AWS CLI authentication and CloudFormation template validation succeeded. The new stack reached `CREATE_COMPLETE`. Native Resource Groups reads verified the requested name, the `TAG_FILTERS_1_0` query, the unique project filter, the group's own project tag, and zero unrelated members. Actual names, account identifiers, ARNs, and deployment output remain in ignored local files.
+
+## QUILS-4: Provision the demo hosting, storage, security, and deployment foundation
+
+Status: In Progress. Owner selected portal budget tracking without email notifications.
+
+Provision new resources in the dedicated group: Consumption-only Container Apps environment, private Blob storage and lifecycle rules, RBAC Key Vault, runtime and deployment managed identities, scoped role assignments, GitHub production OIDC, capped monitoring, and a resource-group budget. Deploy a real .NET 10 Razor Pages bootstrap using the existing brand assets and a public GHCR image. Return exact DNS records through ignored deployment output. Preserve free SQL settings and keep health checks independent of SQL. Do not enable signing or uploads during this foundation step.
+
+Validate Bicep, deployment scope and settings, build/image CI, the running app revision and distinctive health JSON, and the bootstrap browser page. Scan secrets, merge the PR, and close Jira. Converter/database networking and AI remain separately approved work; AWS SES gets its own story after sender configuration is supplied. Any owner DNS or package-visibility step must be recorded precisely.

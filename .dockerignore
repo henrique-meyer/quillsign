@@ -1,0 +1,9 @@
+**
+!src/
+!src/**
+!assets/
+!assets/logo.svg
+!assets/logo-mark.svg
+!Dockerfile
+src/**/bin/
+src/**/obj/
