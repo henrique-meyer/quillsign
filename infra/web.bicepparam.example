@@ -1,0 +1,9 @@
+using './modules/web.bicep'
+param location = ''
+param environmentName = ''
+param webAppName = ''
+param runtimeIdentityName = ''
+param image = ''
+param customDomainName = ''
+param managedCertificateName = ''
+param enableManagedCertificate = false

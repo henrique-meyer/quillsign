@@ -10,6 +10,8 @@ az deployment group create --resource-group $env:AZURE_RESOURCE_GROUP --template
 
 Deploy first with `deployWeb = false`. CI publishes the bootstrap image under its full commit SHA. Make the new GHCR package public once in package settings, then verify an anonymous manifest request using the registry bearer-token flow. Set `image` to that immutable SHA tag and `deployWeb = true`, preview, and deploy again. No registry credentials or placeholder image are used.
 
+For an application-only deployment, copy `web.bicepparam.example` to the ignored `web.bicepparam` and target `modules/web.bicep`. It references only the project's existing environment and runtime identity, without reapplying the foundation or its bootstrap role assignments. The hosting template invokes the same module when `deployWeb` is enabled.
+
 The environment uses only the Consumption workload profile and omits a custom VNet. Verify the native environment response has no infrastructure resource group. This does not resolve future converter egress isolation or private SQL connectivity; those remain design and approval gates.
 
 Storage uses LRS, TLS, Entra authentication, private containers, and disabled shared keys. Document blobs and older versions expire after seven days. Soft deletion retains deleted data for another seven days; lifecycle processing is asynchronous, so this is not an exact deletion deadline. The `keys` container is excluded from expiry. Do not change document retention independently of application/database retention when signing is implemented.

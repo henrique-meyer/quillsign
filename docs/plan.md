@@ -46,7 +46,7 @@ Validate Bicep, deployment scope and settings, build/image CI, the running app r
 
 ## QUILS-5: Provision isolated SES email identity and send-only credentials
 
-Status: Implemented and deployed; Jira closes when this PR merges. Domain verification is pending owner DNS. Sending remains disabled until the feedback handler and sandbox exit are ready.
+Status: Done. Infrastructure PR merged and Jira story closed. All five owner-added DNS records resolve correctly; SES verification is pending. Sending remains disabled until the feedback handler and sandbox exit are ready.
 
 Create a new domain identity with Easy DKIM and custom MAIL FROM, a configuration set with tracking disabled and suppression enabled, an SNS feedback destination, and a dedicated send-only IAM user scoped to the sender and identity. Tag supported resources into the project's AWS group. Store credentials only in the project's Key Vault and return actual DNS records privately. No email sends or production-access submission in this step; the HTTPS feedback subscription awaits its signature-validating application handler.
 
