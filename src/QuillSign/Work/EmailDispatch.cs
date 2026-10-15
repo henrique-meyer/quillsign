@@ -1,0 +1,135 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Azure;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.EntityFrameworkCore;
+using QuillSign.Data;
+using QuillSign.Email;
+
+namespace QuillSign.Work;
+
+public sealed record VerificationPayload(string Token, Guid TokenId);
+public sealed record ProtectedWorkPayload(string Protected);
+
+public sealed class EmailPayloadProtection(IDataProtectionProvider provider)
+{
+    private readonly IDataProtector protector = provider.CreateProtector("QuillSign.EmailPayload.v1");
+    public string Protect(VerificationPayload payload) => JsonSerializer.Serialize(new ProtectedWorkPayload(protector.Protect(JsonSerializer.Serialize(payload))));
+    public VerificationPayload Unprotect(string json) => JsonSerializer.Deserialize<VerificationPayload>(
+        protector.Unprotect(JsonSerializer.Deserialize<ProtectedWorkPayload>(json)?.Protected ?? throw new InvalidOperationException("Invalid email payload.")))
+        ?? throw new InvalidOperationException("Invalid email payload.");
+}
+
+public sealed record QueuedEmail(Guid Id, bool WakeupPublished);
+
+public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signals, EmailPayloadProtection protection,
+    WorkOptions workOptions, EmailOptions emailOptions, TimeProvider time)
+{
+    public async Task<QueuedEmail> EnqueueVerificationAsync(Guid envelopeId, string recipient, CancellationToken cancellationToken = default)
+    {
+        if (!workOptions.Enabled || !emailOptions.Enabled) throw new EmailDisabledException();
+        recipient = EmailAddress.Normalize(recipient);
+        if (!await db.Envelopes.AnyAsync(x => x.Id == envelopeId && x.SenderEmail == recipient && x.Status == EnvelopeStatus.Draft, cancellationToken))
+            throw new InvalidOperationException("Verification requires a matching draft sender.");
+        if (await db.Suppressions.AnyAsync(x => x.Email == recipient, cancellationToken)) throw new RecipientSuppressedException();
+        var payload = new VerificationPayload(WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32)), Guid.NewGuid());
+        var email = new EmailOutbox { EnvelopeId = envelopeId, To = recipient, Template = "sender-verification", PayloadJson = protection.Protect(payload), AvailableAt = time.GetUtcNow() };
+        var item = new WorkItem { Id = email.Id, EnvelopeId = envelopeId, Kind = WorkKind.Email, AvailableAt = email.AvailableAt,
+            PayloadJson = JsonSerializer.Serialize(new { emailId = email.Id }) };
+        await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
+        {
+            db.EmailOutbox.Add(email); db.WorkItems.Add(item);
+            await db.SaveChangesAsync(cancellationToken);
+            await signals.PutHintAsync(item.Id, item.AvailableAt, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        // Commit and queue publication cannot be atomic. The persisted hint makes a
+        // lost publication recoverable, including cancellation immediately after commit.
+        try { await signals.PublishAsync(item.Id, TimeSpan.Zero, cancellationToken); return new(item.Id, true); }
+        catch (Exception e) when (e is RequestFailedException or IOException or OperationCanceledException or HttpRequestException)
+        { return new(item.Id, false); }
+    }
+}
+
+public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options, EmailPayloadProtection protection,
+    VerificationEmailTemplate template, IEmailSender sender, TimeProvider time) : IWorkHandler
+{
+    public WorkKind Kind => WorkKind.Email;
+
+    public async Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken cancellationToken)
+    {
+        if (!options.Enabled) return new(WorkOutcome.Retry, "delivery-disabled");
+        var email = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id, cancellationToken);
+        if (email.Template != "sender-verification") return new(WorkOutcome.Failed, "unsupported-template");
+        VerificationPayload payload;
+        OutgoingEmail outgoing;
+        try
+        {
+            payload = protection.Unprotect(email.PayloadJson);
+            outgoing = (await template.RenderAsync(email.To, payload.Token, cancellationToken)) with { EnvelopeId = email.EnvelopeId };
+        }
+        catch (Exception e) when (e is CryptographicException or JsonException or ArgumentException or InvalidOperationException)
+        { return new(WorkOutcome.Failed, "invalid-payload"); }
+        if (email.EnvelopeId is null || payload.TokenId == Guid.Empty) return new(WorkOutcome.Failed, "invalid-token-scope");
+        if (await db.Suppressions.AnyAsync(x => x.Email == email.To, cancellationToken)) return new(WorkOutcome.Failed, "recipient-suppressed");
+        var at = time.GetUtcNow();
+        await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
+        {
+            // Lock the work row through token activation and submission intent. Other
+            // owners cannot submit; after expiry the persisted intent forbids resending.
+            var owned = await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {lease.Id}")
+                .AsNoTracking().SingleAsync(cancellationToken);
+            if (owned.Status != WorkStatus.Leased || owned.LeaseOwner != lease.Owner || owned.LeaseExpiresAt <= at)
+                throw new InvalidOperationException("Work lease is no longer owned.");
+            var changed = await db.EmailOutbox.Where(x => x.Id == lease.Id && x.Status == EmailStatus.Queued && x.SubmissionStartedAt == null)
+                .ExecuteUpdateAsync(set => set.SetProperty(x => x.SubmissionStartedAt, at).SetProperty(x => x.Attempts, lease.Attempt), cancellationToken);
+            if (changed != 1) throw new InvalidOperationException("Email submission is no longer available.");
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload.Token));
+            var token = await db.AuthTokens.AsNoTracking().SingleOrDefaultAsync(x => x.Id == payload.TokenId, cancellationToken);
+            if (token is null)
+            {
+                db.AuthTokens.Add(new() { Id = payload.TokenId, TokenSha256 = hash, Purpose = TokenPurpose.SenderVerify,
+                    EnvelopeId = email.EnvelopeId, Email = email.To, PartyType = PartyType.Sender, ExpiresAt = at.AddMinutes(15) });
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            else
+            {
+                if (token.UsedAt is not null || token.EnvelopeId != email.EnvelopeId || token.Email != email.To || token.Purpose != TokenPurpose.SenderVerify ||
+                    !CryptographicOperations.FixedTimeEquals(token.TokenSha256, hash)) throw new InvalidOperationException("Token scope is no longer available.");
+                await db.AuthTokens.Where(x => x.Id == token.Id).ExecuteUpdateAsync(set => set.SetProperty(x => x.ExpiresAt, at.AddMinutes(15)), cancellationToken);
+            }
+            await transaction.CommitAsync(cancellationToken);
+        }
+        try
+        {
+            var delivery = await sender.SendAsync(outgoing, cancellationToken);
+            // Late feedback can advance status; preserve it while recording the receipt.
+            await db.EmailOutbox.Where(x => x.Id == lease.Id).ExecuteUpdateAsync(set => set
+                .SetProperty(x => x.Provider, delivery.Provider).SetProperty(x => x.ProviderMessageId, delivery.MessageId)
+                .SetProperty(x => x.Status, x => x.Status == EmailStatus.Queued ? EmailStatus.Sent : x.Status), cancellationToken);
+            return new(WorkOutcome.Completed);
+        }
+        catch (EmailNotSubmittedException e)
+        {
+            await ClearSubmissionAsync(email.Id, payload.TokenId, cancellationToken);
+            return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed, "provider-rejected");
+        }
+        catch (Exception e) when (e is RecipientSuppressedException or EmailDisabledException)
+        {
+            await ClearSubmissionAsync(email.Id, payload.TokenId, cancellationToken);
+            return new(WorkOutcome.Failed, e is RecipientSuppressedException ? "recipient-suppressed" : "delivery-disabled");
+        }
+        // Any other exception might follow provider acceptance. Leave submission intent
+        // intact; expiry recovery marks it ambiguous without another provider call.
+    }
+
+    private async Task ClearSubmissionAsync(Guid id, Guid tokenId, CancellationToken cancellationToken)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.EmailOutbox.Where(x => x.Id == id).ExecuteUpdateAsync(set => set.SetProperty(x => x.SubmissionStartedAt, (DateTimeOffset?)null), cancellationToken);
+        await db.AuthTokens.Where(x => x.Id == tokenId && x.UsedAt == null).ExecuteUpdateAsync(set => set.SetProperty(x => x.ExpiresAt, time.GetUtcNow()), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+}

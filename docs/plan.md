@@ -123,9 +123,11 @@ Validation: All 98 tests passed against local SQL Server, Azurite, and Mailpit. 
 
 ## QUILS-14: Implement durable event-driven work and email dispatch
 
-Status: To Do. Depends on QUILS-9 and QUILS-13.
+Status: In Progress. Depends on completed QUILS-9 and QUILS-13. The owner approved the reviewed background-dispatch proposal; hosted email delivery remains disabled.
 
 Record the wakeup/recovery design before worker implementation: SQL Server atomic leases, retry/backoff, lease expiry, crash recovery, provider ambiguity, and delivery semantics. Implement email dispatch with reusable work contracts and local tests for competing workers, duplicate wakeups, crashes, delayed mail, exhausted retries, and suppression. Start magic-link validity at actual dispatch and protect sensitive payloads. Idle workers must not poll SQL; maintenance is batched. Propose exact hosted wakeup resources, schedule, sizing, and cost for approval before deployment. Do not promise exactly-once SES delivery without supported deduplication, implicitly approve a queue, or enable public delivery.
+
+Approved design: SQL remains authoritative; opaque queue wakeups launch a finite worker. Insert the SQL work row within a transaction, persist its unique Blob wakeup hint, then commit and publish. The worker uses a locking read to distinguish committed work from a rollback, including under snapshot defaults. Keep hints until work is terminal so a storage-only hourly recovery pass can republish missed wakeups without querying idle SQL. Leases, delayed wakeups, and bounded backoff cover retries; record submission before contacting the email provider and stop automatic retries after an ambiguous submission. Protect token-bearing payloads with persistent Data Protection and activate verification tokens at dispatch. Provide explicit worker/recovery commands and Azurite/SQL/Mailpit tests. Deploy only the approved queue, hint container, dispatch/recovery jobs, worker identity/access, and application configuration; keep actual deployment settings and operational details in local notes. Public sending, AWS changes, and later document-processing workers are outside this approval.
 
 ## QUILS-15: Build sender email verification and envelope-scoped sessions
 

@@ -1,10 +1,16 @@
 using QuillSign.Data;
 using QuillSign.Email;
+using QuillSign.Work;
 using QuillSign.Storage;
 
 if (args.Length > 0 && args[0] == "database")
 {
     Environment.ExitCode = await DatabaseCommands.RunAsync(args[1..]);
+    return;
+}
+if (args.Length > 0 && args[0] == "work")
+{
+    Environment.ExitCode = await WorkCommands.RunAsync(args[1..]);
     return;
 }
 
@@ -13,6 +19,7 @@ builder.Services.AddRazorPages();
 builder.Services.AddQuillSignDatabase(builder.Configuration);
 builder.Services.AddQuillSignStorage(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignEmail(builder.Configuration, builder.Environment);
+builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment);
 var app = builder.Build();
 
 app.Use(async (context, next) =>

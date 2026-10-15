@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([ValidateSet('Migrate', 'Test')][string]$Action = 'Migrate')
+param([ValidateSet('Migrate', 'Test', 'WorkOnce', 'RecoverWork', 'ListenWork', 'VerifyWork')][string]$Action = 'Migrate')
 
 $ErrorActionPreference = 'Stop'
 Push-Location (Join-Path $PSScriptRoot '../..')
@@ -9,6 +9,11 @@ $previousTestConnection = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_
 $previousTestStorage = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_STORAGE')
 $previousTestSmtpPort = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_SMTP_PORT')
 $previousTestMailPort = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_MAIL_PORT')
+$workPrevious = @{}
+foreach ($name in 'ASPNETCORE_ENVIRONMENT','Storage__Provider','Storage__ConnectionString','Work__Enabled','Work__QueueName','Work__HintContainer',
+    'Email__Enabled','Email__Provider','Email__FromEmail','Email__BaseUrl','Email__Smtp__Host','Email__Smtp__Port','Email__Smtp__UseStartTls') {
+    $workPrevious[$name] = [Environment]::GetEnvironmentVariable($name)
+}
 try {
     # Let Compose parse .env and honor process precedence, without printing resolved secrets.
     $resolved = docker compose config --format json | ConvertFrom-Json
@@ -31,9 +36,30 @@ try {
         $hostBlob = 'BlobEndpoint=http://127.0.0.1:' + $resolved.services.azurite.ports[0].published + '/quillsigndev'
         $env:QUILLSIGN_TEST_STORAGE = [regex]::Replace(
             $resolved.services.app.environment.Storage__ConnectionString, 'BlobEndpoint=[^;]+', $hostBlob)
+        $hostQueue = 'QueueEndpoint=http://127.0.0.1:' + $resolved.services.azurite.ports[1].published + '/quillsigndev'
+        $env:QUILLSIGN_TEST_STORAGE = [regex]::Replace($env:QUILLSIGN_TEST_STORAGE, 'QueueEndpoint=[^;]+', $hostQueue)
         $env:QUILLSIGN_TEST_SMTP_PORT = $resolved.services.mailpit.ports[0].published
         $env:QUILLSIGN_TEST_MAIL_PORT = $resolved.services.mailpit.ports[1].published
-        dotnet test tests/QuillSign.Tests/QuillSign.Tests.csproj -c Release --nologo
+        if ($Action -eq 'Test') {
+            dotnet test tests/QuillSign.Tests/QuillSign.Tests.csproj -c Release --nologo
+        } else {
+            $env:ConnectionStrings__Database = $connection.ConnectionString
+            $env:ASPNETCORE_ENVIRONMENT = 'Development'
+            $env:Storage__Provider = 'Azurite'
+            $env:Storage__ConnectionString = $env:QUILLSIGN_TEST_STORAGE
+            $env:Work__Enabled = 'true'
+            $env:Work__QueueName = $resolved.services.app.environment.Work__QueueName
+            $env:Work__HintContainer = $resolved.services.app.environment.Work__HintContainer
+            $env:Email__Enabled = 'true'
+            $env:Email__Provider = 'Smtp'
+            $env:Email__FromEmail = 'noreply@example.invalid'
+            $env:Email__BaseUrl = 'http://localhost:' + $resolved.services.app.ports[0].published
+            $env:Email__Smtp__Host = '127.0.0.1'
+            $env:Email__Smtp__Port = $env:QUILLSIGN_TEST_SMTP_PORT
+            $env:Email__Smtp__UseStartTls = 'false'
+            $command = @{ WorkOnce = 'once'; RecoverWork = 'recover'; ListenWork = 'listen'; VerifyWork = 'verify' }[$Action]
+            dotnet run --project src/QuillSign/QuillSign.csproj -c Release -- work $command
+        }
     }
     if ($LASTEXITCODE -ne 0) { throw "Local database action failed: $Action" }
 } finally {
@@ -42,5 +68,6 @@ try {
     [Environment]::SetEnvironmentVariable('QUILLSIGN_TEST_STORAGE', $previousTestStorage)
     [Environment]::SetEnvironmentVariable('QUILLSIGN_TEST_SMTP_PORT', $previousTestSmtpPort)
     [Environment]::SetEnvironmentVariable('QUILLSIGN_TEST_MAIL_PORT', $previousTestMailPort)
+    foreach ($name in $workPrevious.Keys) { [Environment]::SetEnvironmentVariable($name, $workPrevious[$name]) }
     Pop-Location
 }

@@ -18,6 +18,7 @@ jobs:
           az bicep build --file infra/hosting.bicep --stdout > /dev/null
           az bicep build --file infra/bootstrap-secrets.bicep --stdout > /dev/null
           az bicep build --file infra/sql-administrator-access.bicep --stdout > /dev/null
+          az bicep build --file infra/work.bicep --stdout > /dev/null
 
   application:
     runs-on: ubuntu-latest
@@ -66,6 +67,13 @@ jobs:
       - name: Verify migrations, storage, and protected sessions
         shell: pwsh
         run: ./scripts/dev/Use-LocalDatabase.ps1 -Action Test
+      - name: Exercise finite work commands
+        shell: pwsh
+        run: |
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action Migrate
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action RecoverWork
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action VerifyWork
       - name: Service diagnostics
         if: failure()
         run: |

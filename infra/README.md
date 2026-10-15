@@ -77,7 +77,15 @@ Review and execute the approved change set. Add the DNS records supplied by SES:
 
 Configure the application's AWS credentials through runtime secrets and environment variables, including `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`.
 
-Email delivery is not enabled yet. The app includes SES/SMTP adapters and the `/webhooks/ses` feedback endpoint; practical application settings are in the root README and `appsettings.example.json`. Before enabling public delivery, complete durable dispatch, configure and confirm the feedback subscription, and obtain SES production access. Cloud changes and live sends require operator approval. See the [SES sandbox documentation](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html).
+Email delivery is not enabled yet. The app includes durable dispatch, SES/SMTP adapters, and the `/webhooks/ses` feedback endpoint; practical application settings are in the root README and `appsettings.example.json`. Before enabling public delivery, configure and confirm the feedback subscription and obtain SES production access. Cloud changes and live sends require operator approval. See the [SES sandbox documentation](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html).
+
+## Background execution
+
+Copy `infra/work.bicepparam.example` to ignored `infra/work.bicepparam`. Supply the project's existing hosting/storage configuration and new work resource names. With `deployJobs = false`, preview and deploy the queue, hint container, and worker identity/access. Bootstrap its database access with `database provision-worker`, storing `Database:WorkerClientId` only in private configuration. Store its database connection in Key Vault.
+
+Once the matching image is published and the schema is migrated, set the private database-secret reference and `deployJobs = true`, then preview/deploy `infra/work.bicep`. Configure the web application's storage/key-ring and `Work` settings through its private `applicationEnvironment` parameters. Use the same Data Protection application name and key ring for the web and dispatch processes. Keep email disabled until launch readiness is approved.
+
+The dispatch job runs `work once`; hourly recovery runs `work recover` without SQL configuration. Run `work verify` explicitly to check the dispatch identity's database/storage/key-ring access, then verify job executions and application health. The manual Deploy workflow updates the app and both jobs to the matching commit image. Keep actual resource values and deployment records in local notes.
 
 ## GitHub deployment
 

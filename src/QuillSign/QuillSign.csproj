@@ -12,6 +12,7 @@
     <PackageReference Include="AWSSDK.SimpleEmailV2" Version="4.0.106.4" />
     <PackageReference Include="MailKit" Version="4.18.1" />
     <PackageReference Include="Azure.Storage.Blobs" Version="12.30.1" />
+    <PackageReference Include="Azure.Storage.Queues" Version="12.28.1" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Blobs" Version="1.5.4" />
     <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Keys" Version="1.6.4" />

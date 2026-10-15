@@ -42,6 +42,10 @@ jobs:
           set -euo pipefail
           app=$(az containerapp list -g "$AZURE_RESOURCE_GROUP" --query "[?tags.component=='web'].name | [0]" -o tsv)
           test -n "$app"
+          jobs=$(az containerapp job list -g "$AZURE_RESOURCE_GROUP" --query "[?tags.component=='dispatch' || tags.component=='work-recovery'].name" -o tsv)
+          while IFS= read -r job; do
+            test -z "$job" || az containerapp job update -g "$AZURE_RESOURCE_GROUP" -n "$job" --image "ghcr.io/${GITHUB_REPOSITORY}:sha-${GITHUB_SHA}" --output none
+          done <<< "$jobs"
           az containerapp update -g "$AZURE_RESOURCE_GROUP" -n "$app" \
             --image "ghcr.io/${GITHUB_REPOSITORY}:sha-${GITHUB_SHA}" \
             --revision-suffix "r${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --output none

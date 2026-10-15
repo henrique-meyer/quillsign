@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory)][string]$DatabaseName,
     [Parameter(Mandatory)][guid]$RuntimeClientId,
     [Parameter(Mandatory)][guid]$MigrationClientId,
-    [ValidateSet('provision-identities', 'migrate', 'grant-runtime')]
+    [guid]$WorkerClientId,
+    [ValidateSet('provision-identities', 'provision-worker', 'migrate', 'grant-runtime')]
     [string[]]$Operations = @('provision-identities', 'migrate', 'grant-runtime')
 )
 $ErrorActionPreference = 'Stop'
@@ -15,7 +16,7 @@ if ($RuntimeClientId -eq [guid]::Empty -or $MigrationClientId -eq [guid]::Empty 
 }
 Push-Location (Join-Path $PSScriptRoot '../..')
 $previous = @{}
-foreach ($name in 'ConnectionStrings__Database', 'Database__RuntimeClientId', 'Database__MigrationClientId') {
+foreach ($name in 'ConnectionStrings__Database', 'Database__RuntimeClientId', 'Database__MigrationClientId', 'Database__WorkerClientId') {
     $previous[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 $ruleName = 'SqlAdmin-' + [guid]::NewGuid().ToString('N')
@@ -40,6 +41,7 @@ try {
     $env:ConnectionStrings__Database = $connection.ConnectionString
     $env:Database__RuntimeClientId = $RuntimeClientId.ToString()
     $env:Database__MigrationClientId = $MigrationClientId.ToString()
+    $env:Database__WorkerClientId = $WorkerClientId.ToString()
     foreach ($operation in $Operations) {
         dotnet run --project src/QuillSign/QuillSign.csproj -c Release --no-build -- database $operation
         if ($LASTEXITCODE -ne 0) { throw "Administrative SQL operation failed: $operation" }

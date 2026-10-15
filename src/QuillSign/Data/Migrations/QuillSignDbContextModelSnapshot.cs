@@ -315,6 +315,9 @@ namespace QuillSign.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)");
 
+                    b.Property<DateTimeOffset?>("SubmissionStartedAt")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<string>("Template")
                         .IsRequired()
                         .HasMaxLength(512)

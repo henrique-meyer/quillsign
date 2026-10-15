@@ -18,6 +18,10 @@ public interface IEmailTransport
 
 public sealed class EmailDisabledException() : InvalidOperationException("Email delivery is disabled.");
 public sealed class RecipientSuppressedException() : InvalidOperationException("Delivery is suppressed for this recipient.");
+public sealed class EmailNotSubmittedException(bool retryable) : Exception("The provider did not accept this email.")
+{
+    public bool Retryable { get; } = retryable;
+}
 
 public sealed class EmailSender(EmailOptions options, Func<QuillSignDbContext> database, Func<IEmailTransport> transport) : IEmailSender
 {
@@ -31,6 +35,9 @@ public sealed class EmailSender(EmailOptions options, Func<QuillSignDbContext> d
             throw new RecipientSuppressedException();
         // Provider construction is deferred: disabled or suppressed sends never obtain
         // AWS credentials or open an SMTP connection. Durable retries belong to QUILS-14.
-        return await transport().SendAsync(message with { To = recipient }, cancellationToken);
+        IEmailTransport provider;
+        try { provider = transport(); }
+        catch (Exception e) when (e is not OperationCanceledException) { throw new EmailNotSubmittedException(true); }
+        return await provider.SendAsync(message with { To = recipient }, cancellationToken);
     }
 }

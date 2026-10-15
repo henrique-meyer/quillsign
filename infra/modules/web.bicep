@@ -8,6 +8,7 @@ param customDomainName string = ''
 param managedCertificateName string = ''
 param enableManagedCertificate bool = false
 param databaseConnectionSecretUri string = ''
+param applicationEnvironment array = []
 var tags = { project: 'quillsign' }
 // ARM still validates conditional resource IDs when certificate creation is disabled.
 var certificateResourceName = empty(managedCertificateName) ? '${webAppName}-tls' : managedCertificateName
@@ -48,7 +49,7 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
         env: concat([{ name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }], empty(databaseConnectionSecretUri) ? [] : [{
           name: 'ConnectionStrings__Database'
           secretRef: 'database-connection'
-        }])
+        }], applicationEnvironment)
         probes: [for probe in [ 'Liveness', 'Readiness', 'Startup' ]: {
           type: probe
           httpGet: { path: '/health', port: 8080 }
