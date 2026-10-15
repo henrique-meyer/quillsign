@@ -1,0 +1,5 @@
+# Copy to deployment.local.ps1 (ignored) and fill these fields locally.
+$awsRegion = ''
+$awsStackName = ''
+$awsGroupName = ''
+$awsProjectTagValue = ''

@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Dedicated tag-based resource group for project-owned AWS resources.
+
+Parameters:
+  GroupName:
+    Type: String
+    MinLength: 1
+    MaxLength: 128
+    Description: Dedicated resource group name from ignored local deployment parameters.
+  ProjectTagValue:
+    Type: String
+    MinLength: 1
+    Description: Unique project tag value from ignored local deployment parameters.
+
+Resources:
+  ProjectResourceGroup:
+    Type: AWS::ResourceGroups::Group
+    Properties:
+      Name: !Ref GroupName
+      Description: Project-owned email infrastructure.
+      ResourceQuery:
+        Type: TAG_FILTERS_1_0
+        Query:
+          ResourceTypeFilters:
+            - AWS::AllSupported
+          TagFilters:
+            - Key: Project
+              Values:
+                - !Ref ProjectTagValue
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+Outputs:
+  ResourceGroupName:
+    Value: !Ref ProjectResourceGroup
+  ResourceGroupArn:
+    Value: !GetAtt ProjectResourceGroup.Arn
