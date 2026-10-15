@@ -4,7 +4,7 @@ Tasks are recorded here and in Jira before implementation. Private deployment na
 
 ## QUILS-3: Create QuillSign SVG logos and matching PNG exports
 
-Status: Implemented, including the coral-red product accent; Jira closes when this PR merges.
+Status: Done. Branding PRs merged and Jira story closed, including the coral-red product accent.
 
 Create QuillSign branding inspired by the existing DocPilot assets, with a distinct signing motif and product accent. Keep the navy tile and cream document; use a coral-red feather with a darker red facet so QuillSign is visibly distinct from DocPilot's gold. Deliver `assets/logo.svg` as the app icon, `assets/logo-mark.svg` as a transparent header mark, and matching `assets/logo.png` and `assets/logo-mark.png` exports. This story covers asset creation and raster exports; application integration is separate work.
 
@@ -28,7 +28,7 @@ Other app, storage, vault, logging, email, AI, DNS, and converter resources requ
 
 ## QUILS-2: Create the dedicated AWS resource group
 
-Status: Implemented and deployed; Jira closes when this PR merges. CloudFormation lint, Bicep compilation, and secret-scan CI checks passed.
+Status: Done. Infrastructure PR merged and Jira story closed. CloudFormation lint, Bicep compilation, and secret-scan CI checks passed.
 
 Create a new tag-based AWS Resource Group in the project's SES region using the owner-supplied name from ignored configuration. Tag project-owned resources consistently, use dedicated names and permissions, and document which resource types the group supports. Group membership organizes resources; IAM permissions provide security isolation.
 
@@ -46,7 +46,7 @@ Validate Bicep, deployment scope and settings, build/image CI, the running app r
 
 ## QUILS-5: Provision isolated SES email identity and send-only credentials
 
-Status: Done. Infrastructure PR merged and Jira story closed. All five owner-added DNS records resolve correctly; SES verification is pending. Sending remains disabled until the feedback handler and sandbox exit are ready.
+Status: Done. Infrastructure PR merged and Jira story closed. All five owner-added DNS records resolve correctly, and SES verified DKIM and custom MAIL FROM. Sending remains disabled until the feedback handler and sandbox exit are ready.
 
 Create a new domain identity with Easy DKIM and custom MAIL FROM, a configuration set with tracking disabled and suppression enabled, an SNS feedback destination, and a dedicated send-only IAM user scoped to the sender and identity. Tag supported resources into the project's AWS group. Store credentials only in the project's Key Vault and return actual DNS records privately. No email sends or production-access submission in this step; the HTTPS feedback subscription awaits its signature-validating application handler.
 

@@ -7,3 +7,11 @@
 !Dockerfile
 src/**/bin/
 src/**/obj/
+**/appsettings.Development.json
+**/appsettings.Local.json
+**/.env
+**/.env.*
+**/*.pfx
+**/*.p12
+**/*.pem
+**/*.key
