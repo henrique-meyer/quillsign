@@ -19,6 +19,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
     public async Task<WorkClaim> ClaimAsync(Guid id, CancellationToken cancellationToken)
     {
         db.ChangeTracker.Clear(); // Each claim reads current state, including repeat CLI/test calls.
+        await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(cancellationToken), cancellationToken);
         var now = time.GetUtcNow();
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         // UPDLOCK/HOLDLOCK also disables snapshot reads for this key. An insert which

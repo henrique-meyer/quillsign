@@ -1,3 +1,5 @@
+using QuillSign.Data;
+
 namespace QuillSign.Work;
 
 public sealed class WorkProcessor(WorkStore store, IWorkSignals signals, IEnumerable<IWorkHandler> handlers, TimeProvider time)
@@ -8,7 +10,16 @@ public sealed class WorkProcessor(WorkStore store, IWorkSignals signals, IEnumer
         if (delivery is null) return false; // Empty queue must never open SQL.
         if (delivery.WorkId is not { } id)
         { await signals.AcknowledgeAsync(delivery, cancellationToken); return true; }
-        var claim = await store.ClaimAsync(id, cancellationToken);
+        WorkClaim claim;
+        try { claim = await store.ClaimAsync(id, cancellationToken); }
+        catch (Exception e) when (SqlResume.IsUnavailable(e))
+        {
+            // A database paused on allowance exhaustion must not cause a hot loop.
+            var delay = TimeSpan.FromMinutes(15);
+            await signals.PutHintAsync(id, time.GetUtcNow() + delay, cancellationToken);
+            await signals.DeferAsync(delivery, delay, cancellationToken);
+            return true;
+        }
         if (claim.Terminal)
         {
             await signals.RemoveHintAsync(id, cancellationToken);

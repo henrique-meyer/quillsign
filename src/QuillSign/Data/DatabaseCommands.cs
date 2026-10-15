@@ -22,7 +22,7 @@ public static class DatabaseCommands
             using var provider = builder.Services.BuildServiceProvider();
             await using var scope = provider.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<QuillSignDbContext>();
-            if (args[0] == "migrate") await db.Database.MigrateAsync();
+            if (args[0] == "migrate") await SqlResume.RunAsync(() => db.Database.MigrateAsync());
             else if (args[0] == "verify-runtime") await VerifyRuntimeAsync(db);
             else
             {

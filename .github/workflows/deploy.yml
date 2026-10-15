@@ -44,7 +44,12 @@ jobs:
           test -n "$app"
           jobs=$(az containerapp job list -g "$AZURE_RESOURCE_GROUP" --query "[?tags.component=='dispatch' || tags.component=='work-recovery'].name" -o tsv)
           while IFS= read -r job; do
-            test -z "$job" || az containerapp job update -g "$AZURE_RESOURCE_GROUP" -n "$job" --image "ghcr.io/${GITHUB_REPOSITORY}:sha-${GITHUB_SHA}" --output none
+            if [ -n "$job" ]; then
+              expected="ghcr.io/${GITHUB_REPOSITORY}:sha-${GITHUB_SHA}"
+              az containerapp job update -g "$AZURE_RESOURCE_GROUP" -n "$job" --image "$expected" --output none
+              actual=$(az containerapp job show -g "$AZURE_RESOURCE_GROUP" -n "$job" --query properties.template.containers[0].image -o tsv)
+              test "$actual" = "$expected"
+            fi
           done <<< "$jobs"
           az containerapp update -g "$AZURE_RESOURCE_GROUP" -n "$app" \
             --image "ghcr.io/${GITHUB_REPOSITORY}:sha-${GITHUB_SHA}" \
