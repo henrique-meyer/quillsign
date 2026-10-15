@@ -60,7 +60,22 @@ The app still serves the bootstrap page; EF Core, storage, conversion, and email
 
 Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
 
-To run the same service, conversion/isolation, SMTP, and stop/start persistence checks as CI, install Python 3.12+ and run `python scripts/dev/smoke.py` with the stack running. This briefly stops and restarts the stack and leaves one synthetic message in Mailpit. EF Core with the SQL Server provider is the chosen persistence layer; application database integration is next.
+To run the same service, conversion/isolation, SMTP, and stop/start persistence checks as CI, install Python 3.12+ and run `python scripts/dev/smoke.py` with the stack running. This briefly stops and restarts the stack and leaves one synthetic message in Mailpit.
+
+### Database development
+
+EF Core 10 uses the SQL Server provider. The initial migration defines envelopes, signers, recipients, fields, hashed auth tokens, audit events, email outbox, leased work records, and suppression. With the local stack running:
+
+```sh
+pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action Migrate
+pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action Test
+```
+
+The helper reads local SQL settings through Compose and supplies credentials only to the child process. Migrate applies the committed migrations to `QuillSignDev`; Test creates and removes an isolated database and exercises actual SQL constraints and concurrency. SQL administrator credentials are for local development only.
+
+For application database features, set `ConnectionStrings__Database` through environment variables or ignored `appsettings.Development.json`, using `appsettings.example.json` as a template. Container connections use the `sql` service hostname; host CLI connections use the published SQL port. Starting the app never applies migrations or connects to SQL, and `/health` stays database independent. Hosted connectivity and runtime/migration permissions are tracked separately.
+
+Restore the pinned EF CLI with `dotnet tool restore`. Generate migrations using `dotnet ef migrations add <Name> --project src/QuillSign/QuillSign.csproj`; CI rejects model changes without a matching migration. Audit events use a documented canonical hash format and reject tracked edits/deletes; database permission enforcement and privileged retention are separate work.
 
 ## Build and deployment
 
@@ -70,7 +85,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- Application database connectivity and EF Core integration.
+- Hosted database connectivity and runtime/migration permissions.
 - Document storage, persistent application keys, and the sender/signing workflows.
 - Office conversion and background processing.
 - Signature-validated SNS feedback handling, email adapters, and SES production access before enabling delivery.
