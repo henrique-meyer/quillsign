@@ -269,7 +269,7 @@ Validation: All 241 application tests pass after integrating the renderer; focus
 
 ## QUILS-26: Authenticate sequential signers with single-use invitation sessions
 
-Status: In Progress. Builds on QUILS-24 and QUILS-25 once merged. Owned by the overnight-development chat.
+Status: Implementation complete. Builds on merged QUILS-24 and QUILS-25. Owned by the overnight-development chat.
 
 Build internal SignerAccess token creation/redemption and separate short-lived, non-sliding signer cookie/context services. Tokens have 256-bit entropy, SHA-256-only storage and envelope/signer/purpose/email binding; plaintext exists only in memory for a future actual-dispatch caller. Start default 24-hour invitation expiry at dispatch, default signer session two hours, bound configuration and clamp to envelope expiry. Expose no issuance endpoint, consent/signing UI or mail operation.
 
@@ -278,3 +278,5 @@ Require a Sent, unexpired envelope, current eligible sequential signer, frozen P
 Test concurrent redemption/replay, timing, state/order/scope isolation, changed document/disclosure and ERSD tampering, cookie scopes, audit rollback and actor evidence with synthetic data. Document future mail/consent integration, add safe config/examples, pass checks/secret scans, commit/push/open/attach/merge a small QUILS-26 PR and move Done. No signing enablement, consent acceptance, field mutation, live mail, deployment configuration or cloud changes.
 
 Frozen reads use a distinct immutable object ID in the existing normalized container. Add narrowly scoped signer copy authorization for that exact envelope/object and live session; writes/deletion require sender identity. Future handlers must revalidate current signer context before copying. No new container or cloud resource.
+
+Validation: All 262 application tests pass. New coverage verifies four concurrent consumers yield one identity/audit event, replay and premature order leave tokens untouched, purpose/party/email/state/expiry/ERSD/frozen-reference isolation, changed cookie/current bindings, non-sliding context expiry, audit rollback and retry, dispatch-time token expiry/clamping and entropy. Actual HTTP cookie tests verify HttpOnly/Lax, sender isolation, no refresh and middleware rejection at the expiry boundary. Real Azurite copy permits only the frozen object and denies signer writes/deletes, other kinds/objects/envelopes and mixed/expired/ambiguous claims. Model and vendor checks pass. No public endpoint/UI, consent, mail or cloud changes.

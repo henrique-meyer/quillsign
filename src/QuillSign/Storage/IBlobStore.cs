@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using QuillSign.Signing;
 
 namespace QuillSign.Storage;
 
@@ -23,9 +24,22 @@ public static class EnvelopeStorageAuthorization
     public const string SenderScheme = "QuillSign.Sender";
     public const string EnvelopeClaim = "quillsign:envelope";
 
+    public static void DemandRead(ClaimsPrincipal principal,DocumentBlob blob)
+    {
+        if (principal.Identities.Any(i => i.IsAuthenticated && i.AuthenticationType == SignerAccessConfiguration.Scheme))
+        {
+            var signer = SignerAccessConfiguration.ReadIdentity(principal,DateTimeOffset.UtcNow);
+            if (signer is not null && blob.Kind == DocumentBlobKind.Normalized && blob.EnvelopeId == signer.EnvelopeId && blob.ObjectId == signer.DocumentId) return;
+            throw new UnauthorizedAccessException("A current signer session for this frozen document is required.");
+        }
+        Demand(principal,blob);
+    }
+
     public static void Demand(ClaimsPrincipal sender, DocumentBlob blob)
     {
-        var identities = sender.Identities.Where(i => i.IsAuthenticated && i.AuthenticationType == SenderScheme);
+        var identities = sender.Identities.Where(i => i.IsAuthenticated).ToArray();
+        if (identities.Length != 1 || identities[0].AuthenticationType != SenderScheme)
+            throw new UnauthorizedAccessException("A verified sender session for this envelope is required.");
         var claims = identities.SelectMany(i => i.FindAll(EnvelopeClaim)).ToArray();
         if (blob.EnvelopeId == Guid.Empty || claims.Length != 1 ||
             !Guid.TryParse(claims[0].Value, out var authorized) || authorized != blob.EnvelopeId)
