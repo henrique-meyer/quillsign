@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace QuillSign.Sender;
 
-public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed, SignerSaved, SignerRemoved, SignersReordered, PreviewRequired }
+public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed, SignerSaved, SignerRemoved, SignersReordered, PreviewRequired, DetailsSaved, RecipientSaved, RecipientRemoved }
 
 public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvironment environment)
 {
@@ -44,7 +44,10 @@ public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvi
         NoticeCode.SignerSaved => "Signer saved. No invitation has been sent.",
         NoticeCode.SignerRemoved => "Signer removed from this draft.",
         NoticeCode.SignersReordered => "Signing order updated.",
-        NoticeCode.PreviewRequired => "Confirm the current PDF preview before setting up signers or fields.",
+        NoticeCode.PreviewRequired => "Confirm the current PDF preview before continuing.",
+        NoticeCode.DetailsSaved => "Document details saved. Nothing has been sent.",
+        NoticeCode.RecipientSaved => "Completion recipient saved. Nothing has been sent.",
+        NoticeCode.RecipientRemoved => "Completion recipient removed from this draft.",
         _ => "We couldn't complete that request right now. Please try again shortly."
     };
 }
