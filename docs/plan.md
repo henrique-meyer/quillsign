@@ -167,7 +167,7 @@ Validation: Primary legal/technical sources were reviewed and linked with pinpoi
 
 ## QUILS-19: Build signer setup and sequential ordering for confirmed drafts
 
-Status: To Do. Depends on merged QUILS-16 and the existing sender/persistence foundation. Owned by the overnight-development chat.
+Status: In Progress. Independent service work uses the existing sender/persistence foundation. Final PDF-preview navigation integration, browser validation, and merge depend on merged QUILS-16. Owned by the overnight-development chat.
 
 Let the verified sender manage the ordered signer list for their own confirmed PDF draft. Provide accessible responsive Razor Pages to add/edit/remove signers, enter full name/email/optional role, add the verified sender, and reorder with keyboard-accessible controls. Require the current PDF confirmation, sender/envelope ownership, and draft status. Enforce server validation, normalized case-insensitive unique emails, and a configurable maximum of 10 signers by default. Use antiforgery and clean redirect/one-time browser notices.
 
