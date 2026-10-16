@@ -1,0 +1,38 @@
+name: PDF seal feasibility
+
+on:
+  pull_request:
+    paths:
+      - 'tools/PdfSealSpike/**'
+      - 'scripts/dev/Test-PdfSealSpike.ps1'
+      - 'docs/pdf-seal-feasibility.md'
+      - '.github/workflows/pdf-seal-spike.yml'
+  push:
+    paths:
+      - 'tools/PdfSealSpike/**'
+      - 'scripts/dev/Test-PdfSealSpike.ps1'
+      - 'docs/pdf-seal-feasibility.md'
+      - '.github/workflows/pdf-seal-spike.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  seal:
+    name: PDF seal (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Exercise offline seal and independent verification
+        shell: pwsh
+        run: ./scripts/dev/Test-PdfSealSpike.ps1
+      - name: Check dependency vulnerabilities
+        run: dotnet list tools/PdfSealSpike/PdfSealSpike.csproj package --vulnerable --include-transitive

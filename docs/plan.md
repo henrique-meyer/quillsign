@@ -164,3 +164,13 @@ Create tracked `docs/e-signature-requirements.md` with a README link. Cover US E
 Validate source provisions, consumer access/withdrawal/change disclosures, retained copies and delivery-failure handling, an unchecked release checklist, Markdown links, whitespace, and secret scans. Commit, push, open and merge a small QUILS-17 PR, then move Jira to Done in the same pass.
 
 Validation: Primary legal/technical sources were reviewed and linked with pinpoint provisions and a review date. Local links and source references resolve, all 15 release criteria remain unchecked, whitespace checks pass, and Gitleaks reports no documentation secrets. The guide distinguishes legal duties from product controls and planned behavior from compliance claims. No application or cloud configuration changed.
+
+## QUILS-18: Validate completion PDF sealing and timestamp feasibility
+
+Status: Implementation complete. Independent feasibility spike; QUILS-16 continues separately.
+
+Add a standalone .NET 10 developer harness using MIT-licensed PDFsharp 6.2.4 and permissive BouncyCastle. Generate synthetic PDFs and ephemeral certificates only. Exercise one completion signature, inspect ByteRange/SubFilter/CMS attributes and an RFC 3161 timestamp, and independently verify integrity and timestamp binding. Include deterministic offline TSA simulation and altered/truncated/failed-TSA cases so CI needs no external services or credentials. Keep the harness separate from production APIs, certificate providers, storage, and signing workflow.
+
+Document reproducible commands, precise format/trust findings, sizing/round-trip behavior, independent validation evidence and limits, and completion integration decisions. Do not claim Acrobat/DSS or PAdES conformance without observed results. Generated PDFs and keys remain ignored or outside git. Pass meaningful Windows/Linux checks and secret scans, commit/push/merge a small QUILS-18 PR, and move Jira Done. No cloud resources or live email.
+
+Validation: The Windows offline harness passes CMS/timestamp verification in .NET, BouncyCastle, and OpenSSL, rejecting changed/truncated/appended content, unexpected certificates, and HTTP/malformed/imprint/nonce TSA failures. It confirms two initial TSA calls and one on signer reuse. The built-in signer's unsigned signing-time is rejected by BouncyCastle; the custom prototype fixes attribute placement and adds signed certificate binding. [Findings and commands](pdf-seal-feasibility.md) document the observed `adbe.pkcs7.detached` container and pending Acrobat/DSS/public-trust/PAdES integration gates. Dedicated Windows/Linux CI repeats the harness. No runtime or cloud configuration changed.
