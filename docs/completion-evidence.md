@@ -1,6 +1,6 @@
 # Authoritative completion evidence collection
 
-QUILS-43 adds `CompletionEvidenceCollector.CollectAsync` as an internal read-only prerequisite for final packet preparation. It returns an owned typed completion snapshot, the exact last signer checkpoint, verified geometry and a transient database-state binding. There is no public collection endpoint, completion job, state transition, final blob publication, seal/TSA request or mail operation in this service.
+QUILS-43 adds `CompletionEvidenceCollector.CollectAsync` as an internal read-only prerequisite for final packet preparation. It returns an owned typed completion snapshot, the exact last signer checkpoint, verified geometry and transient full/frozen database-state bindings. QUILS-44 uses those in [immutable candidate preparation](completion-candidates.md). There is no public collection endpoint, completion job, state transition, final blob publication, seal/TSA request or mail operation in this service.
 
 ## Eligibility and recorded facts
 
@@ -18,7 +18,7 @@ Collection first locks and verifies a database frame, then releases that transac
 
 Bounded reads hash the actual original/converted/sent bytes, every earlier source/checkpoint and accepted mark. Missing or corrupt objects fail closed without falling back to an older copy. The final checkpoint is returned byte-for-byte; parsing only derives/verifies geometry and its rewritten output is discarded. Before returning, a second locked read revalidates the complete frame and audit anchor. Concurrent changes require a fresh collection; no mixed snapshot or partial result is exposed.
 
-The state binding is for the collector's optimistic recheck and the future candidate-preparation boundary. It includes row versions and the audit anchor, so it is not a permanent final-file hash or a replacement for the snapshot/audit hashes. A future durable preparation commit must recheck its source state before freezing a candidate. Later publication must account explicitly for its own operational writes and appended audit tail.
+The full state binding includes row versions and the audit anchor for the collector's optimistic recheck and candidate-preparation commit. The separate frozen-row binding excludes only that anchor; saved candidate reads verify the same historical prefix while allowing a verified append-only operational audit tail. Neither is a permanent final-file hash or a replacement for the snapshot/audit hashes. Later final publication must account explicitly for its own operational writes.
 
 The service checks aggregate stored canonical audit/acceptance payload size in SQL before materializing those payloads (16 MiB of stored text bytes), then bounds audit parsing to 512 events and 8 MiB UTF-8 JSON. Existing field/party and renderer limits still apply; document reads are at most 64 MiB and PNG reads follow the existing 512 KiB normalization contract. Excess data is rejected without truncation. Cancellation and read-capability expiry return no material. Registration performs no collection or network/storage/database I/O.
 
