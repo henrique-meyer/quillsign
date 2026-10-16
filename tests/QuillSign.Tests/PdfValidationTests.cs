@@ -22,6 +22,7 @@ public sealed class PdfValidationTests
     [Theory]
     [InlineData("plain")]
     [InlineData("header-only")]
+    [InlineData("missing-xref")]
     [InlineData("truncated")]
     [InlineData("xfa")]
     [InlineData("signature")]
@@ -37,6 +38,7 @@ public sealed class PdfValidationTests
         {
             "plain" => Encoding.ASCII.GetBytes("This is not a PDF file."),
             "header-only" => Encoding.ASCII.GetBytes("%PDF-1.7\nsynthetic\n%%EOF"),
+            "missing-xref" => Encoding.ASCII.GetBytes("%PDF-1.7\nsynthetic bad PDF\n%%EOF"),
             "truncated" => PdfFixtures.Create()[..^10],
             "xfa" => PdfFixtures.Create(catalog: "/AcroForm << /XFA (synthetic) >>"),
             "signature" => PdfFixtures.Create(catalog: "/AcroForm << /Fields [<< /FT /Sig /V << /Type /Sig /ByteRange [0 1 2 3] /Contents <0000> >> >>] >>"),

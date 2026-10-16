@@ -241,6 +241,20 @@ Test ownership/verification/state, coherent stale/current snapshots, absent PDF/
 
 Validation: All 192 application tests pass. Review coverage verifies access/verification/state, missing preparation data, malformed metadata, invalid fields and sender values, false checkboxes/leap dates, warning-only signers, no mutations, refreshed tracked snapshots, actual SQL writer contention, HTTP encoding and private no-store responses. Desktop and 390-pixel browser checks cover summaries, corrective keyboard navigation, missing-value errors and repair, false-checkbox acceptance, recipient/detail/editor links, and a 512-character unbroken title without horizontal overflow. Review-specific styles are versioned. No mail or cloud changes.
 
+## QUILS-24: Implement bounded sender-prefill PDF rendering for the send foundation
+
+Status: Implementation complete. Builds on merged QUILS-22 and includes merged QUILS-23 review. Owned by the overnight-development chat.
+
+Implement a reusable production-managed sender-prefill renderer with MIT PDFsharp 6.2.4, the verified rotated CropBox/UserUnit transform, and embedded hash-pinned OFL Liberation Sans 2.1.5. Managed Apache-2.0 PdfPig may validate cmap glyphs; native PDFium/SkiaSharp/PDFtoImage stay isolated in testing. Initialize the PDFsharp font resolver safely for repeated/concurrent renders.
+
+Accept bounded normalized PDF bytes with expected SHA-256 and validated page geometry, and only unassigned Text/Checkbox/Date fields with stable IDs, valid placement and nonempty valid values. Recheck existing encrypted/signed/XFA/malformed-source policy. Reject changed bytes/metadata, assigned/invalid fields, unsupported glyphs/scripts/controls, invalid dates/checkboxes, overflow/unreadable fields and byte/field limits. Preserve original content and physical font sizing, use NFC/explicit lines/deterministic 8–12 point fitting and vector checkboxes. Return bytes/hashes only after successful bounded serialization; never return partial output.
+
+Embed the exact font and complete notice in build/publish. Exercise the actual production renderer with the independent nine-case Windows/Linux harness, preserving existing prototype cases; test rejection, bounds, repeated/concurrent rendering and no application mutation. Verify original embedded text, Unicode/fitting/checkbox output and publish hashes. Document limits and the later authorization/revalidation/immutable hash/outbox transaction contract. No public endpoint/UI, signer value/image stamping, envelope mutations, persistent blob writes, mail, deployment or cloud changes. Pass checks and secret scans, commit/push/open/attach/merge a small QUILS-24 PR, then move Done.
+
+Malformed-source regression: PDFsharp throws a plain System.Exception from its parser when startxref is absent. Translate that exact upstream parser failure into the existing document-rejection path, preserve unrelated/runtime failures, and add an upload-validator regression case as part of this source-policy requirement. Rendering uses the existing storage byte limit with an additional 64 MiB in-memory ceiling, existing page cap, and the editor's maximum of 200 fields.
+
+Validation: All 222 application tests pass, including preserved multi-page original text, NFC/Unicode, source/output hashes, invalid/assigned/duplicate/overflow fields, source policy and metadata changes, byte/page/field limits, eight concurrent renderer instances, and exact embedded-font/upstream-notice integrity. The independent harness passes all nine actual production-renderer cases alongside nine prototype cases and 25 negative cases on Windows and offline in the minimal Linux app runtime. Published output retains exact font/OFL/PdfPig license/notice bytes. The web dependency graph excludes native PDF test engines; dependency audit and vendor verification pass. No endpoint, persistence mutation, mail or cloud changes.
+
 ## QUILS-25: Build versioned electronic-record disclosure snapshots
 
 Status: In Progress. Independent preparation for the future send/consent workflow. Owned by the overnight-development chat.

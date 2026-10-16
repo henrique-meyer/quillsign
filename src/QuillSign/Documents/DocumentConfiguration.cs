@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http.Features;
 using QuillSign.Legal;
+using QuillSign.Signing;
 
 namespace QuillSign.Documents;
 
@@ -17,6 +18,8 @@ public static class DocumentConfiguration
         services.AddSingleton(preparation); services.AddScoped<DraftDetails>(); services.AddScoped<DraftReview>();
         services.AddSingleton(config.GetSection("ElectronicRecords").Get<ElectronicRecordOptions>() ?? new());
         services.AddSingleton<ElectronicRecordDisclosure>();
+        services.AddSingleton(sp => new SenderPdfRenderer(storageMaximum, options.MaximumPages,
+            sp.GetRequiredService<FieldEditorOptions>().MaximumFields));
         services.Configure<FormOptions>(form => { form.MultipartBodyLengthLimit = options.MaximumBytes; form.ValueCountLimit = 16; });
         return services;
     }

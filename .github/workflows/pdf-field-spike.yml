@@ -8,8 +8,11 @@ on:
       - 'scripts/dev/vendor_pdfjs.py'
       - 'src/QuillSign/wwwroot/vendor/pdfjs/**'
       - 'src/QuillSign/Documents/PdfValidation.cs'
+      - 'src/QuillSign/Documents/EmbeddedPdfFont.cs'
+      - 'src/QuillSign/Documents/SenderPdfRenderer.cs'
       - 'src/QuillSign/Signing/FieldGeometry.cs'
       - 'docs/pdf-field-feasibility.md'
+      - 'docs/sender-pdf-rendering.md'
       - '.github/workflows/pdf-field-spike.yml'
   push:
     paths:
@@ -18,8 +21,11 @@ on:
       - 'scripts/dev/vendor_pdfjs.py'
       - 'src/QuillSign/wwwroot/vendor/pdfjs/**'
       - 'src/QuillSign/Documents/PdfValidation.cs'
+      - 'src/QuillSign/Documents/EmbeddedPdfFont.cs'
+      - 'src/QuillSign/Documents/SenderPdfRenderer.cs'
       - 'src/QuillSign/Signing/FieldGeometry.cs'
       - 'docs/pdf-field-feasibility.md'
+      - 'docs/sender-pdf-rendering.md'
       - '.github/workflows/pdf-field-spike.yml'
 
 permissions:

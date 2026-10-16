@@ -7,9 +7,12 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Legal/electronic-record-disclosure.txt" LogicalName="QuillSign.Legal.ElectronicRecordDisclosure.txt" />
+    <EmbeddedResource Include="wwwroot/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf" LogicalName="QuillSign.Fonts.LiberationSans-Regular.ttf" />
     <Content Include="../../assets/logo.svg" Link="wwwroot/logo.svg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../assets/logo-mark.svg" Link="wwwroot/logo-mark.svg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../licenses/PDFsharp-MIT.txt" Link="licenses/PDFsharp-MIT.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../licenses/PdfPig-LICENSE.txt" Link="licenses/PdfPig-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../licenses/PdfPig-NOTICES.txt" Link="licenses/PdfPig-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
@@ -26,6 +29,7 @@
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.13" />
     <PackageReference Include="PDFsharp" Version="6.2.4" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
 </Project>
