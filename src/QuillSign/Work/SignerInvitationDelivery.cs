@@ -7,7 +7,7 @@ using QuillSign.Email;
 using QuillSign.Signing;
 namespace QuillSign.Work;
 
-public sealed record SignerInvitationPayload(Guid SignerId,Guid? LastTokenId = null);
+public sealed record SignerInvitationPayload(Guid SignerId,Guid? LastTokenId = null,Guid DocumentId=default,string? DocumentSha256=null,string? DisclosureSha256=null);
 public sealed class SignerInvitationProtection(IDataProtectionProvider provider)
 {
     private readonly IDataProtector protector = provider.CreateProtector("QuillSign.SignerInvitationPayload.v1");
@@ -18,12 +18,16 @@ public sealed class SignerInvitationProtection(IDataProtectionProvider provider)
 public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSignals> signals,WorkOptions work,EmailOptions email,
     SignerInvitationProtection protection,TimeProvider time)
 {
-    public async Task<Guid> PrepareAsync(Guid envelopeId,Guid signerId,string recipient,CancellationToken ct)
+    public async Task<Guid> PrepareAsync(Guid envelopeId,Guid signerId,string recipient,CancellationToken ct,Guid? invitationId=null)
     {
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("Preparing invitations requires a transaction.");
         if (!work.Enabled || !email.Enabled) throw new EmailDisabledException();
+        var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==envelopeId,ct);
+        var source=await new SignerCheckpointState(db,time).CurrentAsync(envelope,ct) ?? throw new InvalidDataException("Current invitation document is unavailable.");
+        if(envelope.ErsdSha256 is not { Length:32 })throw new InvalidDataException("Current invitation disclosure is unavailable.");
         var row = new EmailOutbox { EnvelopeId = envelopeId,To = EmailAddress.Normalize(recipient),Template = "signer-invitation",
-            PayloadJson = protection.Protect(new(signerId)),AvailableAt = time.GetUtcNow() };
+            PayloadJson = protection.Protect(new(signerId,DocumentId:source.ObjectId,DocumentSha256:Convert.ToHexStringLower(source.Sha256),DisclosureSha256:Convert.ToHexStringLower(envelope.ErsdSha256))),AvailableAt = time.GetUtcNow() };
+        if(invitationId is Guid id) { if(id==Guid.Empty)throw new ArgumentException("Invalid invitation ID."); row.Id=id; }
         db.EmailOutbox.Add(row); db.WorkItems.Add(new WorkItem { Id = row.Id,EnvelopeId = envelopeId,Kind = WorkKind.Email,AvailableAt = row.AvailableAt });
         await db.SaveChangesAsync(ct); await signals().PutHintAsync(row.Id,row.AvailableAt,ct); return row.Id;
     }
@@ -52,12 +56,14 @@ public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess 
             // All sender/signer mutations use envelope first. Never lock work before this scope.
             var eligible = await access.GetEligibleLockedAsync(envelopeId,payload.SignerId,ct);
             if (eligible is null || eligible.Identity.Email != email.To) return new(WorkOutcome.Failed,"invitation-unavailable"); context = eligible;
+            if(payload.DocumentId!=context.Identity.DocumentId || payload.DocumentSha256!=context.Identity.DocumentHash || payload.DisclosureSha256!=context.Identity.DisclosureHash)
+                return new(WorkOutcome.Failed,"invitation-source-changed");
             if (await db.Suppressions.AnyAsync(x => x.Email == email.To,ct)) return new(WorkOutcome.Failed,"recipient-suppressed");
             var owned = await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {lease.Id}").AsNoTracking().SingleAsync(ct);
             var now = time.GetUtcNow();
             if (owned.Status != WorkStatus.Leased || owned.LeaseOwner != lease.Owner || owned.LeaseExpiresAt <= now) throw new InvalidOperationException("Work lease is no longer owned.");
             var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == envelopeId,ct);
-            invitation = tokens.Create(envelopeId,payload.SignerId,email.To,envelope.ExpiresAt);
+            invitation = tokens.Create(envelopeId,payload.SignerId,email.To,envelope.ExpiresAt,context.Identity.DocumentId,context.DocumentSha256,context.Disclosure.Sha256);
             outgoing = await template.RenderAsync(context,envelope.Message,invitation.RawToken,invitation.Record.ExpiresAt,ct);
             if (invitation.Record.ExpiresAt <= time.GetUtcNow()) return new(WorkOutcome.Failed,"invitation-expired");
             var protectedScope = protection.Protect(payload with { LastTokenId = invitation.Record.Id });

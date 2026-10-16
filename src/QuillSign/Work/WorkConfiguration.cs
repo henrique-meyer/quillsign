@@ -59,6 +59,8 @@ public static class WorkConfiguration
             services.AddScoped<EmailPayloadProtection>();
             services.AddScoped<EmailOutboxWriter>();
             services.AddScoped<IWorkHandler, EmailWorkHandler>();
+            services.AddScoped<SignerCheckpointJobs>(); services.AddScoped<SignerCheckpointState>(); services.AddScoped<SignerCheckpointBlobs>();
+            services.AddScoped<IWorkHandler,SignerCheckpointHandler>();
         }
         return services;
     }

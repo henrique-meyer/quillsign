@@ -40,6 +40,8 @@ public sealed class Envelope : IVersionedRecord
     public DateTimeOffset? PreviewConfirmedAt { get; set; }
     public string? SentPdfBlob { get; set; }
     public byte[]? SentPdfSha256 { get; set; }
+    public Guid? CurrentFinishId { get; set; }
+    public int CurrentCopyVersion { get; set; }
     public string? FinalBlob { get; set; }
     public byte[]? FinalSha256 { get; set; }
     public string? CertificateBlob { get; set; }
@@ -170,6 +172,7 @@ public sealed class SignerFinishAcceptance : IVersionedRecord
     public string? Ip { get; set; }
     public string? UserAgent { get; set; }
     public DateTimeOffset? ProcessedAt { get; set; }
+    public Guid? NextInvitationId { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }
 
@@ -211,6 +214,9 @@ public sealed class AuthToken : IVersionedRecord
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public byte[] TokenSha256 { get; set; } = [];
+    public Guid? DocumentId { get; set; }
+    public byte[]? DocumentSha256 { get; set; }
+    public byte[]? DisclosureSha256 { get; set; }
     public TokenPurpose Purpose { get; set; }
     public Guid? EnvelopeId { get; set; }
     public PartyType PartyType { get; set; }

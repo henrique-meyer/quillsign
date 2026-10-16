@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
+using QuillSign.Work;
 
 namespace QuillSign.Signing;
 
@@ -20,7 +21,7 @@ public sealed record SignerFinishResult(SignerFinishOutcome Outcome,SignerFinish
 
 // Acceptance freezes entries; a subsequent checkpoint worker owns Signed/progression.
 public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,SignerReviewCandidates reviews,
-    SignerReviewProtection protection,AuditWriter audit,TimeProvider time)
+    SignerReviewProtection protection,AuditWriter audit,TimeProvider time,SignerCheckpointJobs jobs)
 {
     public const string SnapshotVersion="signer-finish-snapshot-v1";
     public async Task<SignerFinishResult> AcceptAsync(ClaimsPrincipal principal,string publicId,string? receipt,bool affirm,string? statementVersion,
@@ -38,9 +39,15 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
             var candidate=await db.SignerReviewCandidates.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==existing.ReviewCandidateId,ct);
             if(candidate is null || existing.FinishedAt>time.GetUtcNow() || existing.AdoptionId!=context.SignatureAdoptionId || !SignerReviewCandidates.TokenMatches(candidate,token) || !Matches(existing,candidate,context.Identity) ||
                 !await reviews.Evidence(candidate,context.Identity,ct) || !await Evidence(existing,context.Identity,ct))return new(SignerFinishOutcome.InvalidReview);
+            var state=new SignerCheckpointState(db,time); var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==existing.EnvelopeId,ct);
+            var signer=await db.Signers.AsNoTracking().SingleAsync(x=>x.Id==existing.SignerId && x.EnvelopeId==existing.EnvelopeId,ct);
+            if(await state.CurrentAsync(envelope,ct) is null || await state.AcceptanceAsync(existing,signer,ct) is null)return new(SignerFinishOutcome.InvalidReview);
             _=await reviews.ReadPdf(candidate,context.Identity,ct);
             if((await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true))?.ConsentAt is null)return new(SignerFinishOutcome.InvalidContext);
-            await transaction.CommitAsync(ct); return new(SignerFinishOutcome.AlreadyAccepted,Result(existing));
+            var created=existing.ProcessedAt is null && await jobs.PrepareAsync(existing,ct);
+            await transaction.CommitAsync(ct); await transaction.DisposeAsync();
+            if(created)await jobs.PublishAsync(existing.Id,ct);
+            return new(SignerFinishOutcome.AlreadyAccepted,Result(existing));
         }
         var review=await reviews.ReadLockedAsync(principal,publicId,receipt,ct); if(review is null)return new(SignerFinishOutcome.InvalidReview);
         if(!await reviews.VerifySourceLockedAsync(principal,publicId,ct))return new(SignerFinishOutcome.InvalidContext);
@@ -70,24 +77,30 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
         if(!Live(p,context.Identity,time.GetUtcNow()))return new(SignerFinishOutcome.InvalidReview);
         if((await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true))?.ConsentAt is null)return new(SignerFinishOutcome.InvalidContext);
         if(!Live(p,context.Identity,time.GetUtcNow()))return new(SignerFinishOutcome.InvalidReview);
-        await transaction.CommitAsync(ct); return new(SignerFinishOutcome.Accepted,Result(accepted));
+        await jobs.PrepareAsync(accepted,ct);
+        if(!Live(p,context.Identity,time.GetUtcNow()))return new(SignerFinishOutcome.InvalidReview);
+        await transaction.CommitAsync(ct); await transaction.DisposeAsync(); await jobs.PublishAsync(accepted.Id,ct);
+        return new(SignerFinishOutcome.Accepted,Result(accepted));
     }
     private static bool Live(SignerReviewCandidate p,VerifiedSigner identity,DateTimeOffset now)=>p.PreparedAt<=now && p.ExpiresAt>now &&
         identity.SessionExpiresAt>now && p.ProspectiveDate==DateOnly.FromDateTime(now.UtcDateTime);
-    private static bool Matches(SignerFinishAcceptance f,SignerReviewCandidate p,VerifiedSigner identity)=>f.ReviewCandidateId==p.Id &&
-        f.EnvelopeId==identity.EnvelopeId && f.SignerId==identity.SignerId && p.EnvelopeId==f.EnvelopeId && p.SignerId==f.SignerId &&
-        f.AdoptionId==p.AdoptionId && f.SourceObjectId==p.SourceObjectId && f.SourceObjectId==identity.DocumentId &&
+    private static bool Matches(SignerFinishAcceptance f,SignerReviewCandidate p,VerifiedSigner identity)=>MatchesCandidate(f,p) &&
+        f.EnvelopeId==identity.EnvelopeId && f.SignerId==identity.SignerId && f.SourceObjectId==identity.DocumentId &&
+        Same(f.SourceSha256,Convert.FromHexString(identity.DocumentHash)) && Same(f.DisclosureSha256,Convert.FromHexString(identity.DisclosureHash));
+    internal static bool MatchesCandidate(SignerFinishAcceptance f,SignerReviewCandidate p)=>f.ReviewCandidateId==p.Id &&
+        p.EnvelopeId==f.EnvelopeId && p.SignerId==f.SignerId && f.AdoptionId==p.AdoptionId && f.SourceObjectId==p.SourceObjectId &&
         f.PdfObjectId==p.PdfObjectId && f.PdfLength==p.PdfLength && f.ReviewPreparedAt==p.PreparedAt && f.ReviewExpiresAt==p.ExpiresAt &&
         f.ProspectiveDate==p.ProspectiveDate && p.UsedAt==f.FinishedAt && p.SupersededAt is null && f.FinishedAt>=p.PreparedAt && f.FinishedAt<p.ExpiresAt &&
         f.ProspectiveDate==DateOnly.FromDateTime(f.FinishedAt.UtcDateTime) && f.SnapshotVersion==SnapshotVersion && f.StatementVersion==SignerFinishStatement.Version && f.Statement==SignerFinishStatement.Text &&
         Same(f.SourceSha256,p.SourceSha256) && Same(f.DisclosureSha256,p.DisclosureSha256) && Same(f.SessionSha256,p.SessionSha256) &&
-        Same(f.SourceSha256,Convert.FromHexString(identity.DocumentHash)) && Same(f.DisclosureSha256,Convert.FromHexString(identity.DisclosureHash)) &&
         Same(f.SnapshotSha256,p.SnapshotSha256) && Same(f.PdfSha256,p.PdfSha256) && Same(f.RecipeSha256,p.RecipeSha256) &&
         Same(f.FieldsSha256,SHA256.HashData(Encoding.UTF8.GetBytes(f.FieldsJson))) && Same(f.StatementSha256,SignerFinishStatement.Sha256);
     private async Task<bool> Evidence(SignerFinishAcceptance f,VerifiedSigner identity,CancellationToken ct)
+        =>await AcceptanceEvidence(db,f,identity.Email,ct);
+    internal static async Task<bool> AcceptanceEvidence(QuillSignDbContext db,SignerFinishAcceptance f,string email,CancellationToken ct)
     {
         var events=await db.AuditEvents.FromSqlInterpolated($"SELECT * FROM [AuditEvents] WHERE JSON_VALUE([DataJson], '$.finishId') = {f.Id.ToString("D")}")
-            .AsNoTracking().Where(x=>x.EnvelopeId==f.EnvelopeId && x.Event=="signer_finish_accepted" && x.ActorType==PartyType.Signer && x.ActorId==f.SignerId && x.ActorEmail==identity.Email).ToArrayAsync(ct);
+            .AsNoTracking().Where(x=>x.EnvelopeId==f.EnvelopeId && x.Event=="signer_finish_accepted" && x.ActorType==PartyType.Signer && x.ActorId==f.SignerId && x.ActorEmail==email).ToArrayAsync(ct);
         return events.Length==1 && Same(events[0].Hash,AuditHash.Compute(events[0])) && events[0].Ip==f.Ip && events[0].UserAgent==f.UserAgent && events[0].DataJson==EvidenceJson(f);
     }
     private static string EvidenceJson(SignerFinishAcceptance f)=>JsonSerializer.Serialize(new { finishId=f.Id,candidateId=f.ReviewCandidateId,
@@ -95,7 +108,7 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
         sessionSha256=Hex(f.SessionSha256),snapshotSha256=Hex(f.SnapshotSha256),pdfSha256=Hex(f.PdfSha256),recipeSha256=Hex(f.RecipeSha256),
         fieldsSha256=Hex(f.FieldsSha256),statementSha256=Hex(f.StatementSha256),f.SnapshotVersion,f.StatementVersion,f.Statement,f.ProspectiveDate,
         f.ReviewPreparedAt,f.ReviewExpiresAt,f.FinishedAt,affirm=true,serverEvidence="exact_review_accepted_checkpoint_publication_pending" });
-    private static SignerFinishAccepted Result(SignerFinishAcceptance f)=>new(f.Id,f.ReviewCandidateId,Hex(f.PdfSha256),f.FinishedAt,f.ProspectiveDate,f.ProcessedAt is null);
+    internal static SignerFinishAccepted Result(SignerFinishAcceptance f)=>new(f.Id,f.ReviewCandidateId,Hex(f.PdfSha256),f.FinishedAt,f.ProspectiveDate,f.ProcessedAt is null);
     private static bool Same(byte[] a,byte[] b)=>a.Length==32 && CryptographicOperations.FixedTimeEquals(a,b);
     private static string Hex(byte[] b)=>Convert.ToHexStringLower(b);
     private static string? Limit(string? value,int length)=>value is not null && value.Length>length ? value[..length] : value;

@@ -16,13 +16,13 @@ The durable hint is stored before SQL commit; queue publication follows commit. 
 
 ## Dispatch and token lifetime
 
-The protected outbox payload stores signer scope and the last token ID, never a raw invitation token. Before submission, dispatch locks the envelope before the work row, revalidates Sent/frozen/disclosure/current signer/email/order/expiry and checks suppression. It creates the QUILS-26 256-bit token at dispatch, with its configured lifetime clamped to envelope expiry. Only SHA-256 enters `AuthTokens`; the raw value exists in the in-memory email and is not stored even inside the protected payload.
+The protected outbox payload stores signer scope, exact document object/hash, disclosure hash and the last token ID, never a raw invitation token. Before submission, dispatch locks the envelope before the work row, revalidates Sent/current-copy/disclosure/signer/email/order/expiry, compares the pinned source/disclosure binding and checks suppression. It creates the QUILS-26 256-bit token at dispatch, with its configured lifetime clamped to envelope expiry and the same exact source/disclosure binding. Only SHA-256 of the token enters `AuthTokens`; the raw value exists in the in-memory email and is not stored even inside the protected payload.
 
 Razor text/HTML `SignerInvite` templates include document title, sender contact, signer name/role, optional message with line breaks, the `/sign/invitation` landing link and exact UTC expiry. HTML values are encoded. Opening the landing records neither consent nor a signature.
 
 Token activation and email submission intent commit together before the provider call. Definite non-submission expires that token and permits a bounded retry with a fresh token. An unknown provider/receipt outcome leaves submission intent intact; lease recovery marks it ambiguous and does not resend automatically. Duplicate wakeups cannot resubmit completed work. A known provider acceptance records `invitation_submitted`, explicitly distinguished from proof of delivery. Notified updates cannot overwrite Viewed/Signed/Declined progress. A later void/decline/expiry prevents token redemption through current-state checks.
 
-This slice queues only the first invitation. A later Finish transaction must atomically advance the sequential workflow and prepare the next signer's work. It does not queue sender confirmation/status links or completion mail yet.
+This slice queues only the first invitation. QUILS-37's [checkpoint worker](signer-checkpoints.md) atomically publishes the exact accepted review and prepares the next signer's source-bound invitation. Sender confirmation/status links and final completion mail remain subsequent work.
 
 ## Validation
 

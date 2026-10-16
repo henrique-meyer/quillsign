@@ -6,6 +6,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Signing;
 using QuillSign.Storage;
+using QuillSign.Work;
 using PigDocument=UglyToad.PdfPig.PdfDocument;
 
 namespace QuillSign.Tests;
@@ -203,6 +204,7 @@ public sealed class SignerReviewCandidateTests(SqlDatabaseFixture fixture) : ICl
     internal sealed class Run : IAsyncDisposable
     {
         public SignerFieldTests.Harness H=null!; private SqlDatabaseFixture fixture=null!;
+        public IWorkSignals Signals=new CheckpointSignals(); public WorkOptions Work=new() { Enabled=true };
         public static async Task<Run> Create(SqlDatabaseFixture fixture,bool midnight=false)
         {
             var r=new Run { H=await SignerFieldTests.Harness.Create(fixture),fixture=fixture }; var h=r.H;
@@ -225,12 +227,24 @@ public sealed class SignerReviewCandidateTests(SqlDatabaseFixture fixture) : ICl
         }
         private SignerReviewCandidates Service(QuillSignDbContext db)=>new(db,H.Access(db),H.Adoption(db),new(H.Blobs,new()),new(25*1024*1024,20,200),H.Blobs,new(H.Protection,H.Clock),new(db,H.Clock),H.Clock);
         public async Task<SignerFinishResult> Finish(string? receipt,bool affirm=true,string? version=SignerFinishStatement.Version,ClaimsPrincipal? p=null,string? id=null)
-        { await using var db=H.Open(); return await new SignerFinish(db,H.Access(db),Service(db),new(H.Protection,H.Clock),new(db,H.Clock),H.Clock).AcceptAsync(p??H.Principal,id??H.Envelope.PublicId,receipt,affirm,version,"127.0.0.1","Synthetic Finish test"); }
+        { await using var db=H.Open(); return await new SignerFinish(db,H.Access(db),Service(db),new(H.Protection,H.Clock),new(db,H.Clock),H.Clock,new(db,()=>Signals,Work,H.Clock)).AcceptAsync(p??H.Principal,id??H.Envelope.PublicId,receipt,affirm,version,"127.0.0.1","Synthetic Finish test"); }
         public async Task<SignerReviewPrepared?> Prepare(ClaimsPrincipal? p=null,string? id=null) { await using var db=H.Open(); return await Service(db).PrepareAsync(p??H.Principal,id??H.Envelope.PublicId,"127.0.0.1","Synthetic review test"); }
         public async Task<SignerReviewData?> Read(string? receipt,ClaimsPrincipal? p=null,string? id=null) { await using var db=H.Open(); return await Service(db).ReadAsync(p??H.Principal,id??H.Envelope.PublicId,receipt); }
         public async Task Clear(Guid id) { await using var db=fixture.Open(); var f=await db.Fields.AsNoTracking().SingleAsync(x=>x.Id==id); Assert.Equal(SignerFieldOutcome.Applied,(await H.Change(new(id,Convert.ToBase64String(f.RowVersion),SignerFieldAction.Clear))).Outcome); }
         public async Task ApplyMark(Guid id,Guid adoption) { await using var db=fixture.Open(); var f=await db.Fields.AsNoTracking().SingleAsync(x=>x.Id==id); Assert.Equal(SignerFieldOutcome.Applied,(await H.Change(new(id,Convert.ToBase64String(f.RowVersion),SignerFieldAction.Apply,AdoptionId:adoption))).Outcome); }
         public async Task<string> FieldVersions() { await using var db=fixture.Open(); return JsonSerializer.Serialize(await db.Fields.AsNoTracking().Where(x=>x.EnvelopeId==H.Envelope.Id).OrderBy(x=>x.Id).ToArrayAsync()); }
         public ValueTask DisposeAsync()=>H.DisposeAsync();
+    }
+    internal sealed class CheckpointSignals : IWorkSignals
+    {
+        public bool FailHint { get; set; } public bool FailPublish { get; set; } public List<Guid> Hints=[],Published=[];
+        public Task PutHintAsync(Guid id,DateTimeOffset due,CancellationToken ct) { if(FailHint)throw new IOException("Synthetic hint failure"); Hints.Add(id); return Task.CompletedTask; }
+        public Task PublishAsync(Guid id,TimeSpan delay,CancellationToken ct) { if(FailPublish)throw new IOException("Synthetic publish failure"); Published.Add(id); return Task.CompletedTask; }
+        public Task RemoveHintAsync(Guid id,CancellationToken ct)=>Task.CompletedTask;
+        public Task<WorkDelivery?> ReceiveAsync(CancellationToken ct)=>Task.FromResult<WorkDelivery?>(null);
+        public Task DeferAsync(WorkDelivery delivery,TimeSpan delay,CancellationToken ct)=>Task.CompletedTask;
+        public Task AcknowledgeAsync(WorkDelivery delivery,CancellationToken ct)=>Task.CompletedTask;
+        public Task<int> RecoverAsync(DateTimeOffset now,CancellationToken ct)=>Task.FromResult(0);
+        public Task VerifyAsync(CancellationToken ct)=>Task.CompletedTask;
     }
 }

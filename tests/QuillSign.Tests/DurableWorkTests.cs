@@ -223,7 +223,7 @@ public sealed class DurableWorkTests(SqlDatabaseFixture fixture) : IClassFixture
             var lease = (await scope.ServiceProvider.GetRequiredService<WorkStore>().ClaimAsync(id, default)).Lease!;
             if (receiptSaved)
             {
-                var handler = Assert.Single(scope.ServiceProvider.GetServices<IWorkHandler>());
+            var handler = Assert.Single(scope.ServiceProvider.GetServices<IWorkHandler>(),x=>x.Kind==WorkKind.Email);
                 Assert.Equal(WorkOutcome.Completed, (await handler.ExecuteAsync(lease, default)).Outcome);
             }
             // Simulate process death without finishing its lease or acknowledging work.
