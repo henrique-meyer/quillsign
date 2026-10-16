@@ -14,7 +14,10 @@ public sealed class SignerAccessOptions
     public int SessionHours { get; set; } = 2;
 }
 public sealed record VerifiedSigner(Guid EnvelopeId,string PublicId,Guid SignerId,string Email,Guid DocumentId,
-    string DocumentHash,string DisclosureHash,DateTimeOffset SessionExpiresAt);
+    string DocumentHash,string DisclosureHash,DateTimeOffset SessionExpiresAt)
+{
+    public Guid SessionId { get; init; } = Guid.NewGuid();
+}
 
 public static class SignerAccessConfiguration
 {
@@ -25,6 +28,7 @@ public static class SignerAccessConfiguration
     public const string DocumentHashClaim = "quillsign:signer-document-hash";
     public const string DisclosureHashClaim = "quillsign:signer-disclosure-hash";
     public const string ExpiryClaim = "quillsign:signer-session-expiry";
+    public const string SessionClaim = "quillsign:signer-session-id";
 
     public static IServiceCollection AddQuillSignSignerAccessCore(this IServiceCollection services,IConfiguration config)
     {
@@ -65,6 +69,7 @@ public static class SignerAccessConfiguration
         new(EnvelopeStorageAuthorization.EnvelopeClaim,signer.EnvelopeId.ToString("N")), new(PublicIdClaim,signer.PublicId),
         new(SignerClaim,signer.SignerId.ToString("N")), new(ClaimTypes.Email,signer.Email), new(DocumentClaim,signer.DocumentId.ToString("N")),
         new(DocumentHashClaim,signer.DocumentHash), new(DisclosureHashClaim,signer.DisclosureHash),
+        new(SessionClaim,signer.SessionId.ToString("N")),
         new(ExpiryClaim,signer.SessionExpiresAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture))
     ],Scheme));
     public static AuthenticationProperties Ticket(VerifiedSigner signer) => new()
@@ -81,6 +86,7 @@ public static class SignerAccessConfiguration
         if (!Guid.TryParseExact(One(EnvelopeStorageAuthorization.EnvelopeClaim),"N",out var envelope) || envelope == Guid.Empty ||
             !Guid.TryParseExact(One(SignerClaim),"N",out var signer) || signer == Guid.Empty ||
             !Guid.TryParseExact(One(DocumentClaim),"N",out var document) || document == Guid.Empty ||
+            !Guid.TryParseExact(One(SessionClaim),"N",out var session) || session == Guid.Empty ||
             publicId is not { Length: 32 } || !publicId.All(char.IsAsciiHexDigit) ||
             string.IsNullOrWhiteSpace(email) || email.Length > 320 || email.Any(char.IsControl) ||
             documentHash is not { Length: 64 } || !documentHash.All(char.IsAsciiHexDigit) ||
@@ -88,6 +94,6 @@ public static class SignerAccessConfiguration
             !long.TryParse(One(ExpiryClaim),NumberStyles.None,CultureInfo.InvariantCulture,out var expiry)) return null;
         DateTimeOffset expires;
         try { expires = DateTimeOffset.FromUnixTimeSeconds(expiry); } catch (ArgumentOutOfRangeException) { return null; }
-        return expires > now ? new(envelope,publicId,signer,email,document,documentHash,disclosureHash,expires) : null;
+        return expires > now ? new(envelope,publicId,signer,email,document,documentHash,disclosureHash,expires) { SessionId = session } : null;
     }
 }

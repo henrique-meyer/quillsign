@@ -3,7 +3,7 @@ using QuillSign.Signing;
 
 namespace QuillSign.Storage;
 
-public enum DocumentBlobKind { Original, Normalized, Preview }
+public enum DocumentBlobKind { Original, Normalized, Preview, Signature, Initials }
 
 // References contain no filenames, URLs, or caller-controlled path fragments.
 public readonly record struct DocumentBlob(Guid EnvelopeId, DocumentBlobKind Kind, Guid ObjectId);
@@ -26,6 +26,7 @@ public static class EnvelopeStorageAuthorization
 
     public static void DemandRead(ClaimsPrincipal principal,DocumentBlob blob)
     {
+        if (principal is SignatureAssetCapability capability) { capability.Demand(blob,AssetOperation.Read); return; }
         if (principal.Identities.Any(i => i.IsAuthenticated && i.AuthenticationType == SignerAccessConfiguration.Scheme))
         {
             var signer = SignerAccessConfiguration.ReadIdentity(principal,DateTimeOffset.UtcNow);
@@ -36,7 +37,14 @@ public static class EnvelopeStorageAuthorization
     }
 
     public static void Demand(ClaimsPrincipal sender, DocumentBlob blob)
+        => DemandMutation(sender,blob,AssetOperation.Write);
+
+    public static void DemandDelete(ClaimsPrincipal principal,DocumentBlob blob)
+        => DemandMutation(principal,blob,AssetOperation.Delete);
+
+    private static void DemandMutation(ClaimsPrincipal sender,DocumentBlob blob,AssetOperation operation)
     {
+        if (sender is SignatureAssetCapability capability) { capability.Demand(blob,operation); return; }
         var identities = sender.Identities.Where(i => i.IsAuthenticated).ToArray();
         if (identities.Length != 1 || identities[0].AuthenticationType != SenderScheme)
             throw new UnauthorizedAccessException("A verified sender session for this envelope is required.");

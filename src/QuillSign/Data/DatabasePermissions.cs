@@ -51,6 +51,8 @@ public static class DatabasePermissions
             await command.ExecuteNonQueryAsync();
         }
         command.CommandText = """
+            GRANT SELECT, INSERT, DELETE ON OBJECT::[dbo].[SignaturePreviews] TO [app_runtime_role];
+            GRANT UPDATE ON OBJECT::[dbo].[SignaturePreviews] ([UsedAt]) TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[AuditEvents] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[AuditEvents] TO [app_runtime_role];
             GRANT SELECT ON OBJECT::[dbo].[__EFMigrationsHistory] TO [app_runtime_role];

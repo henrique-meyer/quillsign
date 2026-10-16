@@ -77,7 +77,43 @@ public sealed class Signer : IVersionedRecord
     public string? SignatureImageBlob { get; set; }
     public string? InitialsImageBlob { get; set; }
     public SignatureMethod? SignatureMethod { get; set; }
+    public Guid? SignatureAdoptionId { get; set; }
+    public byte[]? SignatureImageSha256 { get; set; }
+    public byte[]? InitialsImageSha256 { get; set; }
+    public DateTimeOffset? SignatureAdoptedAt { get; set; }
+    public string? SignatureTypedName { get; set; }
+    public string? SignatureTypedInitials { get; set; }
+    public string? SignatureNormalizationVersion { get; set; }
+    public string? SignatureAdoptionVersion { get; set; }
     public byte[] RowVersion { get; set; } = [];
+}
+
+public sealed class SignaturePreview
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid EnvelopeId { get; set; }
+    public Guid SignerId { get; set; }
+    public Guid DocumentId { get; set; }
+    public Guid SignatureObjectId { get; set; }
+    public Guid InitialsObjectId { get; set; }
+    public byte[] SignatureSha256 { get; set; } = [];
+    public byte[] InitialsSha256 { get; set; } = [];
+    public byte[] DocumentSha256 { get; set; } = [];
+    public byte[] DisclosureSha256 { get; set; } = [];
+    public byte[] SessionSha256 { get; set; } = [];
+    public byte[] BaselineSignerVersion { get; set; } = [];
+    public int SignatureWidth { get; set; }
+    public int SignatureHeight { get; set; }
+    public int InitialsWidth { get; set; }
+    public int InitialsHeight { get; set; }
+    public SignatureMethod Method { get; set; }
+    public string? TypedName { get; set; }
+    public string? TypedInitials { get; set; }
+    public string NormalizationVersion { get; set; } = "";
+    public string AdoptionVersion { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? UsedAt { get; set; }
 }
 
 public sealed class Recipient : IVersionedRecord
