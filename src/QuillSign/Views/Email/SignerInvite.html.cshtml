@@ -1,0 +1,11 @@
+@model QuillSign.Email.SignerInviteModel
+@{ Layout = null; }
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Signing request</title></head>
+<body><p>QuillSign</p><h1>Review your signing request</h1>
+<p>@Model.SignerName @if (!string.IsNullOrWhiteSpace(Model.Role)) {<text>(@Model.Role)</text>},</p>
+<p>@Model.Sender has sent you a signing request for @Model.Title.</p>
+@if (!string.IsNullOrWhiteSpace(Model.Message)) {<p>Message from the sender:</p><p>@foreach (var line in Model.Message.Replace("\r\n","\n").Replace('\r','\n').Split('\n')) { @line<br /> }</p>}
+<p><a href="@Model.Link.AbsoluteUri">Open the request</a> to review the electronic-record disclosure and PDF.</p>
+<p>Opening this request does not record consent or a signature. You may decline before consenting.</p>
+<p>This single-use link expires at @Model.ExpiresAt.ToString("u") (UTC). Do not forward it.</p>
+<p>Contact the sender if you did not expect this request or need a different arrangement.</p></body></html>

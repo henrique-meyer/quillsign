@@ -35,6 +35,7 @@ builder.Services.AddQuillSignSignerConsent();
 builder.Services.AddQuillSignSignerSetup(builder.Configuration);
 builder.Services.AddQuillSignFieldEditor(builder.Configuration);
 builder.Services.AddQuillSignDocuments(builder.Configuration);
+builder.Services.AddScoped<SendDraftWorkflow>();
 var app = builder.Build();
 app.UseForwardedHeaders();
 
