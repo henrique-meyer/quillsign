@@ -17,8 +17,8 @@ public sealed class DetailsModel(DraftDetails details, PreparationOptions option
     public int MaximumRecipients => options.MaximumRecipients;
     public string? Notice { get; private set; }
     public bool Conflict { get; private set; }
-    [BindProperty] public DetailInput Details { get; set; } = new();
-    [BindProperty] public RecipientInput Recipient { get; set; } = new();
+    [BindProperty(Name = nameof(Details))] public DetailInput Details { get; set; } = new();
+    [BindProperty(Name = nameof(Recipient))] public RecipientInput Recipient { get; set; } = new();
     [BindProperty] public string Version { get; set; } = "";
     [BindProperty] public Guid? RecipientId { get; set; }
 
