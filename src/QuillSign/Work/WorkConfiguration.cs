@@ -1,6 +1,7 @@
 using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
+using QuillSign.Signing;
 
 namespace QuillSign.Work;
 
@@ -49,6 +50,8 @@ public static class WorkConfiguration
         else services.AddSingleton<IWorkSignals>(_ => throw new InvalidOperationException("Durable work is disabled."));
         if (registerHandlers)
         {
+            services.AddQuillSignSignerAccessCore(config);
+            services.AddScoped<SignerInvitationProtection>(); services.AddScoped<SignerInvitationOutbox>(); services.AddScoped<SignerInvitationDelivery>();
             services.AddScoped<DeclinePayloadProtection>();
             services.AddScoped<DeclineNotificationWriter>();
             services.AddScoped<WorkStore>();

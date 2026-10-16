@@ -87,6 +87,11 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         return context with { Identity = identity };
     }
     private IQueryable<Envelope> Locked(Guid id) => db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {id}");
+    internal async Task<SignerReadContext?> GetEligibleLockedAsync(Guid envelopeId,Guid signerId,CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("A transaction is required.");
+        return await EligibleAsync(await Locked(envelopeId).AsNoTracking().SingleOrDefaultAsync(ct),signerId,ct);
+    }
     private async Task<SignerReadContext?> EligibleAsync(Envelope? envelope,Guid signerId,CancellationToken ct,bool declinedConfirmation = false)
     {
         if (options.SessionHours is < 1 or > 24) throw new InvalidOperationException("Invalid signer session lifetime.");

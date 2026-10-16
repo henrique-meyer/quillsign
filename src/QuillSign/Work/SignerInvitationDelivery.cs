@@ -1,0 +1,96 @@
+using System.Security.Cryptography;
+using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.EntityFrameworkCore;
+using QuillSign.Data;
+using QuillSign.Email;
+using QuillSign.Signing;
+namespace QuillSign.Work;
+
+public sealed record SignerInvitationPayload(Guid SignerId,Guid? LastTokenId = null);
+public sealed class SignerInvitationProtection(IDataProtectionProvider provider)
+{
+    private readonly IDataProtector protector = provider.CreateProtector("QuillSign.SignerInvitationPayload.v1");
+    public string Protect(SignerInvitationPayload value) => JsonSerializer.Serialize(new ProtectedWorkPayload(protector.Protect(JsonSerializer.Serialize(value))));
+    public SignerInvitationPayload Read(string value) => JsonSerializer.Deserialize<SignerInvitationPayload>(protector.Unprotect(
+        JsonSerializer.Deserialize<ProtectedWorkPayload>(value)?.Protected ?? throw new JsonException())) ?? throw new JsonException();
+}
+public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSignals> signals,WorkOptions work,EmailOptions email,
+    SignerInvitationProtection protection,TimeProvider time)
+{
+    public async Task<Guid> PrepareAsync(Guid envelopeId,Guid signerId,string recipient,CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("Preparing invitations requires a transaction.");
+        if (!work.Enabled || !email.Enabled) throw new EmailDisabledException();
+        var row = new EmailOutbox { EnvelopeId = envelopeId,To = EmailAddress.Normalize(recipient),Template = "signer-invitation",
+            PayloadJson = protection.Protect(new(signerId)),AvailableAt = time.GetUtcNow() };
+        db.EmailOutbox.Add(row); db.WorkItems.Add(new WorkItem { Id = row.Id,EnvelopeId = envelopeId,Kind = WorkKind.Email,AvailableAt = row.AvailableAt });
+        await db.SaveChangesAsync(ct); await signals().PutHintAsync(row.Id,row.AvailableAt,ct); return row.Id;
+    }
+    public async Task PublishAsync(Guid id,CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is not null) throw new InvalidOperationException("Commit before publishing.");
+        try { await signals().PublishAsync(id,TimeSpan.Zero,ct); }
+        catch (Exception e) when (e is Azure.RequestFailedException or IOException or OperationCanceledException or HttpRequestException) { /* committed hint recovers */ }
+    }
+}
+public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess access,SignerInvitationFactory tokens,
+    SignerInvitationProtection protection,SignerInvitationTemplate template,IEmailSender sender,EmailOptions options,AuditWriter audit,TimeProvider time)
+{
+    public async Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)
+    {
+        if (!options.Enabled) return new(WorkOutcome.Retry,"delivery-disabled");
+        var email = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id,ct);
+        SignerInvitationPayload payload;
+        try { payload = protection.Read(email.PayloadJson); }
+        catch (CryptographicException) { return new(WorkOutcome.Retry,"payload-unavailable"); }
+        catch (Exception e) when (e is JsonException or ArgumentException) { return new(WorkOutcome.Failed,"invalid-payload"); }
+        if (email.Template != "signer-invitation" || email.EnvelopeId is not Guid envelopeId || payload.SignerId == Guid.Empty) return new(WorkOutcome.Failed,"invalid-invitation-scope");
+        OutgoingEmail outgoing; SignerInvitation invitation; SignerReadContext context;
+        await using (var transaction = await db.Database.BeginTransactionAsync(ct))
+        {
+            // All sender/signer mutations use envelope first. Never lock work before this scope.
+            var eligible = await access.GetEligibleLockedAsync(envelopeId,payload.SignerId,ct);
+            if (eligible is null || eligible.Identity.Email != email.To) return new(WorkOutcome.Failed,"invitation-unavailable"); context = eligible;
+            if (await db.Suppressions.AnyAsync(x => x.Email == email.To,ct)) return new(WorkOutcome.Failed,"recipient-suppressed");
+            var owned = await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {lease.Id}").AsNoTracking().SingleAsync(ct);
+            var now = time.GetUtcNow();
+            if (owned.Status != WorkStatus.Leased || owned.LeaseOwner != lease.Owner || owned.LeaseExpiresAt <= now) throw new InvalidOperationException("Work lease is no longer owned.");
+            var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == envelopeId,ct);
+            invitation = tokens.Create(envelopeId,payload.SignerId,email.To,envelope.ExpiresAt);
+            outgoing = await template.RenderAsync(context,envelope.Message,invitation.RawToken,invitation.Record.ExpiresAt,ct);
+            if (invitation.Record.ExpiresAt <= time.GetUtcNow()) return new(WorkOutcome.Failed,"invitation-expired");
+            var protectedScope = protection.Protect(payload with { LastTokenId = invitation.Record.Id });
+            var changed = await db.EmailOutbox.Where(x => x.Id == lease.Id && x.Status == EmailStatus.Queued && x.SubmissionStartedAt == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.SubmissionStartedAt,now).SetProperty(x => x.Attempts,lease.Attempt).SetProperty(x => x.PayloadJson,protectedScope),ct);
+            if (changed != 1) throw new InvalidOperationException("Invitation submission is no longer available.");
+            db.AuthTokens.Add(invitation.Record); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
+        }
+        try
+        {
+            var delivery = await sender.SendAsync(outgoing,ct);
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            _ = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {envelopeId}").AsNoTracking().SingleAsync(ct);
+            await db.EmailOutbox.Where(x => x.Id == lease.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Provider,delivery.Provider)
+                .SetProperty(x => x.ProviderMessageId,delivery.MessageId).SetProperty(x => x.Status,x => x.Status == EmailStatus.Queued ? EmailStatus.Sent : x.Status),ct);
+            await db.Signers.Where(x => x.Id == payload.SignerId && x.EnvelopeId == envelopeId && x.Status == SignerStatus.Pending)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status,SignerStatus.Notified),ct);
+            await audit.AppendAsync(envelopeId,"invitation_submitted",null,null,null,ct,JsonSerializer.Serialize(new {
+                emailId = email.Id,tokenId = invitation.Record.Id,documentSha256 = context.Identity.DocumentHash,disclosureSha256 = context.Identity.DisclosureHash,
+                signerId = payload.SignerId,recipient = email.To,provider = delivery.Provider,providerMessageId = delivery.MessageId,
+                meaning = "provider_accepted_not_proof_of_delivery" }),PartyType.System);
+            await transaction.CommitAsync(ct); return new(WorkOutcome.Completed);
+        }
+        catch (EmailNotSubmittedException e) { await RejectedAsync(email.Id,invitation.Record.Id,ct); return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed,"provider-rejected"); }
+        catch (Exception e) when (e is RecipientSuppressedException or EmailDisabledException)
+        { await RejectedAsync(email.Id,invitation.Record.Id,ct); return new(WorkOutcome.Failed,e is RecipientSuppressedException ? "recipient-suppressed" : "delivery-disabled"); }
+        // Unknown outcomes retain submission intent; work recovery forbids another provider call.
+    }
+    private async Task RejectedAsync(Guid emailId,Guid tokenId,CancellationToken ct)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await db.EmailOutbox.Where(x => x.Id == emailId).ExecuteUpdateAsync(s => s.SetProperty(x => x.SubmissionStartedAt,(DateTimeOffset?)null),ct);
+        await db.AuthTokens.Where(x => x.Id == tokenId && x.UsedAt == null).ExecuteUpdateAsync(s => s.SetProperty(x => x.ExpiresAt,time.GetUtcNow()),ct);
+        await transaction.CommitAsync(ct);
+    }
+}
