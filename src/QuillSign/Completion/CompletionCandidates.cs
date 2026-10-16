@@ -15,7 +15,7 @@ public sealed record CompletionCandidateData(Guid Id,Guid EnvelopeId,Guid Finish
 
 // Internal explicit preparation/read service. No public authority, worker enqueue, seal or mail.
 public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenceCollector collector,
-    CompletionCertificateRenderer renderer,IBlobStore blobs,AuditWriter audit,TimeProvider time)
+    CompletionCertificateRenderer renderer,IBlobStore blobs,AuditWriter audit,TimeProvider time,CompletionCommitScope? scope=null)
 {
     public const string SnapshotVersion="completion-candidate-v1";
     private const long MaximumPdfBytes=64*1024*1024;
@@ -55,9 +55,11 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
                 else
                 {
                     await collector.RecheckLockedAsync(envelopeId,source.StateSha256,ct);
+                    if(scope is not null)await scope.CheckLockedAsync(envelopeId,ct);
                     db.CompletionCandidates.Add(attempt); await db.SaveChangesAsync(ct);
                     await audit.AppendAsync(envelopeId,"completion_prepared",null,null,null,ct,PreparationJson(attempt),PartyType.System);
                     await collector.RecheckLockedAsync(envelopeId,attempt.FrozenStateSha256,ct,attempt.AuditSequence,attempt.AuditAnchor);
+                    if(scope is not null)await scope.CheckLockedAsync(envelopeId,ct);
                     saved=attempt;
                 }
                 commitStarted=existing is null;
