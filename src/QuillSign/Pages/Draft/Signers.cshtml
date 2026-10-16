@@ -1,0 +1,48 @@
+@page "/draft/{publicId}/signers"
+@model QuillSign.Pages.Draft.SignersModel
+@{ ViewData["Title"] = "Set up signers"; }
+<p class="eyebrow">WHO SIGNS NEXT</p>
+<h1>A place for<br />every signer.</h1>
+<p class="intro">Add up to @Model.MaximumSigners signers in the order they should sign. Each person will sign after the one before them.</p>
+@if (Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
+<div asp-validation-summary="All" class="validation" role="alert"></div>
+<section class="signer-list" aria-labelledby="order-title">
+    <h2 id="order-title">Signing order</h2>
+    @if (Model.Draft.Signers.Count == 0) { <p>No signers yet. Add the first person below.</p> }
+    <ol class="signer-cards">
+    @foreach (var signer in Model.Draft.Signers)
+    {
+        <li class="signer-card">
+            <div><strong>@signer.FullName</strong><span class="signer-email">@signer.Email</span>
+                @if (!string.IsNullOrEmpty(signer.Role)) { <span class="signer-role">@signer.Role</span> }
+            </div>
+            <div class="signer-actions">
+                <a href="/draft/@Model.Draft.PublicId/signers?editId=@signer.Id" aria-label="Edit @signer.FullName">Edit</a>
+                <form method="post" asp-page-handler="Move">
+                    <input type="hidden" name="Version" value="@Model.Version" /><input type="hidden" name="SignerId" value="@signer.Id" />
+                    <button type="submit" name="Direction" value="up" disabled="@(signer.Order == 1)" aria-label="Move @signer.FullName earlier">Earlier</button>
+                    <button type="submit" name="Direction" value="down" disabled="@(signer.Order == Model.Draft.Signers.Count)" aria-label="Move @signer.FullName later">Later</button>
+                </form>
+                <form method="post" asp-page-handler="Remove">
+                    <input type="hidden" name="Version" value="@Model.Version" /><input type="hidden" name="SignerId" value="@signer.Id" />
+                    <button type="submit" class="quiet-button" aria-label="Remove @signer.FullName">Remove</button>
+                </form>
+            </div>
+        </li>
+    }
+    </ol>
+</section>
+<section class="start-card" aria-labelledby="signer-title">
+    <h2 id="signer-title">@(Model.Input.Id is null ? "Add a signer" : "Edit signer")</h2>
+    @if (Model.Input.Id is null) { <p><a href="/draft/@Model.Draft.PublicId/signers?useMyEmail=true">Add me as a signer</a></p> }
+    <form method="post" asp-page-handler="Save">
+        <input type="hidden" asp-for="Version" /><input type="hidden" asp-for="Input.Id" />
+        <label asp-for="Input.FullName">Full name</label><input asp-for="Input.FullName" autocomplete="name" maxlength="512" required />
+        <label asp-for="Input.Email">Email address</label><input asp-for="Input.Email" type="email" autocomplete="email" maxlength="320" required />
+        <label asp-for="Input.Role">Role <span class="hint">(optional)</span></label><input asp-for="Input.Role" placeholder="For example, Buyer" maxlength="512" />
+        <button type="submit">@(Model.Input.Id is null ? "Add signer" : "Save signer")</button>
+        @if (Model.Input.Id is not null) { <a href="/draft/@Model.Draft.PublicId/signers">Cancel editing</a> }
+    </form>
+</section>
+<p class="hint">Your document stays a draft. No invitations are sent here. Field placement comes next.</p>
+<p><a href="/draft/@Model.Draft.PublicId">Back to PDF preview</a></p>

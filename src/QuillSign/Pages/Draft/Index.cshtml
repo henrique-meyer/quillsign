@@ -45,6 +45,10 @@
             </form>
         }
         <p class="hint">Your document stays a draft. Confirmation does not send it or start signing.</p>
+        @if (Model.Draft.PreviewConfirmedAt is not null)
+        {
+            <p><a class="button-link" href="/draft/@Model.Draft.PublicId/signers">Set up signers</a></p>
+        }
     </section>
 }
 <p><a href="/">Start a new document</a></p>

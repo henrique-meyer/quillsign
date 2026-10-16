@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace QuillSign.Sender;
 
-public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed }
+public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed, SignerSaved, SignerRemoved, SignersReordered, PreviewRequired }
 
 public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvironment environment)
 {
@@ -41,6 +41,10 @@ public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvi
         NoticeCode.Unavailable => "Email delivery is currently unavailable. Please try again later.",
         NoticeCode.DocumentUploaded => "PDF uploaded. Review the preview, then confirm it matches your document.",
         NoticeCode.PreviewConfirmed => "Preview confirmed. Your document is still a draft; it hasn't been sent for signing.",
+        NoticeCode.SignerSaved => "Signer saved. No invitation has been sent.",
+        NoticeCode.SignerRemoved => "Signer removed from this draft.",
+        NoticeCode.SignersReordered => "Signing order updated.",
+        NoticeCode.PreviewRequired => "Confirm the current PDF preview before setting up signers.",
         _ => "We couldn't complete that request right now. Please try again shortly."
     };
 }
