@@ -48,6 +48,7 @@
         @if (Model.Draft.PreviewConfirmedAt is not null)
         {
             <p><a class="button-link" href="/draft/@Model.Draft.PublicId/signers">Set up signers</a></p>
+            <p><a href="/draft/@Model.Draft.PublicId/review">Review document preparation</a></p>
         }
     </section>
 }
