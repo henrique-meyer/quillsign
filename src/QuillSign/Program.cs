@@ -31,6 +31,7 @@ builder.Services.AddQuillSignEmail(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignSender(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignSignerAccess(builder.Configuration,builder.Environment);
+builder.Services.AddQuillSignSignerConsent();
 builder.Services.AddQuillSignSignerSetup(builder.Configuration);
 builder.Services.AddQuillSignFieldEditor(builder.Configuration);
 builder.Services.AddQuillSignDocuments(builder.Configuration);

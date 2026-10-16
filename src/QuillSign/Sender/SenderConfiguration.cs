@@ -55,7 +55,7 @@ public static class SenderConfiguration
             limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             limiter.AddPolicy(RatePolicy, context =>
             {
-                var limited = (context.Request.Path == "/" && HttpMethods.IsPost(context.Request.Method)) || context.Request.Path == "/sender/verify";
+                var limited = (context.Request.Path == "/" && HttpMethods.IsPost(context.Request.Method)) || context.Request.Path == "/sender/verify" || context.Request.Path == "/sign/invitation";
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
                 return limited ? RateLimitPartition.GetFixedWindowLimiter(address, _ => new FixedWindowRateLimiterOptions
                 {

@@ -1,0 +1,9 @@
+@page "/sign/{publicId}/declined"
+@model QuillSign.Pages.Sign.DeclinedModel
+@{ ViewData["Title"] = "Request declined"; }
+@section Styles { <link rel="stylesheet" href="~/signer.css" asp-append-version="true" /> }
+<section class="signer-flow"><h1>Request declined</h1>
+<p>The request for @Model.Context.Title is closed. Your signature was not recorded. A notification for the sender is queued; email delivery may be delayed or unavailable.</p>
+<p>Contact @Model.Context.Disclosure.SenderContact to discuss another arrangement. Declining this request is separate from any broader withdrawal procedure described below.</p>
+<h2>The disclosure for this request</h2><pre class="disclosure">@Model.Context.Disclosure.Text</pre>
+</section>

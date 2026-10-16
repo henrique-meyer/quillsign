@@ -1,0 +1,15 @@
+@page "/sign/invitation"
+@model QuillSign.Pages.Sign.InvitationModel
+@{ ViewData["Title"] = "Open signing request"; }
+<section class="start-card">
+<h1>Open your signing request</h1>
+<p>Continue to review the sender's electronic-record disclosure and document. Opening this request does not record your agreement or signature.</p>
+@if (Model.Invalid || !Model.HasToken) {
+    <p class="document-error" role="alert">This invitation is invalid, expired, already used, or currently unavailable. Contact the sender for a new invitation.</p>
+} else {
+    <form method="post" asp-page="Invitation" asp-route-token="">
+        <input type="hidden" asp-for="Token" />
+        <button type="submit">Open request</button>
+    </form>
+}
+</section>

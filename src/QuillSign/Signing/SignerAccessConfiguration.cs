@@ -48,6 +48,11 @@ public static class SignerAccessConfiguration
         services.AddOptions<CookieAuthenticationOptions>(Scheme).Configure<TimeProvider>((cookie,time) => cookie.TimeProvider = time);
         return services;
     }
+    public static IServiceCollection AddQuillSignSignerConsent(this IServiceCollection services)
+    {
+        services.AddScoped<SignerReceiptProtection>(); services.AddScoped<SignerPdfAccess>(); services.AddScoped<SignerConsent>();
+        return services;
+    }
     public static ClaimsPrincipal Principal(VerifiedSigner signer) => new(new ClaimsIdentity([
         new(EnvelopeStorageAuthorization.EnvelopeClaim,signer.EnvelopeId.ToString("N")), new(PublicIdClaim,signer.PublicId),
         new(SignerClaim,signer.SignerId.ToString("N")), new(ClaimTypes.Email,signer.Email), new(DocumentClaim,signer.DocumentId.ToString("N")),
