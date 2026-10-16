@@ -58,7 +58,12 @@ public sealed class SignerCheckpointTests(SqlDatabaseFixture fixture) : IClassFi
         var chain=await check.AuditEvents.Where(x=>x.EnvelopeId==h.EnvelopeId).OrderBy(x=>x.Sequence).ToArrayAsync(); for(var i=0;i<chain.Length;i++) { Assert.Equal(AuditHash.Compute(chain[i]),chain[i].Hash); if(i>0)Assert.Equal(chain[i-1].Hash,chain[i].PrevHash); }
         // Simulate a lost work acknowledgment recovered only after later progress.
         await check.WorkItems.Where(x=>x.Id==firstFinish.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Status,WorkStatus.Queued).SetProperty(x=>x.LeaseOwner,(Guid?)null).SetProperty(x=>x.LeaseExpiresAt,(DateTimeOffset?)null));
-        await h.Signals.PublishAsync(firstFinish.Id,TimeSpan.Zero,default); Assert.True(await h.Once()); Assert.Equal(2,await check.AuditEvents.CountAsync(x=>x.EnvelopeId==h.EnvelopeId && x.Event=="signer_completed")); Assert.Single(await check.EmailOutbox.Where(x=>x.EnvelopeId==h.EnvelopeId).ToArrayAsync()); Assert.Equal(1,h.Sender.Calls);
+        await h.Signals.PublishAsync(firstFinish.Id,TimeSpan.Zero,default);
+        // The newly supported completion delivery may be ahead of this replay in the queue.
+        // Verify the intended checkpoint job actually finishes before asserting no duplicates.
+        for(var i=0;i<4 && await check.WorkItems.Where(x=>x.Id==firstFinish.Id).Select(x=>x.Status).SingleAsync()!=WorkStatus.Completed;i++)Assert.True(await h.Once());
+        Assert.Equal(WorkStatus.Completed,await check.WorkItems.Where(x=>x.Id==firstFinish.Id).Select(x=>x.Status).SingleAsync());
+        Assert.Equal(2,await check.AuditEvents.CountAsync(x=>x.EnvelopeId==h.EnvelopeId && x.Event=="signer_completed")); Assert.Single(await check.EmailOutbox.Where(x=>x.EnvelopeId==h.EnvelopeId).ToArrayAsync()); Assert.Equal(1,h.Sender.Calls);
     }
     [Fact]
     public async Task Checkpoint_worker_outlives_original_session_and_uses_actual_accepted_signing_time()

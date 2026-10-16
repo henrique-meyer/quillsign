@@ -17,7 +17,7 @@ public sealed record CompletionSealPair(Guid EnvelopeId,Guid CandidateId,Complet
 
 // Explicit internal stages only. Final publication, Completed, work production and delivery are separate.
 public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandidates candidates,CompletionEvidenceCollector collector,
-    CompletionCertificateRenderer renderer,PlatformPdfSeal engine,SealCms verifier,IBlobStore blobs,AuditWriter audit,TimeProvider time)
+    CompletionCertificateRenderer renderer,PlatformPdfSeal engine,SealCms verifier,IBlobStore blobs,AuditWriter audit,TimeProvider time,CompletionCommitScope? scope=null)
 {
     public const string RecipeVersion="completion-seal-v1";
     private const long MaximumBytes=64*1024*1024;
@@ -103,9 +103,11 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
                 else
                 {
                     if(kind==CompletionSealKind.Certificate && !await db.CompletionSealOutputs.AnyAsync(x=>x.Id==executed!.Id && x.EnvelopeId==row.EnvelopeId && x.CandidateId==candidate.Id && x.Kind==CompletionSealKind.Executed && x.PdfSha256==row.ExecutedSha256,ct))throw new DocumentConflictException();
+                    if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct);
                     db.CompletionSealOutputs.Add(row); await db.SaveChangesAsync(ct);
                     await audit.AppendAsync(row.EnvelopeId,Event(kind),null,null,null,ct,Evidence(row),PartyType.System);
-                    await RecheckLocked(candidate,ct); await RecheckPredecessor(executed,candidate,ct); saved=row;
+                    await RecheckLocked(candidate,ct); await RecheckPredecessor(executed,candidate,ct);
+                    if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct); saved=row;
                 }
                 commitStarted=existing is null;
                 await transaction.CommitAsync(ct); committed=existing is null;

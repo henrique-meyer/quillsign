@@ -15,7 +15,7 @@ public sealed record PublishedCompletion(Guid EnvelopeId,DateTimeOffset Complete
 // Internal workflow prerequisite. Callers must separately authorize public access. No job or mail producer.
 public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandidates candidates,CompletionSealOutputs seals,
     CompletionEvidenceCollector collector,ICompletionFinalStore final,AuditWriter audit,TimeProvider time,
-    CompletionPublicationOptions options,IHostEnvironment environment)
+    CompletionPublicationOptions options,IHostEnvironment environment,CompletionCommitScope? scope=null)
 {
     public const string Version="completion-publication-v1";
     private sealed record Documents(FinalStoredDocument Executed,FinalStoredDocument Certificate);
@@ -47,12 +47,14 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
                 var sequence=(await db.AuditEvents.Where(x=>x.EnvelopeId==id).MaxAsync(x=>(long?)x.Sequence,ct) ?? 0)+1;
                 if(sequence is <1 or >512)throw Invalid();
                 // Only publication-owned envelope fields change. Signer Finish times remain untouched.
+                if(scope is not null)await scope.CheckLockedAsync(id,ct);
                 Apply(envelope!,intent,pair,at); db.Update(envelope!); await db.SaveChangesAsync(ct);
                 var result=new CompletionPublicationResult {EnvelopeId=id,IntentId=intent.Id,CompletedAt=at,AuditSequence=sequence,
                     FinalDocumentsJson=JsonSerializer.Serialize(new Documents(executed,certificate)),
                     AfterEnvelopeSha256=PublishedCompletionSource.Digest(envelope!),IntentRecipeSha256=intent.RecipeSha256.ToArray()};
                 result.RecipeSha256=Recipe(result); db.CompletionPublicationResults.Add(result); await db.SaveChangesAsync(ct);
                 await audit.AppendAsync(id,"completed",null,null,null,ct,Evidence(result),PartyType.System);
+                if(scope is not null)await scope.CheckLockedAsync(id,ct);
                 commitStarted=true;
             }
             await transaction.CommitAsync(ct);
@@ -118,9 +120,10 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
                 ExecutedOutputId=pair.Executed.Id,CertificateOutputId=pair.Certificate.Id,BeforeEnvelopeJson=JsonSerializer.Serialize(envelope),
                 StageBindingsJson=Bindings(candidate,pair),RetentionDays=retention.Days,DevelopmentWriteOnce=retention.DevelopmentWriteOnce,PreparedAt=time.GetUtcNow()};
             row.RecipeSha256=Recipe(row); Validate(row);
+            if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct);
             db.CompletionPublicationIntents.Add(row); await db.SaveChangesAsync(ct);
             await audit.AppendAsync(row.EnvelopeId,"completion_publication_prepared",null,null,null,ct,Evidence(row),PartyType.System);
-            await Recheck(candidate,pair,ct); commitStarted=true; await transaction.CommitAsync(ct); return row;
+            await Recheck(candidate,pair,ct); if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct); commitStarted=true; await transaction.CommitAsync(ct); return row;
         }
         catch(Exception error) when(commitStarted && error is not OperationCanceledException && error is not OutOfMemoryException)
         {db.ChangeTracker.Clear(); var recovered=await Intent(candidate.EnvelopeId,ct); if(recovered is null)throw; return await PrepareIntent(candidate,pair,ct);}
