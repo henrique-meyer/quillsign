@@ -15,3 +15,5 @@ The private review proof remains in the browser only within the original session
 Invalid/foreign/expired proofs fail closed. Recoverable errors do not claim that Finish succeeded or failed merely because its response was lost. Reload checks accepted state before retrying. A current verified candidate can redisplay submitted confirmations after a rolled-back failure; an unverifiable candidate is withheld until recovery. Repreparation clears prior access evidence and requires opening the PDF again.
 
 Review/confirmation requests share the bounded signer interaction rate limit, use no-store/no-referrer headers and retain the existing isolated authentication, request-size and CSRF protections. Public Send, final sealing/certificates/completion delivery and actual operator disclosure policies remain separate work.
+
+Accepted-state recovery resolves checkpoint services lazily, only for a relevant signer route with a live isolated identity and a valid protected proof. Public pages and missing/invalid proofs must not resolve database or storage-backed checkpoint services. The public home page therefore remains available during bootstrap without a configured database.

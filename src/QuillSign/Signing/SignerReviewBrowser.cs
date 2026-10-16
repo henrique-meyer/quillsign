@@ -58,13 +58,14 @@ public static class SignerReviewBrowserConfiguration
     public static IServiceCollection AddSignerReviewBrowser(this IServiceCollection services)
     {
         services.AddScoped<SignerReviewBrowser>(); services.AddScoped<SignerAcceptedFilter>();
+        services.AddScoped<Func<SignerCheckpointReads>>(sp=>()=>sp.GetRequiredService<SignerCheckpointReads>());
         services.Configure<RazorPagesOptions>(o=>o.Conventions.ConfigureFilter(new ServiceFilterAttribute(typeof(SignerAcceptedFilter))));
         return services;
     }
 }
 
 // Recover accepted state before opening editable pages, including after a lost Finish response.
-public sealed class SignerAcceptedFilter(SignerReviewBrowser browser,SignerCheckpointReads checkpoints) : IAsyncPageFilter
+public sealed class SignerAcceptedFilter(SignerReviewBrowser browser,SignerReviewProtection protection,Func<SignerCheckpointReads> checkpoints) : IAsyncPageFilter
 {
     public Task OnPageHandlerSelectionAsync(PageHandlerSelectedContext context)=>Task.CompletedTask;
     public async Task OnPageHandlerExecutionAsync(PageHandlerExecutingContext context,PageHandlerExecutionDelegate next)
@@ -74,10 +75,10 @@ public sealed class SignerAcceptedFilter(SignerReviewBrowser browser,SignerCheck
             !(path=="/Sign/Review" && context.HandlerMethod?.Name=="Finish")) {
             var http=context.HttpContext; var id=context.RouteData.Values["publicId"]?.ToString();
             var proof=browser.Get(http,SignerReviewBrowser.AcceptedCookie)??browser.Get(http,SignerReviewBrowser.ReviewCookie);
-            if(id is not null && proof is not null && browser.Identity(http,id) is { } identity) {
+            if(id is not null && proof is not null && browser.Identity(http,id) is { } identity && protection.ReadAccepted(proof,identity) is not null) {
                 http.Response.Headers.CacheControl="no-store"; http.Response.Headers["Referrer-Policy"]="no-referrer";
                 try {
-                    if(await checkpoints.ConfirmAsync(http.User,id,proof,http.RequestAborted) is not null) {
+                    if(await checkpoints().ConfirmAsync(http.User,id,proof,http.RequestAborted) is not null) {
                         browser.Put(http,SignerReviewBrowser.AcceptedCookie,proof,identity);
                         context.Result=SenderConfiguration.WantsJson(http) ? new JsonResult(new { message="Your Finish was already accepted. Entries are frozen.",confirmation="/sign/"+id+"/confirmed" }) { StatusCode=409 }
                             : new RedirectResult("/sign/"+id+"/confirmed"); return;
