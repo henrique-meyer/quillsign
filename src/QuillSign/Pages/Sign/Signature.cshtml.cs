@@ -49,7 +49,7 @@ public sealed class SignatureModel(SignerAccess access,SignatureAdoption adoptio
         }
         catch(Exception e) when(e is ArgumentException or SignatureImageRejectedException or InvalidOperationException)
         { return Error(400,e is SignatureImageRejectedException ? e.Message : "Use visible signature and initials within the limits. If the preview limit was reached, reuse a current preview or contact the sender."); }
-        catch(Exception e) when(e is RequestFailedException or IOException or DocumentRejectedException or DbUpdateException)
+        catch(Exception e) when(e is RequestFailedException or IOException or InvalidDataException or DocumentRejectedException or DbUpdateException)
         { return Error(503,"The marks could not be saved or verified. No adoption was recorded. Retry the preview later."); }
     }
     public async Task<IActionResult> OnPostAdoptAsync(string publicId,CancellationToken ct)
@@ -67,7 +67,7 @@ public sealed class SignatureModel(SignerAccess access,SignatureAdoption adoptio
             }
             return Failure(400,"The preview or acknowledgment is missing, expired or stale. Prepare and review a new preview before adopting.");
         }
-        catch(Exception e) when(e is RequestFailedException or IOException or DocumentRejectedException or DbUpdateException)
+        catch(Exception e) when(e is RequestFailedException or IOException or InvalidDataException or DocumentRejectedException or DbUpdateException)
         { return Failure(503,"Adoption could not be confirmed. Reload to check the saved state before retrying; do not assume the document was signed."); }
     }
     private IActionResult Failure(int status,string message)

@@ -39,6 +39,9 @@ public sealed class SignaturePreviewProtection(IDataProtectionProvider provider,
     }
 }
 public enum SignatureAdoptionResult { Adopted, AlreadyAdopted, InvalidContext, InvalidPreview, InvalidAcknowledgment }
+public sealed record AdoptedSignatureData(Guid Id,byte[] Signature,byte[] Initials,int SignatureWidth,int SignatureHeight,
+    int InitialsWidth,int InitialsHeight,DateTimeOffset AdoptedAt,SignatureMethod Method,string NormalizationVersion);
+internal sealed record CurrentSignatureAssets(SignaturePreview Preview,byte[] Signature,byte[] Initials);
 
 // Backend foundation. Its caller must render the exact returned assets and statement and
 // collect an explicit action; a prepared preview alone is never adoption or a field fill.
@@ -150,6 +153,57 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
                 documentSha256 = context.Identity.DocumentHash,disclosureSha256 = context.Identity.DisclosureHash,
                 serverEvidence = "previewed_assets_bound_to_explicit_adoption_request",identityEvidence = "email_link_session_with_prior_consent" }),PartyType.Signer,signer.Id);
         await transaction.CommitAsync(ct); return SignatureAdoptionResult.Adopted;
+    }
+
+    // Current adopted marks outlive their original preview and may be read from a fresh
+    // authorized signer session. This does not refresh a preview or grant storage writes.
+    public async Task<AdoptedSignatureData?> ReadCurrentAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct = default)
+    {
+        await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var context = await access.GetLockedContextAsync(principal,publicId,ct); if (context?.ConsentAt is null) return null;
+        var assets = await GetCurrentLockedAsync(context.Identity,ct); if (assets is null) return null;
+        if ((await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null) return null;
+        await transaction.CommitAsync(ct); var p = assets.Preview;
+        return new(p.Id,assets.Signature,assets.Initials,p.SignatureWidth,p.SignatureHeight,p.InitialsWidth,p.InitialsHeight,p.UsedAt!.Value,p.Method,p.NormalizationVersion);
+    }
+    // The caller must have checked live consent/scope under the common envelope lock.
+    internal async Task<CurrentSignatureAssets?> GetCurrentLockedAsync(VerifiedSigner identity,CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("A transaction is required.");
+        var signer = await CurrentSigner(identity,ct);
+        if (signer.SignatureAdoptionId is not Guid id) return null;
+        var preview = await db.SignaturePreviews.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id && x.EnvelopeId == identity.EnvelopeId && x.SignerId == identity.SignerId,ct);
+        if (preview?.UsedAt is null || preview.DocumentId != identity.DocumentId || !Same(preview.DocumentSha256,Convert.FromHexString(identity.DocumentHash)) ||
+            !Same(preview.DisclosureSha256,Convert.FromHexString(identity.DisclosureHash)) || preview.NormalizationVersion != SignaturePng.Version ||
+            preview.AdoptionVersion != SignatureAdoptionStatement.Version || !MatchesRevision(preview,signer)) return null;
+        var evidence = await db.AuditEvents.FromSqlInterpolated($"SELECT * FROM [AuditEvents] WHERE JSON_VALUE([DataJson], '$.adoptionId') = {id.ToString("D")}")
+            .AsNoTracking().Where(x => x.EnvelopeId == identity.EnvelopeId && x.Event == "signature_adopted" &&
+                x.ActorType == PartyType.Signer && x.ActorId == identity.SignerId && x.ActorEmail == identity.Email).ToListAsync(ct);
+        if (evidence.Count != 1 || !Same(evidence[0].Hash,AuditHash.Compute(evidence[0])) || !MatchesAdoptionEvidence(evidence[0].DataJson,preview,identity)) return null;
+        var signature = await ReadImage(identity,SignatureBlob(preview),preview.SignatureSha256,ct);
+        if (identity.SessionExpiresAt <= time.GetUtcNow()) return null;
+        var initials = await ReadImage(identity,InitialsBlob(preview),preview.InitialsSha256,ct);
+        return identity.SessionExpiresAt > time.GetUtcNow() ? new(preview,signature,initials) : null;
+    }
+    private static bool MatchesAdoptionEvidence(string json,SignaturePreview p,VerifiedSigner identity)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json); var root = document.RootElement;
+            bool Text(string key,string expected) => root.TryGetProperty(key,out var value) && value.ValueKind == JsonValueKind.String && value.GetString() == expected;
+            bool Id(string key,Guid expected) => root.TryGetProperty(key,out var value) && value.ValueKind == JsonValueKind.String && value.TryGetGuid(out var id) && id == expected;
+            bool OptionalText(string key,string? expected) => root.TryGetProperty(key,out var value) &&
+                (expected is null ? value.ValueKind == JsonValueKind.Null : value.ValueKind == JsonValueKind.String && value.GetString() == expected);
+            return Id("adoptionId",p.Id) && Id("signatureObjectId",p.SignatureObjectId) && Id("initialsObjectId",p.InitialsObjectId) &&
+                Text("signatureSha256",Convert.ToHexStringLower(p.SignatureSha256)) && Text("initialsSha256",Convert.ToHexStringLower(p.InitialsSha256)) &&
+                Text("documentSha256",identity.DocumentHash) && Text("disclosureSha256",identity.DisclosureHash) && Text("statementVersion",p.AdoptionVersion) &&
+                Text("statement",SignatureAdoptionStatement.Text) && Text("statementSha256",Convert.ToHexStringLower(SignatureAdoptionStatement.Sha256)) &&
+                Text("normalizationVersion",p.NormalizationVersion) && Text("method",p.Method.ToString()) &&
+                OptionalText("reportedTypedName",p.TypedName) && OptionalText("reportedTypedInitials",p.TypedInitials) &&
+                root.TryGetProperty("acknowledged",out var acknowledged) && acknowledged.ValueKind == JsonValueKind.True;
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException) { return false; }
     }
 
     private async Task<SignaturePreview?> FindPreview(string? value,VerifiedSigner identity,CancellationToken ct)
