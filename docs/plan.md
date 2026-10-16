@@ -469,7 +469,7 @@ Validation: All 724 .NET tests and 11 Node tests pass. Twenty-six new TestServer
 
 ## QUILS-40: Add the internal timestamped platform PDF seal engine
 
-Status: To Do. Depends on merged QUILS-18. Independent of QUILS-39's sender UI checks. Owned by this chat.
+Status: In Progress. Depends on merged QUILS-18. Independent of QUILS-39's sender UI checks. Owned by this chat.
 
 Implement the internal production PDF seal engine from merged QUILS-18 feasibility, pinned to PDFsharp 6.2.4 (MIT), as a small prerequisite for final completion. This slice signs an already prepared, hash-verified PDF once and returns bounded sealed bytes plus verified seal/timestamp metadata. It does not prepare completion certificates, mutate envelope state, persist final blobs, queue unsupported jobs, expose public sealing/verification endpoints or send mail.
 
