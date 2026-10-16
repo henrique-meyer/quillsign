@@ -24,6 +24,7 @@ src/QuillSign/Documents/*
 !src/QuillSign/Signing/
 src/QuillSign/Signing/*
 !src/QuillSign/Signing/FieldGeometry.cs
+!src/QuillSign/Signing/SignaturePng.cs
 !src/QuillSign/wwwroot/
 src/QuillSign/wwwroot/*
 !src/QuillSign/wwwroot/vendor/
