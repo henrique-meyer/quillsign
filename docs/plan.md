@@ -243,7 +243,7 @@ Validation: All 192 application tests pass. Review coverage verifies access/veri
 
 ## QUILS-24: Implement bounded sender-prefill PDF rendering for the send foundation
 
-Status: In Progress. Builds on merged QUILS-22; QUILS-23 review is independent. Owned by the overnight-development chat.
+Status: Implementation complete. Builds on merged QUILS-22 and includes merged QUILS-23 review. Owned by the overnight-development chat.
 
 Implement a reusable production-managed sender-prefill renderer with MIT PDFsharp 6.2.4, the verified rotated CropBox/UserUnit transform, and embedded hash-pinned OFL Liberation Sans 2.1.5. Managed Apache-2.0 PdfPig may validate cmap glyphs; native PDFium/SkiaSharp/PDFtoImage stay isolated in testing. Initialize the PDFsharp font resolver safely for repeated/concurrent renders.
 
@@ -252,3 +252,5 @@ Accept bounded normalized PDF bytes with expected SHA-256 and validated page geo
 Embed the exact font and complete notice in build/publish. Exercise the actual production renderer with the independent nine-case Windows/Linux harness, preserving existing prototype cases; test rejection, bounds, repeated/concurrent rendering and no application mutation. Verify original embedded text, Unicode/fitting/checkbox output and publish hashes. Document limits and the later authorization/revalidation/immutable hash/outbox transaction contract. No public endpoint/UI, signer value/image stamping, envelope mutations, persistent blob writes, mail, deployment or cloud changes. Pass checks and secret scans, commit/push/open/attach/merge a small QUILS-24 PR, then move Done.
 
 Malformed-source regression: PDFsharp throws a plain System.Exception from its parser when startxref is absent. Translate that exact upstream parser failure into the existing document-rejection path, preserve unrelated/runtime failures, and add an upload-validator regression case as part of this source-policy requirement. Rendering uses the existing storage byte limit with an additional 64 MiB in-memory ceiling, existing page cap, and the editor's maximum of 200 fields.
+
+Validation: All 222 application tests pass, including preserved multi-page original text, NFC/Unicode, source/output hashes, invalid/assigned/duplicate/overflow fields, source policy and metadata changes, byte/page/field limits, eight concurrent renderer instances, and exact embedded-font/upstream-notice integrity. The independent harness passes all nine actual production-renderer cases alongside nine prototype cases and 25 negative cases on Windows and offline in the minimal Linux app runtime. Published output retains exact font/OFL/PdfPig license/notice bytes. The web dependency graph excludes native PDF test engines; dependency audit and vendor verification pass. No endpoint, persistence mutation, mail or cloud changes.

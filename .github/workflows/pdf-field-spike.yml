@@ -12,6 +12,7 @@ on:
       - 'src/QuillSign/Documents/SenderPdfRenderer.cs'
       - 'src/QuillSign/Signing/FieldGeometry.cs'
       - 'docs/pdf-field-feasibility.md'
+      - 'docs/sender-pdf-rendering.md'
       - '.github/workflows/pdf-field-spike.yml'
   push:
     paths:
@@ -24,6 +25,7 @@ on:
       - 'src/QuillSign/Documents/SenderPdfRenderer.cs'
       - 'src/QuillSign/Signing/FieldGeometry.cs'
       - 'docs/pdf-field-feasibility.md'
+      - 'docs/sender-pdf-rendering.md'
       - '.github/workflows/pdf-field-spike.yml'
 
 permissions:
