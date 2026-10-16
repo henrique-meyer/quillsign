@@ -1,5 +1,10 @@
 **
 !LICENSE
+!licenses/
+licenses/*
+!licenses/PdfPig-LICENSE.txt
+!licenses/PdfPig-NOTICES.txt
+!licenses/PDFsharp-MIT.txt
 !tools/
 tools/*
 !tools/PdfFieldSpike/
@@ -14,6 +19,8 @@ src/QuillSign/*
 !src/QuillSign/Documents/
 src/QuillSign/Documents/*
 !src/QuillSign/Documents/PdfValidation.cs
+!src/QuillSign/Documents/EmbeddedPdfFont.cs
+!src/QuillSign/Documents/SenderPdfRenderer.cs
 !src/QuillSign/Signing/
 src/QuillSign/Signing/*
 !src/QuillSign/Signing/FieldGeometry.cs

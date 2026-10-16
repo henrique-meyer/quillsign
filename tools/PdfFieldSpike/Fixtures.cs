@@ -22,7 +22,7 @@ internal static class Fixtures
         {
             graphics.DrawRectangle(XBrushes.Red, spec.Left + spec.Width * .45, spec.Height - (spec.Bottom + spec.Height * .55),
                 spec.Width * .08, spec.Height * .04);
-            graphics.DrawString("BASE", new XFont("QuillFieldSpike", 10, XFontStyleEx.Regular, new XPdfFontOptions(PdfFontEncoding.Unicode)), XBrushes.White,
+            graphics.DrawString("BASE", new XFont(EmbeddedPdfFont.Family, 10, XFontStyleEx.Regular, new XPdfFontOptions(PdfFontEncoding.Unicode)), XBrushes.White,
                 new XRect(spec.Left + spec.Width * .45 + 2, spec.Height - (spec.Bottom + spec.Height * .55) + 2,
                     spec.Width * .08 - 4, spec.Height * .04 - 4), XStringFormats.TopLeft);
         }

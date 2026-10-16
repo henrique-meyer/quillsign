@@ -28,6 +28,7 @@ PageCase[] cases =
     new("rotate-270-crop-unit-2", 612, 792, 270, Left: 20, Bottom: -15, CropInset: 35, UserUnit: 2)
 ];
 var results = new List<object>();
+var productionResults = new List<object>();
 foreach (var spec in cases)
 {
     var source = Fixtures.Create(spec); var sourceHash = SHA256.HashData(source.Bytes);
@@ -68,6 +69,29 @@ foreach (var spec in cases)
         blue, text, checkedPixels = checkedBox.Count, uncheckedPixels = uncheckedBox.Count, mark, initialMark,
         sourceSha256 = Convert.ToHexStringLower(sourceHash), outputSha256 = Convert.ToHexStringLower(SHA256.HashData(bytes)), bytes = bytes.Length });
     Console.WriteLine($"PASS {spec.Name}: fiducial, original content, upright/complete text, checkbox states and image aspect ratios.");
+    var senderStamps = fields.Where(f => f.Kind is StampKind.Text or StampKind.Date or StampKind.Checkbox).ToArray();
+    var senderFields = senderStamps.Select(f => new SenderPrefillField(Guid.NewGuid(), null, f.Kind.ToString(), f.Page, f.X, f.Y, f.Width, f.Height, f.Value)).ToArray();
+    var sender = new SenderPdfRenderer(25 * 1024 * 1024, 20, 200).Render(source.Bytes, sourceHash, source.Pages, senderFields);
+    Require(sender.Sha256.SequenceEqual(SHA256.HashData(sender.Bytes)) && sender.SourceSha256.SequenceEqual(sourceHash), spec.Name + ": sender output hash mismatch.");
+    File.WriteAllBytes(Path.Combine(output, spec.Name + ".sender.pdf"), sender.Bytes);
+    using var senderImage = Conversion.ToImage(sender.Bytes, page: 0, options: options);
+    using (var png = senderImage.Encode(SKEncodedImageFormat.Png, 100)) File.WriteAllBytes(Path.Combine(output, spec.Name + ".sender.png"), png.ToArray());
+    var senderPixels = senderImage.Pixels;
+    var senderRed = Find(senderImage, senderPixels, c => c.Red > 180 && c.Green < 70 && c.Blue < 70);
+    var senderText = Find(senderImage, senderPixels, Black, (.08, .22, .84, .09));
+    Require(SameBounds(redBefore, senderRed, 1), spec.Name + ": production renderer altered original content.");
+    Require(senderText.Count > 30 && senderText.Right - senderText.Left > 2 * (senderText.Bottom - senderText.Top), spec.Name + ": production text is not upright.");
+    Require(AllBlackInsideFields(senderImage, senderPixels, senderStamps), spec.Name + ": production text/checkbox escaped field bounds.");
+    Require(Find(senderImage, senderPixels, Black, CheckboxInterior(.08, senderImage.Width, senderImage.Height)).Count > 5 &&
+        Find(senderImage, senderPixels, Black, CheckboxInterior(.18, senderImage.Width, senderImage.Height)).Count == 0, spec.Name + ": production checkbox state is wrong.");
+    Require(Find(senderImage, senderPixels, c => c.Red < 70 && c.Green is > 80 and < 170 && c.Blue > 180).Count == 0, spec.Name + ": production output contains a diagnostic fiducial.");
+    using (var senderParsed = PigDocument.Open(sender.Bytes))
+    {
+        var senderExtracted = Flatten(senderParsed.GetPage(1).Text); Require(senderExtracted.Contains("BASE"), spec.Name + ": production original text lost.");
+        foreach (var field in senderFields.Where(f => f.Type != "Checkbox")) Require(senderExtracted.Contains(Flatten(field.Value!)), spec.Name + ": production text lost.");
+    }
+    productionResults.Add(new { spec.Name, bytes = sender.Bytes.Length, sha256 = Convert.ToHexStringLower(sender.Sha256), senderText });
+    Console.WriteLine($"PASS production sender renderer {spec.Name}: original content, upright/complete in-bounds text, checkbox states and output hashes.");
 }
 
 var basis = Fixtures.Create(cases[0]); var basisHash = SHA256.HashData(basis.Bytes); var first = fields[0]; var rejected = new List<string>();
@@ -113,9 +137,9 @@ using (var image = Conversion.ToImage(naive, page: 0, options: new RenderOptions
         "The regression check failed to detect a deliberately naive transform.");
 
 var report = new { pdfsharp = "6.2.4", pdftoimage = "5.4.0", pdfpig = "0.1.16", font = "Liberation Sans 2.1.5 / OFL-1.1",
-    cases = results, rejected, canonicalAccent = true, fittedFontSize, naiveTransformDetected = true };
+    cases = results, productionCases = productionResults, rejected, canonicalAccent = true, fittedFontSize, naiveTransformDetected = true };
 File.WriteAllText(Path.Combine(output, "report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
-Console.WriteLine($"PASS {cases.Length} geometry cases, {rejected.Count} negative cases, NFC and naive-transform detection. Outputs: {output}");
+Console.WriteLine($"PASS {cases.Length} prototype and {productionResults.Count} production geometry cases, {rejected.Count} negative cases, NFC and naive-transform detection. Outputs: {output}");
 
 static string Flatten(string value) => Regex.Replace(value.Normalize(NormalizationForm.FormC), @"\s+", "");
 static bool Black(SKColor c) => c.Red < 65 && c.Green < 65 && c.Blue < 65;

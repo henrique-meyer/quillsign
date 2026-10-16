@@ -29,3 +29,9 @@ Integrity metadata: src/QuillSign/Build/interact.manifest.json.
 
 These notices describe the bundled browser/PDF components. Other .NET dependencies
 retain the licenses recorded in their NuGet packages; QuillSign's own license is in LICENSE.
+
+PdfPig 0.1.16 — Apache-2.0, with permissive external-component notices
+Source: https://github.com/UglyToad/PdfPig/tree/a7bb35662bbbf405efddad50aedc9bcdcf515afc
+The unmodified upstream LICENSE and NOTICES.txt at the NuGet package's source commit
+are retained and distributed as licenses/PdfPig-LICENSE.txt and licenses/PdfPig-NOTICES.txt.
+The sender-prefill renderer uses its managed TrueType cmap parser.

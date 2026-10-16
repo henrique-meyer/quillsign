@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using PdfSharp.Drawing;
-using PdfSharp.Fonts;
 using PdfSharp.Pdf;
 using PdfSharp.Pdf.IO;
 using QuillSign.Documents;
@@ -25,7 +24,7 @@ internal sealed class FieldStamper
         if (Convert.ToHexStringLower(SHA256.HashData(fontBytes)) != "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8")
             throw new InvalidDataException("Unexpected font bytes.");
         font = TrueTypeFontParser.Parse(new TrueTypeDataBytes(fontBytes));
-        GlobalFontSettings.FontResolver = new EmbeddedFont(fontBytes);
+        EmbeddedPdfFont.EnsureInitialized();
     }
 
     public byte[] Render(byte[] source, byte[] expectedHash, IReadOnlyList<PageGeometry> pages, IReadOnlyList<Stamp> fields,
@@ -121,7 +120,7 @@ internal sealed class FieldStamper
         XFont? chosen = null;
         for (var size = 12d; size >= 8; size -= .25)
         {
-            var candidate = new XFont("QuillFieldSpike", size, XFontStyleEx.Regular, new XPdfFontOptions(PdfFontEncoding.Unicode));
+            var candidate = new XFont(EmbeddedPdfFont.Family, size, XFontStyleEx.Regular, new XPdfFontOptions(PdfFontEncoding.Unicode));
             if (candidate.GetHeight() * lines.Length <= box.Height - 2 * padding &&
                 lines.All(line => graphics.MeasureString(line, candidate).Width <= box.Width - 2 * padding)) { chosen = candidate; break; }
         }
@@ -160,11 +159,5 @@ internal sealed class FieldStamper
         var scale = Math.Min(box.Width / image.PixelWidth, box.Height / image.PixelHeight);
         var width = image.PixelWidth * scale; var height = image.PixelHeight * scale;
         graphics.DrawImage(image, box.X + (box.Width - width) / 2, box.Y + (box.Height - height) / 2, width, height);
-    }
-    private sealed class EmbeddedFont(byte[] bytes) : IFontResolver
-    {
-        public FontResolverInfo ResolveTypeface(string familyName, bool bold, bool italic) => familyName == "QuillFieldSpike" && !bold && !italic
-            ? new FontResolverInfo("LiberationSans-Regular") : throw new InvalidDataException("Unexpected font request.");
-        public byte[] GetFont(string faceName) => faceName == "LiberationSans-Regular" ? bytes : throw new InvalidDataException("Unexpected font face.");
     }
 }

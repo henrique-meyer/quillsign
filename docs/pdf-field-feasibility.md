@@ -1,6 +1,6 @@
 # PDF field stamping feasibility (QUILS-22)
 
-PDFsharp 6.2.4 can append upright text, checkboxes and image marks to the tested rotated and cropped pages using an explicit transform. The isolated harness passes on Windows and in the same minimal .NET 10 Linux runtime image used by the app. It does not mutate envelopes, freeze documents, accept signatures, send mail or establish legal validity.
+PDFsharp 6.2.4 can append upright text, checkboxes and image marks to the tested rotated and cropped pages using an explicit transform. The isolated harness passes on Windows and in the same minimal .NET 10 Linux runtime image used by the app. It does not mutate envelopes, freeze documents, accept signatures, send mail or establish legal validity. QUILS-24 also runs all nine geometry fixtures through the actual [sender-prefill renderer](sender-pdf-rendering.md), retaining the original prototype checks.
 
 ## Reproduce
 
@@ -20,7 +20,7 @@ New-Item -ItemType Directory -Force artifacts/pdf-fields-linux
 docker run --rm --network none --mount "type=bind,source=$((Resolve-Path artifacts/pdf-fields-linux).Path),target=/results" quillsign-pdf-field-spike-test /results
 ```
 
-The container runs as the image's non-root app user, with no added operating-system packages. On Linux hosts, make the output directory writable by that user. CI also runs the helper on Windows and Ubuntu. This is a developer-only executable; PDFtoImage, SkiaSharp, PDFium and PdfPig are absent from the production web project's dependency graph.
+The container runs as the image's non-root app user, with no added operating-system packages. On Linux hosts, make the output directory writable by that user. CI also runs the helper on Windows and Ubuntu. This is a developer-only executable; PDFtoImage, SkiaSharp and PDFium are absent from the production web project's dependency graph. Production uses managed PdfPig for embedded-font cmap validation.
 
 ## Observed checks
 

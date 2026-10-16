@@ -54,7 +54,8 @@ public sealed class PdfValidation(DocumentOptions options)
         }
         catch (DocumentRejectedException) { throw; }
         catch (Exception error) when (error is PdfReaderException or InvalidOperationException or ArgumentException or
-            FormatException or IndexOutOfRangeException or NullReferenceException or OverflowException or NotImplementedException or InvalidDataException)
+            FormatException or IndexOutOfRangeException or NullReferenceException or OverflowException or NotImplementedException or InvalidDataException ||
+            (error.GetType() == typeof(Exception) && error.TargetSite?.DeclaringType?.Assembly == typeof(PdfReader).Assembly))
         { throw new DocumentRejectedException("This PDF is malformed or unsupported. Export a new PDF and try again."); }
     }
 
