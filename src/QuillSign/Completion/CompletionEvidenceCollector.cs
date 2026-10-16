@@ -20,10 +20,13 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
     private sealed record Frame(Envelope Envelope,Signer[] Signers,Recipient[] Recipients,DocumentField[] Fields,
         SignerFinishAcceptance[] Finishes,SignaturePreview[] Adoptions,AuditEvent[] Events,byte[] Binding,byte[] FrozenBinding);
     public async Task<CompletionMaterialization?> CollectAsync(Guid envelopeId,CancellationToken ct=default)
+        =>await CollectCore(envelopeId,null,ct);
+    internal Task<CompletionMaterialization?> CollectPublishedAsync(Guid id,PublishedCompletionSource source,CancellationToken ct)=>CollectCore(id,source,ct);
+    private async Task<CompletionMaterialization?> CollectCore(Guid envelopeId,PublishedCompletionSource? published,CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested(); if(envelopeId==Guid.Empty)return null;
         try {
-            var frame=await Capture(envelopeId,ct); if(frame is null)return null;
+            var frame=await Capture(envelopeId,ct,published); if(frame is null)return null;
             var e=frame.Envelope;
             await Verify(new(e.Id,DocumentBlobKind.Original,Id(e.OriginalBlob)),e.OriginalSha256!,ct);
             await Verify(new(e.Id,DocumentBlobKind.Normalized,Id(e.PdfBlob)),e.PdfSha256!,ct);
@@ -45,7 +48,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
             }
             var expected=JsonSerializer.Deserialize<PageGeometry[]>(e.PageSizesJson!) ?? throw Invalid();
             if(pages.Length!=e.PageCount || !SenderPdfRenderer.GeometryMatches(pages,expected))throw Invalid();
-            var current=await Capture(envelopeId,ct);
+            var current=await Capture(envelopeId,ct,published);
             if(current is null || !Same(current.Binding,frame.Binding))throw new DocumentConflictException();
             var evidence=Project(current,marks,time.GetUtcNow());
             evidence=CompletionEvidenceValidation.Own(evidence,ct);
@@ -56,25 +59,27 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
         catch(Exception error) when(error is JsonException or FormatException or InvalidOperationException or ArgumentException or UnauthorizedAccessException or KeyNotFoundException)
         {throw Invalid();}
     }
-    private async Task<Frame?> Capture(Guid id,CancellationToken ct)
+    private async Task<Frame?> Capture(Guid id,CancellationToken ct,PublishedCompletionSource? published=null)
     {
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct); await using var transaction=await db.Database.BeginTransactionAsync(ct);
-        var frame=await CaptureLocked(id,ct); await transaction.CommitAsync(ct); return frame;
+        var frame=await CaptureLocked(id,ct,published); await transaction.CommitAsync(ct); return frame;
     }
     // New preparation uses the complete optimistic binding. Saved candidates use the frozen-row
     // binding plus their verified historical anchor, allowing an append-only operational tail.
-    internal async Task RecheckLockedAsync(Guid id,byte[] binding,CancellationToken ct,long? sequence=null,byte[]? anchor=null)
+    internal async Task RecheckLockedAsync(Guid id,byte[] binding,CancellationToken ct,long? sequence=null,byte[]? anchor=null,PublishedCompletionSource? published=null)
     {
         if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A transaction is required.");
-        var frame=await CaptureLocked(id,ct);
+        var frame=await CaptureLocked(id,ct,published);
         if(frame is null || !Same(binding,sequence is null ? frame.Binding : frame.FrozenBinding) ||
             sequence is long n && (n<1 || n>frame.Events.Length || !Same(frame.Events[n-1].Hash,anchor)))throw new DocumentConflictException();
     }
-    private async Task<Frame?> CaptureLocked(Guid id,CancellationToken ct)
+    private async Task<Frame?> CaptureLocked(Guid id,CancellationToken ct,PublishedCompletionSource? published=null)
     {
         var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {id}").AsNoTracking().SingleOrDefaultAsync(ct);
+        if(e is not null && published is not null)e=published.Project(e);
         if(e is null || e.Status!=EnvelopeStatus.Sent || e.SenderVerifiedAt is null || e.SentAt is null || e.CurrentFinishId is null)return null;
-        var payloadBytes=await db.Database.SqlQuery<long>($"SELECT COALESCE((SELECT SUM(CONVERT(bigint,DATALENGTH([DataJson]))) FROM [AuditEvents] WHERE [EnvelopeId]={id}),0) + COALESCE((SELECT SUM(CONVERT(bigint,DATALENGTH([FieldsJson]))) FROM [SignerFinishAcceptances] WHERE [EnvelopeId]={id}),0) AS [Value]").SingleAsync(ct);
+        var maxSequence=published?.AuditSequence ?? long.MaxValue;
+        var payloadBytes=await db.Database.SqlQuery<long>($"SELECT COALESCE((SELECT SUM(CONVERT(bigint,DATALENGTH([DataJson]))) FROM [AuditEvents] WHERE [EnvelopeId]={id} AND [Sequence]<={maxSequence}),0) + COALESCE((SELECT SUM(CONVERT(bigint,DATALENGTH([FieldsJson]))) FROM [SignerFinishAcceptances] WHERE [EnvelopeId]={id}),0) AS [Value]").SingleAsync(ct);
         if(payloadBytes>16*1024*1024)throw Invalid();
         var signers=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==id).OrderBy(x=>x.Order).Take(101).ToArrayAsync(ct);
         if(signers.Length==0 || signers.Any(x=>x.Status!=SignerStatus.Signed))return null;
@@ -91,7 +96,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
         }
         var recipients=await db.Recipients.AsNoTracking().Where(x=>x.EnvelopeId==id).OrderBy(x=>x.Id).Take(101).ToArrayAsync(ct);
         var fields=await db.Fields.AsNoTracking().Where(x=>x.EnvelopeId==id).OrderBy(x=>x.Id).Take(201).ToArrayAsync(ct);
-        var events=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==id).OrderBy(x=>x.Sequence).Take(513).ToArrayAsync(ct);
+        var events=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==id && x.Sequence<=maxSequence).OrderBy(x=>x.Sequence).Take(513).ToArrayAsync(ct);
         if(recipients.Length>100 || fields.Length is <1 or >200 || events.Length is <1 or >512)throw Invalid();
         byte[]? previous=null; long dataBytes=0;
         foreach(var entry in events) {

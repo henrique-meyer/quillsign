@@ -91,6 +91,10 @@ public static class DatabaseCommands
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[CompletionCandidates] WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionSealOutputs] SET [RecipeVersion] = 'forbidden' WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[CompletionSealOutputs] WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionPublicationIntents] SET [RetentionDays]=0 WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[CompletionPublicationIntents] WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionPublicationResults] SET [AuditSequence]=1 WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[CompletionPublicationResults] WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[__EFMigrationsHistory] SET [ProductVersion] = 'forbidden'"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("CREATE TABLE [dbo].[__QuillSignPermissionProbe] ([Id] int NOT NULL)"));
         }
