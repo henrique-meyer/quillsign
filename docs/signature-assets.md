@@ -1,0 +1,15 @@
+# Signature PNG normalization foundation
+
+QUILS-29 adds the pure `SignaturePng.Normalize` processor for later signature/initials adoption. It grants no storage access and records no consent, adoption or signature. Public adoption, field filling and Finish remain subsequent work.
+
+The input contract is a browser-normalized static 8-bit RGB/RGBA PNG in sRGB. A later browser upload flow may decode supported image formats into its sRGB canvas first. It must show the **server-normalized output** before adoption and bind confirmation to that exact asset/hash; a client-generated image or reported typed name is not proof of identity or human intent.
+
+The processor owns an input copy, caps encoded input/output at 512 KiB and dimensions at 2048 × 1024, and bounds chunk count, raster allocation and decompression. It checks signature, header, lengths, CRCs, critical ordering, contiguous image data and the final trailer. It rejects palette/color-key transparency, unsupported color/depth/interlace/animation, unknown critical chunks, invalid filters, truncated/excess scanlines, checksum failures and trailing/concatenated compressed streams. Ancillary payloads are checked but never decompressed or retained. These format rules were checked against the [W3C PNG specification](https://www.w3.org/TR/png-3/).
+
+All five scanline filters are decoded. Nonblank detection requires some visible contrast against white; cropping retains even faint antialiasing around that mark. RGB/color/alpha values within the crop are preserved, with up to eight pixels of transparent padding on each side while staying inside dimension caps. The output has only IHDR, one IDAT and IEND, with an RGBA raster, fresh checksums and no ancillary metadata. It does not detect handwriting, verify identity or remove steganographic information from pixel content.
+
+`NormalizedSignatureImage` returns dimensions, `png-rgba-crop-v1`, cloned bytes and cloned SHA-256. Caller mutations cannot alter the stored result/hash. Encoding is deterministic for the same pixels on the running compression implementation; adoption must retain and hash the actual normalized bytes rather than expect a different runtime to reproduce identical compression later. Complex output exceeding the byte cap is rejected.
+
+The future adoption transaction must separately enforce a current consented signer, explicit adoption statement, exact previewed asset hash, authorized storage scope, atomic evidence and retry/concurrency behavior. This processor provides none of those permissions or workflow decisions.
+
+Validation includes 58 focused cases for RGB/RGBA and every filter, split image data, padding/crop/aspect/color/alpha, blank images, metadata/hash/ownership, critical ordering/CRC/truncation, unsupported modes, animation, size caps, compressed bombs and ambiguous streams. PDFsharp embeds the output and PdfPig independently checks decoded image samples. The PDF field harness uses these production-normalized assets in nine rotated/cropped/UserUnit geometries, with independent raster assertions, on Windows and an offline Linux container. Production adds no dependencies or native runtime.

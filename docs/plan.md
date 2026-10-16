@@ -313,7 +313,7 @@ Validation: All 321 application tests pass. SQL/Azurite coverage verifies exact 
 
 ## QUILS-29: Validate and normalize bounded signature PNG assets
 
-Status: In Progress. Independent asset-processing foundation for the agreed v1 adoption flow, building on merged PDF-image feasibility and consent work. Owned by the overnight-development chat.
+Status: Implementation complete. Independent asset-processing foundation for the agreed v1 adoption flow, building on merged PDF-image feasibility and consent work. Owned by the overnight-development chat.
 
 Add a pure managed PNG normalizer for signature/initials assets. Input is browser-normalized static 8-bit RGB/RGBA PNG; later adoption UI previews the normalized output and binds its hash, normalizing supported upload formats in the browser first. This slice grants no storage access and adds no endpoint, adoption action, field filling or Finish. Use existing permissive dependencies/.NET only; no native runtime or paid service.
 
@@ -322,3 +322,5 @@ Bound encoded input to 512 KiB and dimensions to 2048 by 1024. Validate PNG sign
 Test RGB/RGBA, every filter, split IDAT, blank/transparent/colored/alpha pixels, crop/padding/aspect, metadata stripping, hash/ownership, CRC/order/truncation/trailing data, animation/interlace/modes, compressed bombs, size mismatches and all caps. Independently verify outputs with PDFsharp's managed image reader and the existing image-stamping harness where useful, including Linux. Keep PDFsharp MIT 6.2.4, document the adoption boundary, pass checks/scans, commit/push/open/attach/pass CI/merge a small QUILS-29 PR and move Done. No cloud, deployed configuration or live mail changes.
 
 The normalized output also stays within 512 KiB, and padding stays within dimension caps. Reject palette/color-key transparency inputs rather than silently changing transparency; later browser conversion produces the previewed sRGB RGB/RGBA pixels before normalization.
+
+Validation: All 379 application tests pass, including 58 focused PNG cases. Independent PDFsharp embedding and PdfPig sample extraction verify normalized pixels. The field-stamping harness uses production-normalized signature/initials assets and passes all nine prototype/nine sender-renderer geometries, 25 negative checks and naive-transform detection on Windows and an offline minimal Linux container. Output preserves the visible mark/alpha while stripping ancillary metadata, stays within caps, and returned bytes/hashes are owned. No new dependency, native production runtime, storage access, endpoint, consent/adoption/Finish action or cloud changes.

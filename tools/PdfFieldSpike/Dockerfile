@@ -8,6 +8,7 @@ COPY src/QuillSign/Documents/PdfValidation.cs src/QuillSign/Documents/
 COPY src/QuillSign/Documents/EmbeddedPdfFont.cs src/QuillSign/Documents/
 COPY src/QuillSign/Documents/SenderPdfRenderer.cs src/QuillSign/Documents/
 COPY src/QuillSign/Signing/FieldGeometry.cs src/QuillSign/Signing/
+COPY src/QuillSign/Signing/SignaturePng.cs src/QuillSign/Signing/
 COPY src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/
 COPY src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LICENSE_LIBERATION src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/
 RUN dotnet publish tools/PdfFieldSpike/PdfFieldSpike.csproj -c Release -p:RestoreLockedMode=true -o /app
