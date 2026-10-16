@@ -124,9 +124,9 @@ Choose **Review document preparation** to see the PDF, ordered signers, sender-f
 
 The [versioned electronic-record disclosure foundation](docs/electronic-record-disclosure.md) builds exact envelope-bound text and hashes for a later send/consent transaction. Operators must supply actual paper-copy, withdrawal, contact-update, access and retention policies through private `ElectronicRecords__...` settings; empty examples fail snapshot construction. This foundation exposes no consent or signing UI.
 
-The backend [signer-access foundation](docs/signer-access.md) provides single-use invitation redemption, isolated two-hour signer sessions and access scoped to the frozen PDF/disclosure. Invitation tokens are created at actual dispatch with a default 24-hour life, bounded by envelope expiry. The [signer consent flow](docs/signer-consent.md) adds a safe invitation landing, stored disclosure/PDF downloads, read-only preview, explicit access/consent confirmations and decline with durable sender notification. The internal [send/freeze foundation](docs/send-freeze.md) atomically freezes reviewed drafts and queues the first signer invitation, with tokens activated at dispatch. The [signature adoption backend](docs/signature-adoption.md) binds explicit adoption to exact verified preview assets and versioned evidence. Public sender Send/confirmation, signature capture/adoption UI, field filling and Finish remain pending.
+The backend [signer-access foundation](docs/signer-access.md) provides single-use invitation redemption, isolated two-hour signer sessions and access scoped to the frozen PDF/disclosure. Invitation tokens are created at actual dispatch with a default 24-hour life, bounded by envelope expiry. The [signer consent flow](docs/signer-consent.md) adds a safe invitation landing, stored disclosure/PDF downloads, read-only preview, explicit access/consent confirmations and decline with durable sender notification. The internal [send/freeze foundation](docs/send-freeze.md) atomically freezes reviewed drafts and queues the first signer invitation, with tokens activated at dispatch. Consented signers can [type, draw or upload their signature and initials](docs/signature-capture.md), review exact saved server previews and explicitly adopt them through the [adoption backend](docs/signature-adoption.md). Public sender Send/confirmation, deliberate field filling, review and Finish remain pending.
 
-The [signature asset foundation](docs/signature-assets.md) validates and normalizes bounded PNG marks for a later adoption preview. It provides image processing only, with no storage permissions or signature/adoption action.
+The [signature asset processor](docs/signature-assets.md) validates and normalizes bounded PNG marks for adoption previews. It provides image processing only; the separate adoption workflow authorizes storage and records explicit adoption.
 
 PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.js 6.4.299 is vendored locally, including its font/decoder assets and license notices. Its four Liberation Sans fonts are replaced with unmodified upstream 2.1.5 under OFL-1.1. CI verifies the committed asset hashes with `python scripts/dev/vendor_pdfjs.py --verify`; maintainers regenerate the pinned distribution with the same script without `--verify`. See [third-party notices](THIRD-PARTY-NOTICES.txt) for attribution.
 
@@ -148,7 +148,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- Field editing and sequential signing.
+- Deliberate signer field application, review and Finish.
 - Office conversion and document-processing workers.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - PDF stamping, audit evidence, completion certificates, sealing, and verification.

@@ -341,7 +341,7 @@ Validation: All 425 application tests pass, including 46 new preview/adoption/se
 
 ## QUILS-31: Capture and explicitly adopt signature and initials in the signer UI
 
-Status: To Do. Depends on QUILS-30. Owned by the overnight-development chat.
+Status: Done. Depends on merged QUILS-30. Owned by the overnight-development chat.
 
 Build the public signature/initials capture and explicit adoption UI on QUILS-30. Add a signer-scoped Razor page reached after recorded consent, with typed, drawn and uploaded mark pairs and an accessible keyboard-first typed option. Keep signature capture separate from deliberate field application/review/Finish, which follow in a dependent story; successful adoption must truthfully say that fields are not yet applied and signing is not complete.
 
@@ -352,3 +352,5 @@ POST preview with antiforgery and the isolated signer scheme to QUILS-30, then s
 Adopt atomically through QUILS-30. Use clean redirects and the project's one-time HttpOnly notices, support deliberate replacement with a new preview, preserve existing adopted evidence and show a truthful current adoption state. Recheck current consent, session, sequential eligibility, PDF/disclosure and preview revision on every operation. Maintain narrow internal storage capabilities; no signer-cookie write/delete broadening. Do not set Signed, fill fields, mutate PDFs, send completion mail or add public sender Send.
 
 Test CSRF, authorization/context/consent isolation, exact preview bytes, stale/expired/missing receipt and acknowledgment, replacement, error/duplicate behavior and no GET mutation. Exercise real desktop/mobile browser flows for type, draw and PNG/JPEG upload, keyboard-only adoption, clear/retry and server errors using synthetic marks/requests. Verify licenses/vendor integrity, meaningful tests, model/secret checks, commit/push/open/attach/check/merge a small QUILS-numbered PR and move Done. No cloud changes, purchases, live email or fabricated operator policy.
+
+Validation: All 440 .NET tests and 11 Node image-header tests pass. Fifteen new TestServer/SQL/Azurite cases cover CSRF, exact preview PNGs, sender/signer/consent isolation, stale/session/expiry/statement binding, replacement/notices, storage errors, JSON behavior and recoverable throttling. Real desktop and 390-pixel mobile flows exercised typed, drawn, PNG and JPEG marks, keyboard adoption, edit invalidation, missing initials, oversized uploads, clear/retry, resize-preserved strokes and missing-storage adoption recovery. Model and all browser vendor/license checks pass. Adoption leaves fields, frozen PDF and Signed state untouched. See docs/signature-capture.md.

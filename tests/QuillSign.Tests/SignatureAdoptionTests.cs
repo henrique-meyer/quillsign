@@ -259,7 +259,7 @@ public sealed class SignatureAdoptionTests(SqlDatabaseFixture fixture) : IClassF
         public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData e,CancellationToken ct=default) { if(Interlocked.Increment(ref Commits)==FailCommitNumber)throw new IOException("Synthetic lost commit acknowledgement"); return Task.CompletedTask; }
         public ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e,InterceptionResult<int> r,CancellationToken ct=default) { if(FailPreviewSave && e.Context!.ChangeTracker.Entries<SignaturePreview>().Any(x=>x.State==EntityState.Added) || FailAudit && e.Context!.ChangeTracker.Entries<AuditEvent>().Any(x=>x.State==EntityState.Added))throw new DbUpdateException("Synthetic save failure"); return ValueTask.FromResult(r); }
     }
-    private static byte[] Mark(byte shade=20)
+    internal static byte[] Mark(byte shade=20)
     {
         var header=new byte[13]; BinaryPrimitives.WriteInt32BigEndian(header,32); BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(4),16); header[8]=8; header[9]=6;
         using var raw=new MemoryStream(); for(var y=0;y<16;y++) { raw.WriteByte(0); for(var x=0;x<32;x++) raw.Write(x>=8 && x<24 && y>=5 && y<11 ? new byte[]{shade,40,80,255} : new byte[]{255,255,255,0}); }

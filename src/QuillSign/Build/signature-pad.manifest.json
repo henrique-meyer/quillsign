@@ -1,0 +1,10 @@
+{
+  "version": "5.1.4",
+  "license": "MIT",
+  "source": "https://registry.npmjs.org/signature_pad/-/signature_pad-5.1.4.tgz",
+  "integrity": "sha512-q0wO5a+U+AWPVcVmiNXz7FY4Ad1QiE8wto/3Yn41WVqepoVVYMvkb1CTokaWPUUAHWDLLabH3/acODeWM9jCrg==",
+  "sha256": {
+    "signature_pad.js": "c5aba162a6b06d52cffdef5f264d1a4c658457534cafcfa158377773af67f976",
+    "LICENSE": "7d461320b6c69581bd19cc9402aa9a5e33ad826ed2f977d03bcb884e0cc6ce54"
+  }
+}
