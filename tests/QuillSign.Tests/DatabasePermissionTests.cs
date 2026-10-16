@@ -31,7 +31,7 @@ public sealed class DatabasePermissionTests(SqlDatabaseFixture fixture) : IClass
                     command.Parameters.Clear();
                     command.Parameters.AddWithValue("@object", "dbo." + table);
                     command.Parameters.AddWithValue("@permission", permission);
-                    var expected = permission == "ALTER" || (table == "AuditEvents" && permission is "UPDATE" or "DELETE") || (table is "SignaturePreviews" or "SignerReviewCandidates" && permission == "UPDATE") ? 0 : 1;
+                    var expected = permission == "ALTER" || (table == "AuditEvents" && permission is "UPDATE" or "DELETE") || (table is "SignaturePreviews" or "SignerReviewCandidates" or "SignerFinishAcceptances" && permission == "UPDATE") ? 0 : 1;
                     Assert.Equal(expected, Convert.ToInt32(await command.ExecuteScalarAsync()));
                 }
             }
@@ -45,6 +45,10 @@ public sealed class DatabasePermissionTests(SqlDatabaseFixture fixture) : IClass
             command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.SignerReviewCandidates', 'OBJECT', 'UPDATE', 'SupersededAt', 'COLUMN')";
             Assert.Equal(1,Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.SignerReviewCandidates', 'OBJECT', 'UPDATE', 'PdfSha256', 'COLUMN')";
+            Assert.Equal(0,Convert.ToInt32(await command.ExecuteScalarAsync()));
+            command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.SignerFinishAcceptances', 'OBJECT', 'UPDATE', 'ProcessedAt', 'COLUMN')";
+            Assert.Equal(1,Convert.ToInt32(await command.ExecuteScalarAsync()));
+            command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.SignerFinishAcceptances', 'OBJECT', 'UPDATE', 'FieldsJson', 'COLUMN')";
             Assert.Equal(0,Convert.ToInt32(await command.ExecuteScalarAsync()));
         }
         finally

@@ -21,14 +21,19 @@ public sealed class SignerReviewProtection(IDataProtectionProvider provider,Time
     internal string Create(SignerReviewCandidate p,VerifiedSigner identity)=>protector.Protect(JsonSerializer.Serialize(new SignerReviewReceipt(
         p.Id,identity,Hex(p.PdfSha256),Hex(p.SnapshotSha256),Hex(p.RecipeSha256),p.AdoptionId,p.ProspectiveDate,p.PreparedAt,p.ExpiresAt)));
     public SignerReviewReceipt? Read(string? value,VerifiedSigner identity)
+        =>ReadCore(value,identity,false);
+    // Only a durable accepted-Finish replay may use an expired review proof.
+    internal SignerReviewReceipt? ReadAccepted(string? value,VerifiedSigner identity)
+        =>ReadCore(value,identity,true);
+    private SignerReviewReceipt? ReadCore(string? value,VerifiedSigner identity,bool accepted)
     {
         if(value is null || value.Length>8192)return null;
         try
         {
             var p=JsonSerializer.Deserialize<SignerReviewReceipt>(protector.Unprotect(value)); var now=time.GetUtcNow();
             return p is not null && p.Id!=Guid.Empty && p.Identity==identity && p.AdoptionId!=Guid.Empty &&
-                p.PreparedAt<=now && p.ExpiresAt>now && p.ExpiresAt<=identity.SessionExpiresAt && p.ExpiresAt<=p.PreparedAt.AddMinutes(10) &&
-                p.ProspectiveDate==DateOnly.FromDateTime(now.UtcDateTime) && p.ProspectiveDate==DateOnly.FromDateTime(p.PreparedAt.UtcDateTime) ? p : null;
+                p.PreparedAt<=now && identity.SessionExpiresAt>now && p.ExpiresAt>p.PreparedAt && p.ExpiresAt<=identity.SessionExpiresAt && p.ExpiresAt<=p.PreparedAt.AddMinutes(10) &&
+                (accepted || p.ExpiresAt>now && p.ProspectiveDate==DateOnly.FromDateTime(now.UtcDateTime)) && p.ProspectiveDate==DateOnly.FromDateTime(p.PreparedAt.UtcDateTime) ? p : null;
         }
         catch(Exception e) when(e is CryptographicException or JsonException or ArgumentException) { return null; }
     }
@@ -110,14 +115,30 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
     {
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
+        var review=await ReadLockedAsync(principal,publicId,receipt,ct); if(review is null)return null;
+        await transaction.CommitAsync(ct); return new(Data(review.Candidate,review.Identity),review.Pdf);
+    }
+    internal sealed record LockedReview(SignerReviewCandidate Candidate,VerifiedSigner Identity,byte[] Pdf);
+    internal async Task<LockedReview?> ReadLockedAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A transaction is required.");
         var context=await access.GetLockedContextAsync(principal,publicId,ct); if(context?.ConsentAt is null)return null;
         var token=protection.Read(receipt,context.Identity); if(token is null)return null;
         var candidate=await db.SignerReviewCandidates.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==token.Id && x.EnvelopeId==context.Identity.EnvelopeId && x.SignerId==context.Identity.SignerId,ct);
-        if(candidate is null || candidate.AdoptionId!=token.AdoptionId || candidate.PreparedAt!=token.PreparedAt || candidate.ExpiresAt!=token.ExpiresAt ||
-            candidate.ProspectiveDate!=token.ProspectiveDate || Hex(candidate.PdfSha256)!=token.PdfSha256 || Hex(candidate.SnapshotSha256)!=token.SnapshotSha256 || Hex(candidate.RecipeSha256)!=token.RecipeSha256)return null;
+        if(candidate is null || !TokenMatches(candidate,token))return null;
         var state=await Current(principal,publicId,ct); if(state is null || !Matches(candidate,state) || !await Evidence(candidate,context.Identity,ct))return null;
         var bytes=await ReadPdf(candidate,context.Identity,ct); if(!await Live(candidate,principal,publicId,ct))return null;
-        await transaction.CommitAsync(ct); return new(Data(candidate,context.Identity),bytes);
+        return new(candidate,context.Identity,bytes);
+    }
+    internal static bool TokenMatches(SignerReviewCandidate candidate,SignerReviewReceipt token)=>candidate.Id==token.Id &&
+        candidate.EnvelopeId==token.Identity.EnvelopeId && candidate.SignerId==token.Identity.SignerId && candidate.AdoptionId==token.AdoptionId &&
+        candidate.PreparedAt==token.PreparedAt && candidate.ExpiresAt==token.ExpiresAt && candidate.ProspectiveDate==token.ProspectiveDate &&
+        Hex(candidate.PdfSha256)==token.PdfSha256 && Hex(candidate.SnapshotSha256)==token.SnapshotSha256 && Hex(candidate.RecipeSha256)==token.RecipeSha256 &&
+        Same(candidate.SessionSha256,SessionHash(token.Identity));
+    internal async Task<bool> VerifySourceLockedAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct)
+    {
+        var context=await access.GetLockedContextAsync(principal,publicId,ct); if(context?.ConsentAt is null)return false;
+        _=await pdf.PrepareAsync(principal,context,ct); return true;
     }
 
     private async Task<State?> Current(ClaimsPrincipal principal,string publicId,CancellationToken ct)
@@ -150,7 +171,7 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
         if(p.ExpiresAt<=time.GetUtcNow() || p.ProspectiveDate!=DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime))return false;
         var context=await access.GetLockedContextAsync(principal,publicId,ct); return context?.ConsentAt is not null && context.SignatureAdoptionId==p.AdoptionId;
     }
-    private async Task<byte[]> ReadPdf(SignerReviewCandidate p,VerifiedSigner identity,CancellationToken ct)
+    internal async Task<byte[]> ReadPdf(SignerReviewCandidate p,VerifiedSigner identity,CancellationToken ct)
     {
         if(p.PdfLength is <16 or >MaximumPdfBytes || p.PdfObjectId==p.SourceObjectId)throw new InvalidDataException("Invalid saved review PDF.");
         using var memory=new MemoryStream(); using var bounded=new BoundedDocumentStream(memory,MaximumPdfBytes); var blob=Blob(p);
@@ -159,7 +180,7 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
             throw new InvalidDataException("The saved review PDF could not be verified.");
         return memory.ToArray();
     }
-    private async Task<bool> Evidence(SignerReviewCandidate p,VerifiedSigner identity,CancellationToken ct)
+    internal async Task<bool> Evidence(SignerReviewCandidate p,VerifiedSigner identity,CancellationToken ct)
     {
         var events=await db.AuditEvents.FromSqlInterpolated($"SELECT * FROM [AuditEvents] WHERE JSON_VALUE([DataJson], '$.candidateId') = {p.Id.ToString("D")}")
             .AsNoTracking().Where(e=>e.EnvelopeId==identity.EnvelopeId && e.Event=="signer_review_prepared" && e.ActorType==PartyType.Signer && e.ActorId==identity.SignerId && e.ActorEmail==identity.Email).ToArrayAsync(ct);
