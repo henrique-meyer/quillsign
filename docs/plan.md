@@ -217,7 +217,7 @@ Validation: All 179 SQL/Azurite/Mailpit tests pass. New coverage verifies normal
 
 ## QUILS-22: Prototype PDF field stamping and verify geometry and text fidelity
 
-Status: In Progress. Uses completed QUILS-20 geometry and QUILS-18 seal findings; final workflow integration follows this feasibility work and QUILS-21 preparation. Owned by the overnight-development chat.
+Status: Implementation complete. Uses completed QUILS-20 geometry and QUILS-18 seal findings; final workflow integration follows this feasibility work and QUILS-21 preparation. Owned by the overnight-development chat.
 
 Create a standalone .NET 10 developer harness with MIT PDFsharp 6.2.4 and permissive font/rendering/parser dependencies. Reuse or explicitly pin an embedded permissive font, independent of host fonts. Keep new native/testing dependencies isolated from the web app until validated. Stamp synthetic text/multiline text, full names, dates, true/false checkboxes and signature/initials image marks with aspect ratio preserved. Cover Letter, A4, landscape, all right-angle rotations, offset CropBox and non-default UserUnit pages.
 
@@ -226,3 +226,5 @@ Independently rasterize output with a permissive PDF engine and compare colored 
 Document reproducible offline commands, Windows/Linux CI, the actual PDFsharp transform, font/sizing/image fitting behavior, limitations and production integration gates. No envelope mutations, production freezing/stamping, signature acceptance, mail, deployment or cloud changes. Pass appropriate checks and secret scans, commit/push/open/attach/merge a small QUILS-22 PR and move Done. Do not claim final PDF/signature validity beyond observed checks.
 
 Font prerequisite: replace PDF.js's four GPL-with-font-exception Liberation Sans assets and notice with unmodified upstream Liberation 2.1.5 (OFL-1.1), retaining metric compatibility and the complete OFL notice. Pin and verify archive/file hashes, update reproducible vendoring/manifests/third-party attribution, and check browser/build/publish output. The prototype's native renderer/parser dependencies remain isolated from production.
+
+Validation: Nine geometry cases, 25 negative cases, independent text extraction/NFC/adaptive sizing, and detection of a deliberately incorrect transform pass on Windows and offline in the minimal Linux app runtime. PDF.js browser checks cover Letter, rotated crops/UserUnit 2, and unembedded Helvetica with system fonts disabled. The vendor check verifies all 200 files and pinned OFL fonts; app publish retains exact font/license hashes and interact.js notice. All 179 application tests pass. Findings, reproducible commands and production integration limits are documented in docs/pdf-field-feasibility.md.

@@ -1,0 +1,49 @@
+name: PDF field feasibility
+
+on:
+  pull_request:
+    paths:
+      - 'tools/PdfFieldSpike/**'
+      - 'scripts/dev/Test-PdfFieldSpike.ps1'
+      - 'scripts/dev/vendor_pdfjs.py'
+      - 'src/QuillSign/wwwroot/vendor/pdfjs/**'
+      - 'src/QuillSign/Documents/PdfValidation.cs'
+      - 'src/QuillSign/Signing/FieldGeometry.cs'
+      - 'docs/pdf-field-feasibility.md'
+      - '.github/workflows/pdf-field-spike.yml'
+  push:
+    paths:
+      - 'tools/PdfFieldSpike/**'
+      - 'scripts/dev/Test-PdfFieldSpike.ps1'
+      - 'scripts/dev/vendor_pdfjs.py'
+      - 'src/QuillSign/wwwroot/vendor/pdfjs/**'
+      - 'src/QuillSign/Documents/PdfValidation.cs'
+      - 'src/QuillSign/Signing/FieldGeometry.cs'
+      - 'docs/pdf-field-feasibility.md'
+      - '.github/workflows/pdf-field-spike.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fields:
+    name: PDF fields (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify field rendering with independent raster/text engines
+        shell: pwsh
+        run: ./scripts/dev/Test-PdfFieldSpike.ps1
+      - name: Check dependency vulnerabilities
+        run: dotnet list tools/PdfFieldSpike/PdfFieldSpike.csproj package --vulnerable --include-transitive

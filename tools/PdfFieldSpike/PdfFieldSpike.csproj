@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="PDFsharp" Version="6.2.4" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    <PackageReference Include="PDFtoImage" Version="5.4.0" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../src/QuillSign/Documents/PdfValidation.cs" Link="Shared/PdfValidation.cs" />
+    <Compile Include="../../src/QuillSign/Signing/FieldGeometry.cs" Link="Shared/FieldGeometry.cs" />
+    <Content Include="../../src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf" Link="fonts/LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LICENSE_LIBERATION" Link="fonts/LICENSE" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
