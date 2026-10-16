@@ -198,9 +198,10 @@ public sealed class SignerFieldTests(SqlDatabaseFixture fixture) : IClassFixture
         Assert.Null(await run.Snapshot()); Assert.Equal(SignerFieldOutcome.NotFound,(await run.Apply(run.Field(FieldType.Text),"value")).Outcome);
     }
 
-    private sealed class Harness : IAsyncDisposable
+    internal sealed class Harness : IAsyncDisposable
     {
         private SqlDatabaseFixture fixture=null!; private readonly EphemeralDataProtectionProvider protection=new();
+        internal EphemeralDataProtectionProvider Protection=>protection;
         public Envelope Envelope=null!; public Signer Signer=null!,Other=null!; public DocumentField Unassigned=null!,Foreign=null!,ExtraSignature=null!; public List<DocumentField> Fields=[];
         public VerifiedSigner Identity=null!; public Clock Clock=new(); public Faults Faults=new(); public Blobs Blobs=null!;
         public ClaimsPrincipal Principal=>SignerAccessConfiguration.Principal(Identity);
@@ -217,9 +218,9 @@ public sealed class SignerFieldTests(SqlDatabaseFixture fixture) : IClassFixture
             run.Identity=new(run.Envelope.Id,run.Envelope.PublicId,run.Signer.Id,run.Signer.Email,Guid.Parse(run.Envelope.SentPdfBlob),Convert.ToHexStringLower(run.Envelope.SentPdfSha256),Convert.ToHexStringLower(disclosure.Sha256),now.AddHours(2));
             run.Blobs=new(new AzureBlobStore(new BlobServiceClient(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE"),new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03)),1024*1024,true)); return run;
         }
-        private QuillSignDbContext Open() { using var original=fixture.Open(); return new(new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer(original.Database.GetConnectionString()).AddInterceptors(Faults).Options); }
-        private SignerAccess Access(QuillSignDbContext db)=>new(db,new(db,Clock),new(),Clock);
-        private SignatureAdoption Adoption(QuillSignDbContext db)=>new(db,Access(db),Blobs,new(protection,Clock),new(db,Clock),Clock);
+        internal QuillSignDbContext Open() { using var original=fixture.Open(); return new(new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer(original.Database.GetConnectionString()).AddInterceptors(Faults).Options); }
+        internal SignerAccess Access(QuillSignDbContext db)=>new(db,new(db,Clock),new(),Clock);
+        internal SignatureAdoption Adoption(QuillSignDbContext db)=>new(db,Access(db),Blobs,new(protection,Clock),new(db,Clock),Clock);
         public async Task<SignaturePreviewData> Adopt(byte shade=20) { await using var db=Open(); var service=Adoption(db); var preview=(await service.PrepareAsync(Principal,Envelope.PublicId,new(SignatureAdoptionTests.Mark(shade),SignatureAdoptionTests.Mark((byte)(shade+10)),SignatureMethod.Drawn)))!; Clock.Advance(TimeSpan.FromMilliseconds(1)); Assert.Equal(SignatureAdoptionResult.Adopted,await service.AdoptAsync(Principal,Envelope.PublicId,preview.Receipt,true,SignatureAdoptionStatement.Version,null,null)); return preview; }
         public async Task<SignerFieldSnapshot?> Snapshot(ClaimsPrincipal? principal=null) { await using var db=Open(); return await new SignerFields(db,Access(db),Adoption(db),new(db,Clock),Clock).GetAsync(principal??Principal,Envelope.PublicId); }
         public async Task<AdoptedSignatureData?> Current(ClaimsPrincipal? principal=null) { await using var db=Open(); return await Adoption(db).ReadCurrentAsync(principal??Principal,Envelope.PublicId); }
@@ -228,13 +229,17 @@ public sealed class SignerFieldTests(SqlDatabaseFixture fixture) : IClassFixture
         public BlobClient Raw(DocumentBlob blob)=>new BlobServiceClient(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE"),new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03)).GetBlobContainerClient("normalized").GetBlobClient($"{blob.EnvelopeId:N}/{blob.ObjectId:N}");
         public async ValueTask DisposeAsync() { foreach(var blob in Blobs.Created.Distinct())await Raw(blob).DeleteIfExistsAsync(); }
     }
-    private sealed class Clock : TimeProvider { private DateTimeOffset now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public bool TickOnRead; public override DateTimeOffset GetUtcNow() { var result=now; if(TickOnRead)now=now.AddMilliseconds(1); return result; } public void Advance(TimeSpan span)=>now+=span; }
-    private sealed class Blobs(IBlobStore inner) : IBlobStore
-    { public List<DocumentBlob> Created=[]; public Action? AfterRead;
-        public Task WriteAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,long length,CancellationToken ct=default) { Created.Add(b); return inner.WriteAsync(p,b,s,length,ct); }
-        public async Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct=default) { var length=await inner.CopyToAsync(p,b,s,ct); AfterRead?.Invoke(); return length; }
-        public Task DeleteAsync(ClaimsPrincipal p,DocumentBlob b,CancellationToken ct=default)=>inner.DeleteAsync(p,b,ct); }
-    private sealed class Faults : DbTransactionInterceptor,ISaveChangesInterceptor
+    internal sealed class Clock : TimeProvider { private DateTimeOffset now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public bool TickOnRead; public override DateTimeOffset GetUtcNow() { var result=now; if(TickOnRead)now=now.AddMilliseconds(1); return result; } public void Advance(TimeSpan span)=>now+=span; public void Set(DateTimeOffset value)=>now=value; }
+    internal sealed class Blobs(IBlobStore inner) : IBlobStore
+    { public List<DocumentBlob> Created=[]; public Action? AfterRead; public Action<DocumentBlob>? ReadCompleted;
+        public Guid SourceId; public bool FailReviewWrite,TamperReviewRead,WrongReviewLength,FailReviewDelete; public ClaimsPrincipal? LastReviewRead; public IBlobStore Inner=>inner;
+        public Task WriteAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,long length,CancellationToken ct=default) { Created.Add(b); if(FailReviewWrite && b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId)throw new IOException("Synthetic review write failure"); return inner.WriteAsync(p,b,s,length,ct); }
+        public async Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct=default) { long length;
+            if(b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId)LastReviewRead=p;
+            if(TamperReviewRead && b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId) { using var m=new MemoryStream(); length=await inner.CopyToAsync(p,b,m,ct); var bytes=m.ToArray(); bytes[0]^=1; await s.WriteAsync(bytes,ct); }
+            else length=await inner.CopyToAsync(p,b,s,ct); AfterRead?.Invoke(); ReadCompleted?.Invoke(b); return WrongReviewLength && b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId ? long.MaxValue : length; }
+        public Task DeleteAsync(ClaimsPrincipal p,DocumentBlob b,CancellationToken ct=default) { if(FailReviewDelete && b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId)throw new IOException("Synthetic review cleanup failure"); return inner.DeleteAsync(p,b,ct); } }
+    internal sealed class Faults : DbTransactionInterceptor,ISaveChangesInterceptor
     { public bool FailAudit; public int FailCommitNumber,Commits;
         public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData e,CancellationToken ct=default) { if(Interlocked.Increment(ref Commits)==FailCommitNumber)throw new IOException("Synthetic lost commit acknowledgement"); return Task.CompletedTask; }
         public ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e,InterceptionResult<int> r,CancellationToken ct=default) { if(FailAudit && e.Context!.ChangeTracker.Entries<AuditEvent>().Any(x=>x.State==EntityState.Added))throw new DbUpdateException("Synthetic audit failure"); return ValueTask.FromResult(r); }

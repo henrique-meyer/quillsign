@@ -20,6 +20,8 @@ public static class DocumentConfiguration
         services.AddSingleton<ElectronicRecordDisclosure>();
         services.AddSingleton(sp => new SenderPdfRenderer(storageMaximum, options.MaximumPages,
             sp.GetRequiredService<FieldEditorOptions>().MaximumFields));
+        services.AddSingleton(sp => new SignerPdfRenderer(storageMaximum,options.MaximumPages,
+            sp.GetRequiredService<FieldEditorOptions>().MaximumFields));
         services.Configure<FormOptions>(form => { form.MultipartBodyLengthLimit = options.MaximumBytes; form.ValueCountLimit = 16; });
         return services;
     }

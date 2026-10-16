@@ -8,6 +8,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     public DbSet<Envelope> Envelopes => Set<Envelope>();
     public DbSet<Signer> Signers => Set<Signer>();
     public DbSet<SignaturePreview> SignaturePreviews => Set<SignaturePreview>();
+    public DbSet<SignerReviewCandidate> SignerReviewCandidates => Set<SignerReviewCandidate>();
+    public DbSet<SignerFinishAcceptance> SignerFinishAcceptances => Set<SignerFinishAcceptance>();
     public DbSet<Recipient> Recipients => Set<Recipient>();
     public DbSet<DocumentField> Fields => Set<DocumentField>();
     public DbSet<AuthToken> AuthTokens => Set<AuthToken>();
@@ -39,6 +41,33 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
             t.HasCheckConstraint("CK_SignaturePreview_Dimensions", "[SignatureWidth] BETWEEN 1 AND 2048 AND [InitialsWidth] BETWEEN 1 AND 2048 AND [SignatureHeight] BETWEEN 1 AND 1024 AND [InitialsHeight] BETWEEN 1 AND 1024");
         });
         model.Entity<Recipient>().HasIndex(x => new { x.EnvelopeId, x.Email }).IsUnique();
+        model.Entity<SignerReviewCandidate>().HasOne<Signer>().WithMany()
+            .HasForeignKey(x => new { x.EnvelopeId,x.SignerId }).HasPrincipalKey(x => new { x.EnvelopeId,x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<SignerReviewCandidate>().HasOne<SignaturePreview>().WithMany()
+            .HasForeignKey(x => new { x.EnvelopeId,x.SignerId,x.AdoptionId }).HasPrincipalKey(x => new { x.EnvelopeId,x.SignerId,x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<SignerReviewCandidate>().HasIndex(x => new { x.EnvelopeId,x.SignerId,x.ExpiresAt });
+        model.Entity<SignerReviewCandidate>().HasIndex(x => new { x.EnvelopeId,x.PdfObjectId }).IsUnique();
+        model.Entity<SignerReviewCandidate>().HasAlternateKey(x => new { x.EnvelopeId,x.SignerId,x.Id });
+        model.Entity<SignerReviewCandidate>().ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_SignerReviewCandidate_Expiry", "[ExpiresAt] > [PreparedAt] AND [ExpiresAt] <= DATEADD(minute,10,[PreparedAt]) AND [ProspectiveDate] = CONVERT(date,SWITCHOFFSET([PreparedAt],'+00:00')) AND [ExpiresAt] <= DATEADD(day,1,CONVERT(datetimeoffset,[ProspectiveDate]))");
+            t.HasCheckConstraint("CK_SignerReviewCandidate_State", "([UsedAt] IS NULL OR [UsedAt] >= [PreparedAt]) AND ([SupersededAt] IS NULL OR [SupersededAt] >= [PreparedAt]) AND ([UsedAt] IS NULL OR [SupersededAt] IS NULL)");
+            t.HasCheckConstraint("CK_SignerReviewCandidate_Pdf", "[PdfLength] BETWEEN 16 AND 67108864 AND [SourceObjectId] <> [PdfObjectId]");
+        });
+
+        model.Entity<SignerFinishAcceptance>().HasOne<Signer>().WithMany()
+            .HasForeignKey(x=>new { x.EnvelopeId,x.SignerId }).HasPrincipalKey(x=>new { x.EnvelopeId,x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<SignerFinishAcceptance>().HasOne<SignerReviewCandidate>().WithMany()
+            .HasForeignKey(x=>new { x.EnvelopeId,x.SignerId,x.ReviewCandidateId }).HasPrincipalKey(x=>new { x.EnvelopeId,x.SignerId,x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<SignerFinishAcceptance>().HasIndex(x=>new { x.EnvelopeId,x.SignerId }).IsUnique();
+        model.Entity<SignerFinishAcceptance>().HasIndex(x=>x.ReviewCandidateId).IsUnique();
+        model.Entity<SignerFinishAcceptance>().HasIndex(x=>new { x.ProcessedAt,x.FinishedAt });
+        model.Entity<SignerFinishAcceptance>().ToTable(t=>
+        {
+            t.HasCheckConstraint("CK_SignerFinishAcceptance_Time","[FinishedAt] >= [ReviewPreparedAt] AND [FinishedAt] < [ReviewExpiresAt] AND [ReviewExpiresAt] <= DATEADD(minute,10,[ReviewPreparedAt]) AND [ProspectiveDate] = CONVERT(date,SWITCHOFFSET([FinishedAt],'+00:00')) AND [ProspectiveDate] = CONVERT(date,SWITCHOFFSET([ReviewPreparedAt],'+00:00')) AND ([ProcessedAt] IS NULL OR [ProcessedAt] >= [FinishedAt])");
+            t.HasCheckConstraint("CK_SignerFinishAcceptance_Pdf","[PdfLength] BETWEEN 16 AND 67108864 AND [SourceObjectId] <> [PdfObjectId]");
+            t.HasCheckConstraint("CK_SignerFinishAcceptance_Fields","ISJSON([FieldsJson]) = 1 AND DATALENGTH([FieldsJson]) BETWEEN 2 AND 16777216");
+        });
 
         model.Entity<DocumentField>().HasOne<Signer>().WithMany()
             .HasForeignKey(x => new { x.EnvelopeId, x.SignerId })
@@ -115,6 +144,12 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
             throw new InvalidOperationException("Saved signature previews are immutable.");
         if (ChangeTracker.Entries<AuditEvent>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Audit events are append-only. Retention requires a separate privileged path.");
+        if (ChangeTracker.Entries<SignerReviewCandidate>().Any(x => x.State == EntityState.Modified &&
+            x.Properties.Any(p => p.IsModified && p.Metadata.Name is not (nameof(SignerReviewCandidate.UsedAt) or nameof(SignerReviewCandidate.SupersededAt)))))
+            throw new InvalidOperationException("Saved signer review candidates are immutable.");
+        if (ChangeTracker.Entries<SignerFinishAcceptance>().Any(x=>x.State==EntityState.Modified &&
+            x.Properties.Any(p=>p.IsModified && p.Metadata.Name!=nameof(SignerFinishAcceptance.ProcessedAt))))
+            throw new InvalidOperationException("Saved signer Finish acceptances are immutable.");
         foreach (var entry in ChangeTracker.Entries<AuditEvent>().Where(x => x.State == EntityState.Added))
             if (!CryptographicOperations.FixedTimeEquals(entry.Entity.Hash, AuditHash.Compute(entry.Entity)))
                 throw new InvalidOperationException("Audit hash does not match the canonical event.");
