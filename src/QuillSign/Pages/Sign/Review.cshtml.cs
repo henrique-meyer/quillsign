@@ -61,9 +61,11 @@ public sealed class ReviewModel(SignerFieldView view,SignerReviewCandidates revi
         Private();
         try {
             var identity=browser.Identity(HttpContext,publicId); if(identity is null)return NotFound();
-            var data=await reviews.ReadAsync(User,publicId,browser.Get(HttpContext,SignerReviewBrowser.ReviewCookie),ct); if(data is null)return NotFound();
+            var receipt=browser.Get(HttpContext,SignerReviewBrowser.ReviewCookie);
+            if(protection.Read(receipt,identity) is null)return NotFound();
+            var data=await reviews.ReadAsync(User,publicId,receipt,ct); if(data is null)return NotFound();
             // Full exact bytes and current snapshot were checked before issuing access evidence.
-            browser.PreparedPdf(HttpContext,data.Candidate,identity);
+            browser.PreparedPdf(HttpContext,data.Candidate,receipt!,identity);
             var result=new FileContentResult(data.Pdf,"application/pdf") { EnableRangeProcessing=false };
             if(download)result.FileDownloadName="signer-review.pdf"; return result;
         }
@@ -89,13 +91,13 @@ public sealed class ReviewModel(SignerFieldView view,SignerReviewCandidates revi
             notices.Set(HttpContext,NoticeCode.SignerFinishAccepted); return Redirect("/sign/"+publicId+"/confirmed");
         }
         catch(Exception e) when(FieldsModel.StorageError(e) || e is InvalidOperationException)
-        { return await Failure(publicId,503,"Finish could not be confirmed. Reload to check for an accepted Finish before retrying. Your submitted confirmations are preserved on this page.",ct,false); }
+        { return await Failure(publicId,503,"Finish could not be confirmed. Reload to check for an accepted Finish before retrying.",ct); }
     }
     private async Task<IActionResult> Failure(string publicId,int status,string message,CancellationToken ct,bool load=true)
     {
         if(SenderConfiguration.WantsJson(HttpContext))return new JsonResult(new { message }) { StatusCode=status };
         ErrorMessage=message; Response.StatusCode=status;
-        if(load)try { if(!await Load(publicId,ct))return NotFound(); } catch(Exception e) when(FieldsModel.StorageError(e)) { Candidate=null; }
+        if(load)try { _=await Load(publicId,ct); } catch(Exception e) when(FieldsModel.StorageError(e)) { Candidate=null; }
         return Page();
     }
 }

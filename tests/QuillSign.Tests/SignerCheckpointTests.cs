@@ -6,6 +6,9 @@ using System.Text.RegularExpressions;
 using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -15,6 +18,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Email;
 using QuillSign.Signing;
+using QuillSign.Sender;
 using QuillSign.Storage;
 using QuillSign.Work;
 using PigDocument=UglyToad.PdfPig.PdfDocument;
@@ -224,12 +228,12 @@ public sealed class SignerCheckpointTests(SqlDatabaseFixture fixture) : IClassFi
         Assert.Equal(SignerStatus.Viewed,(await db.Signers.SingleAsync(x=>x.Id==f.SignerId)).Status); Assert.False(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==h.EnvelopeId && x.Event=="signer_completed")); Assert.False(await db.EmailOutbox.AnyAsync(x=>x.EnvelopeId==h.EnvelopeId));
     }
 
-    private sealed class Harness : IAsyncDisposable
+    internal sealed class Harness : IAsyncDisposable
     {
         public Run R=null!; public WebApplication App=null!; public Signals Signals=null!; public Sender Sender=new();
         private QueueClient queue=null!; private BlobContainerClient hints=null!; private SqlDatabaseFixture fixture=null!;
         public Guid EnvelopeId=>R.H.Envelope.Id; public string SecondEmail="";
-        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp=false)
+        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp=false,bool browser=false)
         {
             var h=new Harness { R=await Run.Create(fixture),fixture=fixture }; var name="checkpoint-"+Guid.NewGuid().ToString("N"); var storage=Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
             h.SecondEmail=name+"@example.invalid";
@@ -246,7 +250,21 @@ public sealed class SignerCheckpointTests(SqlDatabaseFixture fixture) : IClassFi
             builder.Services.AddRazorPages(); builder.Services.AddDbContext<QuillSignDbContext>(o=>o.UseSqlServer(connection).AddInterceptors(h.R.H.Faults)); builder.Services.AddQuillSignEmail(builder.Configuration,builder.Environment); builder.Services.AddQuillSignWork(builder.Configuration,builder.Environment);
             builder.Services.AddSingleton<TimeProvider>(h.R.H.Clock); builder.Services.AddSingleton<IBlobStore>(h.R.H.Blobs); builder.Services.AddSingleton<IDataProtectionProvider>(h.R.H.Protection); builder.Services.AddSingleton<IWorkSignals>(h.Signals); builder.Services.AddSingleton(h.R.Work);
             builder.Services.AddSingleton(new DocumentOptions()); builder.Services.AddQuillSignSignerConsent(); builder.Services.AddScoped<SignerReviewProtection>(); builder.Services.AddScoped<SignerCheckpointReads>(); if(!smtp)builder.Services.AddSingleton<IEmailSender>(h.Sender);
-            h.App=builder.Build(); return h;
+            if(browser) {
+                builder.WebHost.UseTestServer();
+                builder.Services.AddQuillSignSender(builder.Configuration,builder.Environment); builder.Services.AddQuillSignSignerAccess(builder.Configuration,builder.Environment);
+                builder.Services.AddScoped<SignatureAdoption>(); builder.Services.AddScoped<SignaturePreviewProtection>(); builder.Services.AddScoped<SignerFields>(); builder.Services.AddScoped<SignerFieldView>();
+                builder.Services.AddScoped<SignerReviewCandidates>(); builder.Services.AddScoped<SignerFinish>(); builder.Services.AddSingleton(new SignerPdfRenderer(25*1024*1024,20,200)); builder.Services.AddSignerReviewBrowser();
+            }
+            h.App=builder.Build();
+            if(browser) {
+                h.App.UseRouting(); h.App.UseRateLimiter(); h.App.UseAuthentication(); h.App.UseAuthorization(); h.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
+                h.App.MapGet("/test-session/{kind}",async (Microsoft.AspNetCore.Http.HttpContext context,string kind)=> {
+                    if(kind=="sender")await context.SignInAsync(EnvelopeStorageAuthorization.SenderScheme,SenderConfiguration.Principal(new(h.EnvelopeId,h.R.H.Envelope.PublicId,h.R.H.Envelope.SenderEmail)));
+                    else await context.SignInAsync(SignerAccessConfiguration.Scheme,h.R.H.Principal,SignerAccessConfiguration.Ticket(h.R.H.Identity)); return "ok";
+                }); await h.App.StartAsync();
+            }
+            return h;
         }
         public async Task<bool> Once() { await using var scope=App.Services.CreateAsyncScope(); return await scope.ServiceProvider.GetRequiredService<WorkProcessor>().RunOnceAsync(default); }
         public async Task<byte[]> RawPdf(Guid id)=>(await R.H.Raw(new(EnvelopeId,DocumentBlobKind.Normalized,id)).DownloadContentAsync()).Value.Content.ToArray();
@@ -264,12 +282,12 @@ public sealed class SignerCheckpointTests(SqlDatabaseFixture fixture) : IClassFi
         }
         public async ValueTask DisposeAsync() { await App.DisposeAsync(); await R.DisposeAsync(); await queue.DeleteIfExistsAsync(); await hints.DeleteIfExistsAsync(); }
     }
-    private sealed class Sender : IEmailSender
+    internal sealed class Sender : IEmailSender
     {
         public int Calls; public OutgoingEmail? Last;
         public Task<EmailDelivery> SendAsync(OutgoingEmail email,CancellationToken ct) { Calls++; Last=email; return Task.FromResult(new EmailDelivery("Synthetic","synthetic-checkpoint-receipt")); }
     }
-    private sealed class Signals(IWorkSignals inner) : IWorkSignals
+    internal sealed class Signals(IWorkSignals inner) : IWorkSignals
     {
         public bool FailHint,FailPublish;
         public Task PutHintAsync(Guid id,DateTimeOffset due,CancellationToken ct) { if(FailHint)throw new IOException("Synthetic checkpoint hint failure"); return inner.PutHintAsync(id,due,ct); }

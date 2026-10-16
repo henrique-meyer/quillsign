@@ -31,9 +31,13 @@ public sealed class SignerReviewBrowser(IDataProtectionProvider provider,TimePro
         http.Response.Cookies.Append(name,value,options);
     }
     public void Clear(HttpContext http,string name,string publicId)=>http.Response.Cookies.Delete(name,Options(http,publicId));
-    public void PreparedPdf(HttpContext http,SignerReviewPrepared candidate,VerifiedSigner identity)
-        =>Put(http,AccessCookie,protector.Protect(JsonSerializer.Serialize(new SignerReviewAccessProof(identity,candidate.Id,candidate.PdfSha256,
-            Hash(candidate.Receipt),time.GetUtcNow(),candidate.ExpiresAt))),identity);
+    public void PreparedPdf(HttpContext http,SignerReviewPrepared candidate,string receipt,VerifiedSigner identity)
+    {
+        var now=time.GetUtcNow();
+        if(now>=candidate.ExpiresAt)throw new InvalidDataException("Review access expired.");
+        Put(http,AccessCookie,protector.Protect(JsonSerializer.Serialize(new SignerReviewAccessProof(identity,candidate.Id,candidate.PdfSha256,
+            Hash(receipt),now,candidate.ExpiresAt))),identity);
+    }
     public bool HasAccess(HttpContext http,SignerReviewReceipt candidate,string receipt,bool accepted)
     {
         var value=Get(http,AccessCookie); if(value is null)return false;
@@ -66,7 +70,7 @@ public sealed class SignerAcceptedFilter(SignerReviewBrowser browser,SignerCheck
     public async Task OnPageHandlerExecutionAsync(PageHandlerExecutingContext context,PageHandlerExecutionDelegate next)
     {
         var path=context.ActionDescriptor.ViewEnginePath;
-        if(path is "/Sign/Index" or "/Sign/Signature" or "/Sign/Fields" or "/Sign/Review" &&
+        if((path is "/Sign/Index" or "/Sign/Signature" or "/Sign/Fields" or "/Sign/Review") &&
             !(path=="/Sign/Review" && context.HandlerMethod?.Name=="Finish")) {
             var http=context.HttpContext; var id=context.RouteData.Values["publicId"]?.ToString();
             var proof=browser.Get(http,SignerReviewBrowser.AcceptedCookie)??browser.Get(http,SignerReviewBrowser.ReviewCookie);

@@ -3,7 +3,7 @@
 @{ ViewData["Title"]="Your signing confirmation"; }
 @section Styles { <link rel="stylesheet" href="~/signer.css" asp-append-version="true" /> }
 <section class="signer-flow">
-<p class="eyebrow">Your signing confirmation</p><h1>Your Finish was accepted</h1>
+<p class="eyebrow">Your signing confirmation</p><h1>@(Model.Acceptance is null ? "Check your signing state" : "Your Finish was accepted")</h1>
 @if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
 @if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p> }
 @if(Model.Acceptance is { } accepted) {

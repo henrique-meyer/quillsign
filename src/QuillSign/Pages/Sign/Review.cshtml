@@ -47,8 +47,8 @@ else { <p>Your current adopted marks were verified.</p> }
 else { <p class="saved-entry">@(field.Type==FieldType.Checkbox && field.Filled ? field.Value=="true" ? "Checked" : "Unchecked" : field.Value ?? "No saved value")</p> }
 @if(field.Type!=FieldType.DateSigned) { <a asp-page="/Sign/Fields" asp-route-publicId="@data.Snapshot.PublicId" asp-fragment="@field.Id">Edit this field</a> }
 </section>
-@section Scripts { <script type="module" src="~/js/signer-review.mjs" asp-append-version="true"></script> }
 }
 <p><a asp-page="/Sign/Index" asp-route-publicId="@data.Snapshot.PublicId">Review the document and disclosure</a></p>
 }
 </section>
+@section Scripts { <script type="module" src="~/js/signer-review.mjs" asp-append-version="true"></script> }
