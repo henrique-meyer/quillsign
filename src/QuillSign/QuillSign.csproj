@@ -8,6 +8,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Legal/electronic-record-disclosure.txt" LogicalName="QuillSign.Legal.ElectronicRecordDisclosure.txt" />
     <EmbeddedResource Include="wwwroot/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf" LogicalName="QuillSign.Fonts.LiberationSans-Regular.ttf" />
+    <EmbeddedResource Include="../../assets/logo-mark.png" LogicalName="QuillSign.Brand.LogoMark.png" />
     <Content Include="../../assets/logo.svg" Link="wwwroot/logo.svg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../assets/logo-mark.svg" Link="wwwroot/logo-mark.svg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../licenses/PDFsharp-MIT.txt" Link="licenses/PDFsharp-MIT.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

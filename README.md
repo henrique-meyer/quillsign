@@ -140,7 +140,9 @@ PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.
 
 The standalone [PDF field feasibility harness](docs/pdf-field-feasibility.md) checks stamping geometry, embedded text, checkboxes and image marks with independent rendering and text extraction. Run `pwsh -File scripts/dev/Test-PdfFieldSpike.ps1`; generated fixtures stay ignored. The harness does not enable production stamping or signing.
 
-The internal [timestamped platform seal engine](docs/platform-pdf-seals.md) validates an exact prepared source, applies one detached CMS seal and verifies its RFC 3161 timestamp and complete output. Certificate providers support configured PFX, managed-identity Key Vault backing material and a persistent encrypted demo identity. Provider/TSA values remain private, and configured failures never silently replace an identity. Generated local tests run independently with OpenSSL on Windows and Linux; completion pages, final publication and delivery remain separate work.
+The internal [timestamped platform seal engine](docs/platform-pdf-seals.md) validates an exact prepared source, applies one detached CMS seal and verifies its RFC 3161 timestamp and complete output. Certificate providers support configured PFX, managed-identity Key Vault backing material and a persistent encrypted demo identity. Provider/TSA values remain private, and configured failures never silently replace an identity. Generated local tests run independently with OpenSSL on Windows and Linux; final publication and delivery remain separate work.
+
+The internal [completion-certificate renderer](docs/completion-certificates.md) prepares appended and standalone evidence with bounded pagination, accepted marks, versioned consent and recorded signing/audit times. The standalone form binds the executed-file hash and verified seal/timestamp metadata without circular self-hashes. The future durable completion workflow must collect and verify the authoritative snapshot, seal both outputs and publish them.
 
 The backend [sender-prefill renderer](docs/sender-pdf-rendering.md) now shares these independent geometry checks. It validates source bytes and sender text/date/checkbox fields, embeds the pinned font, and returns bounded output and hashes. It has no endpoint and does not yet freeze, send or sign drafts.
 
@@ -158,10 +160,10 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- Final sealing, completion certificates/delivery and sender status-link email.
+- Durable final sealing/publication, completion delivery and sender status-link email.
 - Office conversion and document-processing workers.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
-- PDF stamping, audit evidence, completion certificates, sealing, and verification.
+- Public executed-PDF verification.
 - Optional AI suggestions.
 
 See the [implementation plan](docs/plan.md) for tracked work. The SVG and PNG brand assets are in [assets](assets/).
