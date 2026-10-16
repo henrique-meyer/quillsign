@@ -70,6 +70,8 @@ jobs:
       - name: Verify migrations, storage, and protected sessions
         shell: pwsh
         run: ./scripts/dev/Use-LocalDatabase.ps1 -Action Test
+      - name: Verify restored interact.js and license
+        run: python scripts/dev/verify_interact.py src/QuillSign/bin/Release/net10.0/wwwroot/vendor/interact
       - name: Exercise finite work commands
         shell: pwsh
         run: |

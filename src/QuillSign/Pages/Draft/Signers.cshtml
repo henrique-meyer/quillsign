@@ -44,5 +44,6 @@
         @if (Model.Input.Id is not null) { <a href="/draft/@Model.Draft.PublicId/signers">Cancel editing</a> }
     </form>
 </section>
-<p class="hint">Your document stays a draft. No invitations are sent here. Field placement comes next.</p>
+@if (Model.Draft.Signers.Count > 0) { <p><a class="button-link" href="/draft/@Model.Draft.PublicId/fields">Place document fields</a></p> }
+<p class="hint">Your document stays a draft. No invitations are sent here.</p>
 <p><a href="/draft/@Model.Draft.PublicId">Back to PDF preview</a></p>

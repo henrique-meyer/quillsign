@@ -1,6 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY src/QuillSign/QuillSign.csproj src/QuillSign/
+COPY src/QuillSign/Build/ src/QuillSign/Build/
 RUN dotnet restore src/QuillSign/QuillSign.csproj
 COPY src/ src/
 COPY assets/ assets/

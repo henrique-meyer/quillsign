@@ -1,0 +1,24 @@
+<Project>
+  <PropertyGroup>
+    <BrowserAssetsRoot>$(MSBuildProjectDirectory)/obj/browser-assets</BrowserAssetsRoot>
+    <InteractArchive>$(BrowserAssetsRoot)/interactjs-1.10.28.tgz</InteractArchive>
+    <InteractFiles>$(BrowserAssetsRoot)/interact</InteractFiles>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="$(InteractFiles)/dist/interact.min.js" Link="wwwroot/vendor/interact/interact.min.js" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(InteractFiles)/LICENSE" Link="wwwroot/vendor/interact/LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="RestoreBrowserAssets" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <!-- Restore only pinned bytes, without npm/package scripts. Cache and upstream attribution stay outside Git. -->
+    <MakeDir Directories="$(BrowserAssetsRoot);$(InteractFiles)" />
+    <DownloadFile SourceUrl="https://registry.npmjs.org/interactjs/-/interactjs-1.10.28.tgz"
+                  DestinationFolder="$(BrowserAssetsRoot)" DestinationFileName="interactjs-1.10.28.tgz"
+                  Retries="3" RetryDelayMilliseconds="1000" Condition="!Exists('$(InteractArchive)')" />
+    <VerifyFileHash File="$(InteractArchive)" Algorithm="SHA512" HashEncoding="base64"
+                    Hash="QCa4ksTPd2p/FZ4I6hrH6fogjLqru1TxYywRiKYNuLZtrlAxTIYUa/MYsE7PnUgWZJU3SrGVDjiz065BeaXYng==" />
+    <!-- tar ships with supported Windows and the .NET SDK Linux image. Extract only the two verified package members. -->
+    <Exec Command="tar -xzf &quot;$(InteractArchive)&quot; --strip-components=1 -C &quot;$(InteractFiles)&quot; package/dist/interact.min.js package/LICENSE" />
+    <VerifyFileHash File="$(InteractFiles)/dist/interact.min.js" Hash="d62316ae5ad9c507278d3d0b354ca115df87a57cc7b30c0eaeba7c03c5c384f8" />
+    <VerifyFileHash File="$(InteractFiles)/LICENSE" Hash="e805e2367aed149858263a4ae0a62168146af837a9ba3095aa01d02c8559e7fe" />
+  </Target>
+</Project>

@@ -31,6 +31,7 @@ builder.Services.AddQuillSignEmail(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignSender(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignSignerSetup(builder.Configuration);
+builder.Services.AddQuillSignFieldEditor(builder.Configuration);
 builder.Services.AddQuillSignDocuments(builder.Configuration);
 var app = builder.Build();
 app.UseForwardedHeaders();
@@ -54,6 +55,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
 app.MapSesFeedback();
+app.MapFieldEditor();
 // Liveness must never wake the serverless database or call an external service.
 app.MapGet("/health", () => Results.Json(new { status = "ok" }));
 app.Run();
