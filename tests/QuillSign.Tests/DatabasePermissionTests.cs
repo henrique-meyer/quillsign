@@ -48,6 +48,8 @@ public sealed class DatabasePermissionTests(SqlDatabaseFixture fixture) : IClass
             Assert.Equal(0,Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.SignerFinishAcceptances', 'OBJECT', 'UPDATE', 'ProcessedAt', 'COLUMN')";
             Assert.Equal(1,Convert.ToInt32(await command.ExecuteScalarAsync()));
+            command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.SignerFinishAcceptances', 'OBJECT', 'UPDATE', 'NextInvitationId', 'COLUMN')";
+            Assert.Equal(1,Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.SignerFinishAcceptances', 'OBJECT', 'UPDATE', 'FieldsJson', 'COLUMN')";
             Assert.Equal(0,Convert.ToInt32(await command.ExecuteScalarAsync()));
         }

@@ -37,14 +37,14 @@ public sealed class SignerAccessTests(SqlDatabaseFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task A_later_signers_token_is_not_consumed_until_their_sequential_turn()
+    public async Task A_later_signers_token_is_not_consumed_before_a_verified_prior_checkpoint_exists()
     {
-        var seed = await Seed(); var later = new SignerInvitationFactory(new(),clock).Create(seed.Envelope.Id,seed.Second.Id,seed.Second.Email,seed.Envelope.ExpiresAt);
+        var seed = await Seed(); var later = new SignerInvitationFactory(new(),clock).Create(seed.Envelope.Id,seed.Second.Id,seed.Second.Email,seed.Envelope.ExpiresAt,Guid.Parse(seed.Envelope.SentPdfBlob!),seed.Envelope.SentPdfSha256!,seed.Envelope.ErsdSha256!);
         await using var db = fixture.Open(); db.AuthTokens.Add(later.Record); await db.SaveChangesAsync();
         Assert.Null(await Service(db).RedeemAsync(later.RawToken,null,null));
         Assert.Null((await db.AuthTokens.AsNoTracking().SingleAsync(x => x.Id == later.Record.Id)).UsedAt);
         var first = await db.Signers.SingleAsync(x => x.Id == seed.First.Id); first.Status = SignerStatus.Signed; await db.SaveChangesAsync();
-        Assert.Equal(seed.Second.Id,(await Service(db).RedeemAsync(later.RawToken,null,null))!.SignerId);
+        Assert.Null(await Service(db).RedeemAsync(later.RawToken,null,null)); Assert.Null((await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==later.Record.Id)).UsedAt);
     }
 
     [Theory]
@@ -117,14 +117,15 @@ public sealed class SignerAccessTests(SqlDatabaseFixture fixture) : IClassFixtur
     public void Factory_starts_expiry_at_creation_uses_256_bits_and_clamps_to_envelope_end()
     {
         var factory = new SignerInvitationFactory(new(),clock); var queued = clock.GetUtcNow(); clock.Advance(TimeSpan.FromDays(3));
-        var invite = factory.Create(Guid.NewGuid(),Guid.NewGuid(),"SIGNER@EXAMPLE.INVALID",null);
+        var documentId=Guid.NewGuid(); var documentHash=SHA256.HashData([1]); var disclosureHash=SHA256.HashData([2]);
+        var invite = factory.Create(Guid.NewGuid(),Guid.NewGuid(),"SIGNER@EXAMPLE.INVALID",null,documentId,documentHash,disclosureHash);
         Assert.Equal(clock.GetUtcNow().AddHours(24),invite.Record.ExpiresAt); Assert.True(invite.Record.ExpiresAt > queued.AddHours(24));
         Assert.Equal(43,invite.RawToken.Length); Assert.Equal(32,Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlDecode(invite.RawToken).Length);
         Assert.Equal(SHA256.HashData(Encoding.UTF8.GetBytes(invite.RawToken)),invite.Record.TokenSha256);
         Assert.Equal("signer@example.invalid",invite.Record.Email);
         var end = clock.GetUtcNow().AddMinutes(30);
-        Assert.Equal(end,factory.Create(Guid.NewGuid(),Guid.NewGuid(),"signer@example.invalid",end).Record.ExpiresAt);
-        Assert.Throws<InvalidOperationException>(() => factory.Create(Guid.NewGuid(),Guid.NewGuid(),"signer@example.invalid",clock.GetUtcNow()));
+        Assert.Equal(end,factory.Create(Guid.NewGuid(),Guid.NewGuid(),"signer@example.invalid",end,documentId,documentHash,disclosureHash).Record.ExpiresAt);
+        Assert.Throws<InvalidOperationException>(() => factory.Create(Guid.NewGuid(),Guid.NewGuid(),"signer@example.invalid",clock.GetUtcNow(),documentId,documentHash,disclosureHash));
     }
 
     private SignerAccess Service(QuillSignDbContext db) => new(db,new AuditWriter(db,clock),new(),clock);
@@ -138,7 +139,7 @@ public sealed class SignerAccessTests(SqlDatabaseFixture fixture) : IClassFixtur
         envelope.ErsdVersion = disclosure.Version; envelope.ErsdText = disclosure.Text; envelope.ErsdSha256 = disclosure.Sha256;
         var first = new Signer { EnvelopeId = envelope.Id,FullName = "First synthetic signer",Email = "first@example.invalid",Order = 1 };
         var second = new Signer { EnvelopeId = envelope.Id,FullName = "Second synthetic signer",Email = "second@example.invalid",Order = 2 };
-        var invitation = new SignerInvitationFactory(new(),clock).Create(envelope.Id,first.Id,first.Email,envelope.ExpiresAt);
+        var invitation = new SignerInvitationFactory(new(),clock).Create(envelope.Id,first.Id,first.Email,envelope.ExpiresAt,Guid.Parse(envelope.SentPdfBlob),envelope.SentPdfSha256,disclosure.Sha256);
         db.AddRange(envelope,first,second,invitation.Record); await db.SaveChangesAsync(); return (envelope,first,second,invitation);
     }
     private sealed class Clock : TimeProvider

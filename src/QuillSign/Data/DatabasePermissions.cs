@@ -56,7 +56,7 @@ public static class DatabasePermissions
             GRANT SELECT, INSERT, DELETE ON OBJECT::[dbo].[SignerReviewCandidates] TO [app_runtime_role];
             GRANT UPDATE ON OBJECT::[dbo].[SignerReviewCandidates] ([UsedAt], [SupersededAt]) TO [app_runtime_role];
             GRANT SELECT, INSERT, DELETE ON OBJECT::[dbo].[SignerFinishAcceptances] TO [app_runtime_role];
-            GRANT UPDATE ON OBJECT::[dbo].[SignerFinishAcceptances] ([ProcessedAt]) TO [app_runtime_role];
+            GRANT UPDATE ON OBJECT::[dbo].[SignerFinishAcceptances] ([ProcessedAt], [NextInvitationId]) TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[AuditEvents] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[AuditEvents] TO [app_runtime_role];
             GRANT SELECT ON OBJECT::[dbo].[__EFMigrationsHistory] TO [app_runtime_role];

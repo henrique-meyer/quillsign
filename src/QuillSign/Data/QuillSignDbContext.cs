@@ -26,6 +26,9 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<Envelope>().HasIndex(x => x.PurgeAfter);
         model.Entity<Envelope>().ToTable(t => t.HasCheckConstraint("CK_Envelope_PageCount", "[PageCount] IS NULL OR [PageCount] > 0"));
         model.Entity<Envelope>().ToTable(t => t.HasCheckConstraint("CK_Envelope_ErsdText", "[ErsdText] IS NULL OR DATALENGTH([ErsdText]) <= 65536"));
+        model.Entity<Envelope>().HasOne<SignerFinishAcceptance>().WithMany().HasForeignKey(x=>new { x.Id,x.CurrentFinishId })
+            .HasPrincipalKey(x=>new { x.EnvelopeId,x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<Envelope>().ToTable(t=>t.HasCheckConstraint("CK_Envelope_CurrentCopy","([CurrentFinishId] IS NULL AND [CurrentCopyVersion] = 0) OR ([CurrentFinishId] IS NOT NULL AND [CurrentCopyVersion] BETWEEN 1 AND 100)"));
 
         model.Entity<Signer>().HasIndex(x => new { x.EnvelopeId, x.Email }).IsUnique();
         model.Entity<Signer>().HasIndex(x => new { x.EnvelopeId, x.Order }).IsUnique();
@@ -61,12 +64,15 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
             .HasForeignKey(x=>new { x.EnvelopeId,x.SignerId,x.ReviewCandidateId }).HasPrincipalKey(x=>new { x.EnvelopeId,x.SignerId,x.Id }).OnDelete(DeleteBehavior.NoAction);
         model.Entity<SignerFinishAcceptance>().HasIndex(x=>new { x.EnvelopeId,x.SignerId }).IsUnique();
         model.Entity<SignerFinishAcceptance>().HasIndex(x=>x.ReviewCandidateId).IsUnique();
+        model.Entity<SignerFinishAcceptance>().HasAlternateKey(x=>new { x.EnvelopeId,x.Id });
+        model.Entity<SignerFinishAcceptance>().HasIndex(x=>x.NextInvitationId).IsUnique();
         model.Entity<SignerFinishAcceptance>().HasIndex(x=>new { x.ProcessedAt,x.FinishedAt });
         model.Entity<SignerFinishAcceptance>().ToTable(t=>
         {
             t.HasCheckConstraint("CK_SignerFinishAcceptance_Time","[FinishedAt] >= [ReviewPreparedAt] AND [FinishedAt] < [ReviewExpiresAt] AND [ReviewExpiresAt] <= DATEADD(minute,10,[ReviewPreparedAt]) AND [ProspectiveDate] = CONVERT(date,SWITCHOFFSET([FinishedAt],'+00:00')) AND [ProspectiveDate] = CONVERT(date,SWITCHOFFSET([ReviewPreparedAt],'+00:00')) AND ([ProcessedAt] IS NULL OR [ProcessedAt] >= [FinishedAt])");
             t.HasCheckConstraint("CK_SignerFinishAcceptance_Pdf","[PdfLength] BETWEEN 16 AND 67108864 AND [SourceObjectId] <> [PdfObjectId]");
             t.HasCheckConstraint("CK_SignerFinishAcceptance_Fields","ISJSON([FieldsJson]) = 1 AND DATALENGTH([FieldsJson]) BETWEEN 2 AND 16777216");
+            t.HasCheckConstraint("CK_SignerFinishAcceptance_Invitation","[NextInvitationId] IS NULL OR [ProcessedAt] IS NOT NULL");
         });
 
         model.Entity<DocumentField>().HasOne<Signer>().WithMany()
@@ -85,6 +91,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<AuthToken>().HasIndex(x => x.TokenSha256).IsUnique();
         model.Entity<AuthToken>().HasIndex(x => x.ExpiresAt);
         model.Entity<AuthToken>().ToTable(t => t.HasCheckConstraint("CK_Token_Scope", "[Purpose] = 'Lookup' OR [EnvelopeId] IS NOT NULL"));
+        model.Entity<AuthToken>().ToTable(t=>t.HasCheckConstraint("CK_Token_DocumentBinding","([DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL) OR ([DocumentId] IS NOT NULL AND [DocumentSha256] IS NOT NULL AND [DisclosureSha256] IS NOT NULL)"));
         model.Entity<AuditEvent>().HasIndex(x => new { x.EnvelopeId, x.Sequence }).IsUnique();
         model.Entity<AuditEvent>().ToTable(t => t.HasCheckConstraint("CK_Audit_Chain", "([Sequence] = 1 AND [PrevHash] IS NULL) OR ([Sequence] > 1 AND [PrevHash] IS NOT NULL)"));
 
@@ -148,7 +155,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
             x.Properties.Any(p => p.IsModified && p.Metadata.Name is not (nameof(SignerReviewCandidate.UsedAt) or nameof(SignerReviewCandidate.SupersededAt)))))
             throw new InvalidOperationException("Saved signer review candidates are immutable.");
         if (ChangeTracker.Entries<SignerFinishAcceptance>().Any(x=>x.State==EntityState.Modified &&
-            x.Properties.Any(p=>p.IsModified && p.Metadata.Name!=nameof(SignerFinishAcceptance.ProcessedAt))))
+            x.Properties.Any(p=>p.IsModified && p.Metadata.Name is not (nameof(SignerFinishAcceptance.ProcessedAt) or nameof(SignerFinishAcceptance.NextInvitationId)))))
             throw new InvalidOperationException("Saved signer Finish acceptances are immutable.");
         foreach (var entry in ChangeTracker.Entries<AuditEvent>().Where(x => x.State == EntityState.Added))
             if (!CryptographicOperations.FixedTimeEquals(entry.Entity.Hash, AuditHash.Compute(entry.Entity)))

@@ -186,7 +186,8 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
         var initials = await ReadImage(identity,InitialsBlob(preview),preview.InitialsSha256,ct);
         return identity.SessionExpiresAt > time.GetUtcNow() ? new(preview,signature,initials) : null;
     }
-    private static bool MatchesAdoptionEvidence(string json,SignaturePreview p,VerifiedSigner identity)
+    private static bool MatchesAdoptionEvidence(string json,SignaturePreview p,VerifiedSigner identity)=>MatchesAdoptionEvidence(json,p,identity.DocumentHash,identity.DisclosureHash);
+    internal static bool MatchesAdoptionEvidence(string json,SignaturePreview p,string documentHash,string disclosureHash)
     {
         try
         {
@@ -197,7 +198,7 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
                 (expected is null ? value.ValueKind == JsonValueKind.Null : value.ValueKind == JsonValueKind.String && value.GetString() == expected);
             return Id("adoptionId",p.Id) && Id("signatureObjectId",p.SignatureObjectId) && Id("initialsObjectId",p.InitialsObjectId) &&
                 Text("signatureSha256",Convert.ToHexStringLower(p.SignatureSha256)) && Text("initialsSha256",Convert.ToHexStringLower(p.InitialsSha256)) &&
-                Text("documentSha256",identity.DocumentHash) && Text("disclosureSha256",identity.DisclosureHash) && Text("statementVersion",p.AdoptionVersion) &&
+                Text("documentSha256",documentHash) && Text("disclosureSha256",disclosureHash) && Text("statementVersion",p.AdoptionVersion) &&
                 Text("statement",SignatureAdoptionStatement.Text) && Text("statementSha256",Convert.ToHexStringLower(SignatureAdoptionStatement.Sha256)) &&
                 Text("normalizationVersion",p.NormalizationVersion) && Text("method",p.Method.ToString()) &&
                 OptionalText("reportedTypedName",p.TypedName) && OptionalText("reportedTypedInitials",p.TypedInitials) &&
@@ -216,7 +217,7 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
             preview.AdoptionVersion == SignatureAdoptionStatement.Version && Convert.ToHexStringLower(preview.SignatureSha256) == receipt.SignatureHash &&
             Convert.ToHexStringLower(preview.InitialsSha256) == receipt.InitialsHash ? preview : null;
     }
-    private static bool MatchesRevision(SignaturePreview preview,Signer signer) => preview.UsedAt is null ? Same(preview.BaselineSignerVersion,signer.RowVersion) :
+    internal static bool MatchesRevision(SignaturePreview preview,Signer signer) => preview.UsedAt is null ? Same(preview.BaselineSignerVersion,signer.RowVersion) :
         signer.SignatureAdoptionId == preview.Id && signer.SignatureImageBlob == preview.SignatureObjectId.ToString("N") && signer.InitialsImageBlob == preview.InitialsObjectId.ToString("N") &&
         Same(signer.SignatureImageSha256,preview.SignatureSha256) && Same(signer.InitialsImageSha256,preview.InitialsSha256) && signer.SignatureAdoptedAt == preview.UsedAt &&
         signer.SignatureMethod == preview.Method && signer.SignatureNormalizationVersion == preview.NormalizationVersion && signer.SignatureAdoptionVersion == preview.AdoptionVersion &&
