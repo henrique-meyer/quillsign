@@ -16,6 +16,27 @@ namespace QuillSign.Tests;
 
 public sealed class SenderSendPageTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
+    [Theory]
+    [InlineData("rejected")][InlineData("ambiguous")][InlineData("bounced")][InlineData("complained")]
+    public async Task Failed_or_unknown_delivery_is_never_reported_as_queued_or_delivered(string kind)
+    {
+        await using var f=await Flow.Create(fixture); var page=await f.Page(); using(var sent=await f.Send(page))Assert.Equal(HttpStatusCode.Redirect,sent.StatusCode);
+        if(kind=="rejected") { f.H.Sender.Failure=new EmailNotSubmittedException(false); Assert.True(await f.H.Once()); }
+        else if(kind=="ambiguous") { f.H.Sender.Failure=new IOException("Synthetic unknown provider response"); await Assert.ThrowsAsync<IOException>(()=>f.H.Once()); }
+        else { Assert.True(await f.H.Once()); await using var db=fixture.Open(); await db.EmailOutbox.Where(x=>x.EnvelopeId==f.H.Envelope.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Status,kind=="bounced" ? EmailStatus.Bounced : EmailStatus.Complained)); }
+        var status=await f.Page(f.Status); var expected=kind switch { "rejected"=>"Invitation not sent; delivery needs attention","ambiguous"=>"Invitation submission not confirmed","bounced"=>"Invitation bounced; delivery needs attention",_=>"Invitation complaint reported" }; Assert.Contains(expected,status);
+        using(var replay=await f.Send(page))Assert.Equal(HttpStatusCode.Redirect,replay.StatusCode); Assert.Equal(1,f.H.Sender.Calls);
+    }
+
+    [Theory]
+    [InlineData(false,SenderSendStatement.Version)][InlineData(true,"stale-statement")]
+    public async Task Backend_Send_requires_explicit_current_intent(bool intent,string version)
+    {
+        await using var f=await Flow.Create(fixture); using var scope=f.H.App.Services.CreateScope();
+        await Assert.ThrowsAsync<QuillSign.Documents.DocumentRejectedException>(()=>scope.ServiceProvider.GetRequiredService<SendDraftWorkflow>().SendAsync(f.H.Principal,f.H.Envelope.PublicId,f.H.Version,true,intent,version,null,null));
+        await f.H.AssertUnsent(fixture); Assert.Empty(f.H.Blobs.Created);
+    }
+
     [Fact]
     public async Task Public_Send_invitation_consent_Finish_and_checkpoint_have_truthful_sender_progress()
     {

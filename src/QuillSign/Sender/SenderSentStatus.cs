@@ -32,14 +32,22 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
         var signers=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id).OrderBy(x=>x.Order).Take(101).ToArrayAsync(ct);
         if(signers.Length is <1 or >100 || signers.Where((s,i)=>s.Order!=i+1 || !Enum.IsDefined(s.Status)).Any())throw new InvalidDataException("Invalid saved signing order.");
         var finishes=await db.SignerFinishAcceptances.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id).Take(101).ToDictionaryAsync(x=>x.SignerId,ct);
-        var invitations=await db.EmailOutbox.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id && x.Template=="signer-invitation").Select(x=>x.To).ToArrayAsync(ct);
+        var invitations=await db.EmailOutbox.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id && x.Template=="signer-invitation")
+            .Select(x=>new { x.To,x.Status,x.SubmissionStartedAt,Ambiguous=x.LastError=="submission-ambiguous" }).Take(101).ToArrayAsync(ct);
+        if(invitations.Length>100 || invitations.Any(x=>!Enum.IsDefined(x.Status)))throw new InvalidDataException("Invalid invitation state.");
         var opened=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id && x.Event=="link_opened" && x.ActorType==PartyType.Signer).ToArrayAsync(ct);
         var progress=new List<SenderSignerProgress>();
         foreach(var signer in signers) {
             var linkOpened=opened.Where(x=>x.ActorId==signer.Id && x.ActorEmail==signer.Email).Any(x=>
                 x.At>=envelope.SentAt && x.At<=time.GetUtcNow() && CryptographicOperations.FixedTimeEquals(AuditHash.Compute(x),x.Hash));
-            var state=signer.Status switch { SignerStatus.Notified=>linkOpened ? "Opened; consent pending" : "Invitation submitted",SignerStatus.Viewed=>"Consent recorded; signing incomplete",
-                SignerStatus.Signed=>"Signed",SignerStatus.Declined=>"Declined",_=>invitations.Contains(signer.Email) ? "Invitation queued" : "Waiting for their turn" };
+            var invitation=invitations.SingleOrDefault(x=>x.To==signer.Email);
+            var delivery=invitation is null ? "Waiting for their turn" : invitation.Status switch {
+                EmailStatus.Sent=>linkOpened ? "Opened; consent pending" : "Invitation submitted",
+                EmailStatus.Bounced=>"Invitation bounced; delivery needs attention",EmailStatus.Complained=>"Invitation complaint reported",
+                EmailStatus.Failed=>invitation.Ambiguous ? "Invitation submission not confirmed" : "Invitation not sent; delivery needs attention",
+                _=>invitation.SubmissionStartedAt is not null ? "Invitation submission not confirmed" : "Invitation queued" };
+            var state=signer.Status switch { SignerStatus.Viewed=>"Consent recorded; signing incomplete",
+                SignerStatus.Signed=>"Signed",SignerStatus.Declined=>"Declined",_=>delivery };
             if(finishes.TryGetValue(signer.Id,out var finish) && finish.ProcessedAt is null) {
                 if(await checkpoints.AcceptanceAsync(finish,signer,ct) is null)throw new InvalidDataException("The saved Finish could not be verified.");
                 state="Finish accepted; signing copy processing";
