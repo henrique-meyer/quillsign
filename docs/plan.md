@@ -299,10 +299,12 @@ Validation: 289 application tests pass, including actual Razor CSRF/private scop
 
 ## QUILS-29: Validate and normalize bounded signature PNG assets
 
-Status: To Do. Independent asset-processing foundation for the agreed v1 adoption flow, building on merged PDF-image feasibility and consent work. Owned by the overnight-development chat.
+Status: In Progress. Independent asset-processing foundation for the agreed v1 adoption flow, building on merged PDF-image feasibility and consent work. Owned by the overnight-development chat.
 
 Add a pure managed PNG normalizer for signature/initials assets. Input is browser-normalized static 8-bit RGB/RGBA PNG; later adoption UI previews the normalized output and binds its hash, normalizing supported upload formats in the browser first. This slice grants no storage access and adds no endpoint, adoption action, field filling or Finish. Use existing permissive dependencies/.NET only; no native runtime or paid service.
 
 Bound encoded input to 512 KiB and dimensions to 2048 by 1024. Validate PNG signature, IHDR, chunk lengths/order/CRCs, contiguous IDAT and final IEND/no trailing data. Bound chunk count and decompression before raster allocation. Reject unsupported bit depth/color modes, interlace/APNG, unknown critical chunks, malformed/truncated/excess rows and invalid filters; safely implement all five filters. Require visibly nonblank ink on a white preview background, without identity/handwriting/biometric claims. Crop surrounding whitespace with modest transparent padding, preserve the visible mark/aspect, encode a simple static RGBA PNG with fresh CRCs and no ancillary metadata, and return owned bytes/hash/dimensions/normalization version.
 
 Test RGB/RGBA, every filter, split IDAT, blank/transparent/colored/alpha pixels, crop/padding/aspect, metadata stripping, hash/ownership, CRC/order/truncation/trailing data, animation/interlace/modes, compressed bombs, size mismatches and all caps. Independently verify outputs with PDFsharp's managed image reader and the existing image-stamping harness where useful, including Linux. Keep PDFsharp MIT 6.2.4, document the adoption boundary, pass checks/scans, commit/push/open/attach/pass CI/merge a small QUILS-29 PR and move Done. No cloud, deployed configuration or live mail changes.
+
+The normalized output also stays within 512 KiB, and padding stays within dimension caps. Reject palette/color-key transparency inputs rather than silently changing transparency; later browser conversion produces the previewed sRGB RGB/RGBA pixels before normalization.
