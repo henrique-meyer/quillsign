@@ -44,7 +44,7 @@ public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvi
         NoticeCode.SignerSaved => "Signer saved. No invitation has been sent.",
         NoticeCode.SignerRemoved => "Signer removed from this draft.",
         NoticeCode.SignersReordered => "Signing order updated.",
-        NoticeCode.PreviewRequired => "Confirm the current PDF preview before setting up signers.",
+        NoticeCode.PreviewRequired => "Confirm the current PDF preview before setting up signers or fields.",
         _ => "We couldn't complete that request right now. Please try again shortly."
     };
 }

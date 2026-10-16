@@ -1,0 +1,11 @@
+{
+  "package": "interactjs",
+  "version": "1.10.28",
+  "license": "MIT",
+  "source": "https://registry.npmjs.org/interactjs/-/interactjs-1.10.28.tgz",
+  "integrity": "sha512-QCa4ksTPd2p/FZ4I6hrH6fogjLqru1TxYywRiKYNuLZtrlAxTIYUa/MYsE7PnUgWZJU3SrGVDjiz065BeaXYng==",
+  "sha256": {
+    "interact.min.js": "d62316ae5ad9c507278d3d0b354ca115df87a57cc7b30c0eaeba7c03c5c384f8",
+    "LICENSE": "e805e2367aed149858263a4ae0a62168146af837a9ba3095aa01d02c8559e7fe"
+  }
+}
