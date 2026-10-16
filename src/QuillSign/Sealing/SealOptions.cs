@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
+
 namespace QuillSign.Sealing;
 
 public sealed class SealOptions
@@ -28,28 +30,32 @@ public sealed class SealOptions
 public sealed class PfxSealOptions { public string Path { get; set; }=""; public string Password { get; set; }=""; }
 public sealed class SealUnavailableException(string message) : Exception(message);
 public sealed record SealedPdf(byte[] Bytes,byte[] Sha256,byte[] SourceSha256,int PageCount,string Provider,string CertificateSha256,
-    DateTimeOffset SealedAt,DateTimeOffset TimestampAt,string TimestampCertificateSha256,string TimestampPolicy);
+    DateTimeOffset SealedAt,DateTimeOffset TimestampAt,string TimestampCertificateSha256,string TimestampPolicy)
+{
+    // Public leaf certificate only, copied from the verified operation; never private material.
+    public byte[] CertificateDer {get;init;}=[];
+}
 
 public static class SealConfiguration
 {
     // No certificate reads, network calls or database access occur during registration/startup.
     public static IServiceCollection AddPlatformPdfSeals(this IServiceCollection services,IConfiguration config)
     {
-        services.AddSingleton(config.GetSection("Seal").Get<SealOptions>() ?? new());
-        services.AddSingleton<PfxSealCertificateProvider>(); services.AddSingleton<KeyVaultSealCertificateProvider>(); services.AddSingleton<SelfSignedSealCertificateProvider>();
-        services.AddSingleton<Func<PfxSealCertificateProvider>>(sp=>()=>sp.GetRequiredService<PfxSealCertificateProvider>());
-        services.AddSingleton<Func<KeyVaultSealCertificateProvider>>(sp=>()=>sp.GetRequiredService<KeyVaultSealCertificateProvider>());
-        services.AddSingleton<Func<SelfSignedSealCertificateProvider>>(sp=>()=>sp.GetRequiredService<SelfSignedSealCertificateProvider>());
-        services.AddSingleton<ISealCertificateProvider,SelectedSealCertificateProvider>();
-        services.AddSingleton<IKeyVaultSealClients,ManagedIdentitySealClients>(); services.AddSingleton<IKeyVaultSealSource,SdkKeyVaultSealSource>();
-        services.AddSingleton<IProtectedSealStore>(sp=> {
+        services.TryAddSingleton(config.GetSection("Seal").Get<SealOptions>() ?? new());
+        services.TryAddSingleton<PfxSealCertificateProvider>(); services.TryAddSingleton<KeyVaultSealCertificateProvider>(); services.TryAddSingleton<SelfSignedSealCertificateProvider>();
+        services.TryAddSingleton<Func<PfxSealCertificateProvider>>(sp=>()=>sp.GetRequiredService<PfxSealCertificateProvider>());
+        services.TryAddSingleton<Func<KeyVaultSealCertificateProvider>>(sp=>()=>sp.GetRequiredService<KeyVaultSealCertificateProvider>());
+        services.TryAddSingleton<Func<SelfSignedSealCertificateProvider>>(sp=>()=>sp.GetRequiredService<SelfSignedSealCertificateProvider>());
+        services.TryAddSingleton<ISealCertificateProvider,SelectedSealCertificateProvider>();
+        services.TryAddSingleton<IKeyVaultSealClients,ManagedIdentitySealClients>(); services.TryAddSingleton<IKeyVaultSealSource,SdkKeyVaultSealSource>();
+        services.TryAddSingleton<IProtectedSealStore>(sp=> {
             var provider=config["Storage:Provider"];
             if(provider is not ("Azure" or "Azurite") || sp.GetService<Azure.Storage.Blobs.BlobServiceClient>() is not { } client)
                 throw new SealUnavailableException("Configure persistent protected storage for the demo seal identity.");
             return new BlobProtectedSealStore(client,provider=="Azurite",sp.GetRequiredService<SealOptions>().SelfSigned.BlobName);
         });
-        services.AddSingleton<Func<IProtectedSealStore>>(sp=>()=>sp.GetRequiredService<IProtectedSealStore>());
-        services.AddSingleton<TimestampAuthority>(); services.AddSingleton<PlatformPdfSeal>(); return services;
+        services.TryAddSingleton<Func<IProtectedSealStore>>(sp=>()=>sp.GetRequiredService<IProtectedSealStore>());
+        services.TryAddSingleton<TimestampAuthority>(); services.TryAddSingleton<PlatformPdfSeal>(); services.TryAddSingleton<SealCms>(); return services;
     }
 }
 

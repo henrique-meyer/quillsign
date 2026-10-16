@@ -307,6 +307,114 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.CompletionSealOutput", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CandidateId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("CandidateRecipeSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("EvidenceSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<byte[]>("ExecutedSha256")
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("MetadataJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("PageCount")
+                        .HasColumnType("int");
+
+                    b.Property<long>("PdfLength")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PdfObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("PdfSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<byte[]>("RecipeSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<string>("RecipeVersion")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<long>("SourceLength")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("SourceObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("SourceSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeId", "PdfObjectId")
+                        .IsUnique();
+
+                    b.HasIndex("EnvelopeId", "CandidateId", "Kind")
+                        .IsUnique();
+
+                    b.ToTable("CompletionSealOutputs", t =>
+                        {
+                            t.HasCheckConstraint("CK_CompletionSealOutput_CandidateRecipeSha256", "[CandidateRecipeSha256] IS NULL OR DATALENGTH([CandidateRecipeSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_CompletionSealOutput_EvidenceSha256", "[EvidenceSha256] IS NULL OR DATALENGTH([EvidenceSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_CompletionSealOutput_ExecutedSha256", "[ExecutedSha256] IS NULL OR DATALENGTH([ExecutedSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_CompletionSealOutput_Kind", "[Kind] IS NULL OR [Kind] IN ('Executed','Certificate')");
+
+                            t.HasCheckConstraint("CK_CompletionSealOutput_Metadata", "DATALENGTH([MetadataJson]) BETWEEN 2 AND 262144 AND (([Kind]='Executed' AND [ExecutedSha256] IS NULL) OR ([Kind]='Certificate' AND [ExecutedSha256] IS NOT NULL))");
+
+                            t.HasCheckConstraint("CK_CompletionSealOutput_MetadataJson", "[MetadataJson] IS NULL OR ISJSON([MetadataJson]) = 1");
+
+                            t.HasCheckConstraint("CK_CompletionSealOutput_Pdf", "[SourceLength] BETWEEN 16 AND 67108864 AND [PdfLength] BETWEEN 16 AND 67108864 AND [SourceObjectId] <> [PdfObjectId] AND [PageCount] BETWEEN 1 AND 200");
+
+                            t.HasCheckConstraint("CK_CompletionSealOutput_PdfSha256", "[PdfSha256] IS NULL OR DATALENGTH([PdfSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_CompletionSealOutput_RecipeSha256", "[RecipeSha256] IS NULL OR DATALENGTH([RecipeSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_CompletionSealOutput_SourceSha256", "[SourceSha256] IS NULL OR DATALENGTH([SourceSha256]) = 32");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.DocumentField", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1377,6 +1485,22 @@ namespace QuillSign.Data.Migrations
                     b.HasOne("QuillSign.Data.SignerFinishAcceptance", null)
                         .WithMany()
                         .HasForeignKey("EnvelopeId", "FinishId")
+                        .HasPrincipalKey("EnvelopeId", "Id")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.CompletionSealOutput", b =>
+                {
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.CompletionCandidate", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "CandidateId")
                         .HasPrincipalKey("EnvelopeId", "Id")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();

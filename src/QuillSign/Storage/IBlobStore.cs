@@ -3,7 +3,7 @@ using QuillSign.Signing;
 
 namespace QuillSign.Storage;
 
-public enum DocumentBlobKind { Original, Normalized, Preview, Signature, Initials, CompletionCandidate }
+public enum DocumentBlobKind { Original, Normalized, Preview, Signature, Initials, CompletionCandidate, CompletionExecutedSeal, CompletionCertificateSource, CompletionCertificateSeal }
 
 // References contain no filenames, URLs, or caller-controlled path fragments.
 public readonly record struct DocumentBlob(Guid EnvelopeId, DocumentBlobKind Kind, Guid ObjectId);
@@ -26,6 +26,8 @@ public static class EnvelopeStorageAuthorization
 
     public static void DemandRead(ClaimsPrincipal principal,DocumentBlob blob)
     {
+        if(principal is CompletionSealCapability seal) {seal.Demand(blob,AssetOperation.Read); return;}
+        if(CompletionSealCapability.IsKind(blob.Kind))throw new UnauthorizedAccessException("An internal completion seal capability is required.");
         if(principal is CompletionCandidateCapability candidate) {candidate.Demand(blob,AssetOperation.Read); return;}
         if(blob.Kind==DocumentBlobKind.CompletionCandidate)throw new UnauthorizedAccessException("An internal completion candidate capability is required.");
         if (principal is SignatureAssetCapability capability) { capability.Demand(blob,AssetOperation.Read); return; }
@@ -49,6 +51,8 @@ public static class EnvelopeStorageAuthorization
 
     private static void DemandMutation(ClaimsPrincipal sender,DocumentBlob blob,AssetOperation operation)
     {
+        if(sender is CompletionSealCapability seal) {seal.Demand(blob,operation); return;}
+        if(CompletionSealCapability.IsKind(blob.Kind))throw new UnauthorizedAccessException("An internal completion seal capability is required.");
         if(sender is CompletionCandidateCapability candidate) {candidate.Demand(blob,operation); return;}
         if(blob.Kind==DocumentBlobKind.CompletionCandidate)throw new UnauthorizedAccessException("An internal completion candidate capability is required.");
         if(sender is CompletionReadCapability or SignerCheckpointReadCapability)

@@ -9,6 +9,18 @@ namespace QuillSign.Tests;
 public sealed class PlatformPdfSealTests
 {
     [Fact]
+    public async Task Bound_seals_reject_identity_changes_before_timestamping_and_return_only_the_verified_public_leaf()
+    {
+        await using var f=await SealFixtures.Create(); var source=PdfFixtures.Create(); var hash=SHA256.HashData(source);
+        await Assert.ThrowsAsync<SealUnavailableException>(()=>f.Engine.SealBoundAsync(source,hash,RandomNumberGenerator.GetBytes(32)));
+        Assert.Equal(0,f.Requests);
+        var result=await f.Engine.SealBoundAsync(source,hash,SHA256.HashData(f.Seal.RawData));
+        Assert.Equal(f.Seal.RawData,result.CertificateDer); Assert.Equal(1,f.Requests);
+        using var publicLeaf=System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificate(result.CertificateDer);
+        Assert.False(publicLeaf.HasPrivateKey);
+    }
+
+    [Fact]
     public async Task Timestamp_responses_cannot_create_cookie_state_for_later_operations()
     {
         await using var f=await SealFixtures.Create(); f.Mode="cookie"; var source=PdfFixtures.Create();

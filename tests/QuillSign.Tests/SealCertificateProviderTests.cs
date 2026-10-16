@@ -40,7 +40,9 @@ public sealed class SealCertificateProviderTests
         services.AddSingleton<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>(new EnvironmentStub());
         services.AddSingleton<Microsoft.Extensions.Hosting.IHostEnvironment>(sp=>sp.GetRequiredService<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>());
         services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider()); services.AddPlatformPdfSeals(new ConfigurationBuilder().Build());
+        services.AddPlatformPdfSeals(new ConfigurationBuilder().Build());
         using var scope=services.BuildServiceProvider(new ServiceProviderOptions {ValidateOnBuild=true,ValidateScopes=true});
+        Assert.Single(scope.GetServices<PlatformPdfSeal>()); Assert.Single(scope.GetServices<TimestampAuthority>());
         Assert.NotNull(scope.GetRequiredService<PlatformPdfSeal>());
         // Only the explicit operation requests persistent storage; an unconfigured host cannot invent an identity.
         await Assert.ThrowsAsync<SealUnavailableException>(()=>scope.GetRequiredService<ISealCertificateProvider>().AcquireAsync(default));

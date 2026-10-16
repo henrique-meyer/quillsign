@@ -11,6 +11,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     public DbSet<SignerReviewCandidate> SignerReviewCandidates => Set<SignerReviewCandidate>();
     public DbSet<SignerFinishAcceptance> SignerFinishAcceptances => Set<SignerFinishAcceptance>();
     public DbSet<CompletionCandidate> CompletionCandidates => Set<CompletionCandidate>();
+    public DbSet<CompletionSealOutput> CompletionSealOutputs => Set<CompletionSealOutput>();
     public DbSet<Recipient> Recipients => Set<Recipient>();
     public DbSet<DocumentField> Fields => Set<DocumentField>();
     public DbSet<AuthToken> AuthTokens => Set<AuthToken>();
@@ -77,6 +78,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         });
 
         model.Entity<CompletionCandidate>().HasIndex(x=>x.EnvelopeId).IsUnique();
+        model.Entity<CompletionCandidate>().HasAlternateKey(x=>new {x.EnvelopeId,x.Id});
         model.Entity<CompletionCandidate>().HasIndex(x=>new {x.EnvelopeId,x.PdfObjectId}).IsUnique();
         model.Entity<CompletionCandidate>().HasOne<SignerFinishAcceptance>().WithMany().HasForeignKey(x=>new {x.EnvelopeId,x.FinishId})
             .HasPrincipalKey(x=>new {x.EnvelopeId,x.Id}).OnDelete(DeleteBehavior.NoAction);
@@ -84,6 +86,15 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         {
             t.HasCheckConstraint("CK_CompletionCandidate_Pdf","[PdfLength] BETWEEN 16 AND 67108864 AND [PdfObjectId] <> [SourceObjectId] AND [DocumentPages] >= 1 AND [CertificatePages] BETWEEN 1 AND 64 AND [DocumentPages] + [CertificatePages] <= 200");
             t.HasCheckConstraint("CK_CompletionCandidate_Snapshot","[CopyVersion] BETWEEN 1 AND 20 AND [AuditSequence] BETWEEN 1 AND 512 AND DATALENGTH([GeometryJson]) BETWEEN 2 AND 131072 AND DATALENGTH([EvidenceJson]) BETWEEN 2 AND 67108864");
+        });
+
+        model.Entity<CompletionSealOutput>().HasOne<CompletionCandidate>().WithMany().HasForeignKey(x=>new {x.EnvelopeId,x.CandidateId})
+            .HasPrincipalKey(x=>new {x.EnvelopeId,x.Id}).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<CompletionSealOutput>().HasIndex(x=>new {x.EnvelopeId,x.CandidateId,x.Kind}).IsUnique();
+        model.Entity<CompletionSealOutput>().HasIndex(x=>new {x.EnvelopeId,x.PdfObjectId}).IsUnique();
+        model.Entity<CompletionSealOutput>().ToTable(t=> {
+            t.HasCheckConstraint("CK_CompletionSealOutput_Pdf","[SourceLength] BETWEEN 16 AND 67108864 AND [PdfLength] BETWEEN 16 AND 67108864 AND [SourceObjectId] <> [PdfObjectId] AND [PageCount] BETWEEN 1 AND 200");
+            t.HasCheckConstraint("CK_CompletionSealOutput_Metadata","DATALENGTH([MetadataJson]) BETWEEN 2 AND 262144 AND (([Kind]='Executed' AND [ExecutedSha256] IS NULL) OR ([Kind]='Certificate' AND [ExecutedSha256] IS NOT NULL))");
         });
 
         model.Entity<DocumentField>().HasOne<Signer>().WithMany()
@@ -159,6 +170,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         ChangeTracker.DetectChanges();
         if(ChangeTracker.Entries<CompletionCandidate>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Saved completion candidates are immutable. Retention requires a separate privileged path.");
+        if(ChangeTracker.Entries<CompletionSealOutput>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Saved completion seals are immutable. Retention requires a separate privileged path.");
         if (ChangeTracker.Entries<SignaturePreview>().Any(x => x.State == EntityState.Modified &&
             x.Properties.Any(p => p.IsModified && p.Metadata.Name != nameof(SignaturePreview.UsedAt))))
             throw new InvalidOperationException("Saved signature previews are immutable.");
