@@ -12,6 +12,14 @@ The vendored distribution includes additional license notices for fonts, charact
 and WebAssembly components in its standard_fonts, cmaps, and wasm directories.
 Version, package integrity, and individual file hashes are in vendor/pdfjs/manifest.json.
 
+Liberation Sans 2.1.5 — SIL Open Font License 1.1
+Copyright (c) 2010 Google Corporation; Copyright (c) 2012 Red Hat, Inc.
+Source: https://github.com/liberationfonts/liberation-fonts/releases/tag/2.1.5
+The four unmodified Sans fonts replace the older Liberation files in pdfjs-dist.
+The complete copyright, reserved-name and OFL notice accompanies them at
+src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LICENSE_LIBERATION.
+Archive and file hashes are pinned by scripts/dev/vendor_pdfjs.py and the manifest.
+
 interact.js 1.10.28 — MIT
 Source: https://github.com/taye/interact.js
 The build restores the pinned npm archive into an ignored cache and includes
