@@ -7,6 +7,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
 {
     public DbSet<Envelope> Envelopes => Set<Envelope>();
     public DbSet<Signer> Signers => Set<Signer>();
+    public DbSet<SignaturePreview> SignaturePreviews => Set<SignaturePreview>();
     public DbSet<Recipient> Recipients => Set<Recipient>();
     public DbSet<DocumentField> Fields => Set<DocumentField>();
     public DbSet<AuthToken> AuthTokens => Set<AuthToken>();
@@ -28,6 +29,14 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<Signer>().HasIndex(x => new { x.EnvelopeId, x.Order }).IsUnique();
         model.Entity<Signer>().HasAlternateKey(x => new { x.EnvelopeId, x.Id });
         model.Entity<Signer>().ToTable(t => t.HasCheckConstraint("CK_Signer_Order", "[Order] > 0"));
+        model.Entity<SignaturePreview>().HasOne<Signer>().WithMany()
+            .HasForeignKey(x => new { x.EnvelopeId,x.SignerId }).HasPrincipalKey(x => new { x.EnvelopeId,x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<SignaturePreview>().HasIndex(x => new { x.EnvelopeId,x.SignerId,x.ExpiresAt });
+        model.Entity<SignaturePreview>().ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_SignaturePreview_Expiry", "[ExpiresAt] > [CreatedAt] AND ([UsedAt] IS NULL OR [UsedAt] >= [CreatedAt])");
+            t.HasCheckConstraint("CK_SignaturePreview_Dimensions", "[SignatureWidth] BETWEEN 1 AND 2048 AND [InitialsWidth] BETWEEN 1 AND 2048 AND [SignatureHeight] BETWEEN 1 AND 1024 AND [InitialsHeight] BETWEEN 1 AND 1024");
+        });
         model.Entity<Recipient>().HasIndex(x => new { x.EnvelopeId, x.Email }).IsUnique();
 
         model.Entity<DocumentField>().HasOne<Signer>().WithMany()
@@ -85,8 +94,9 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
                     builder.HasPrecision(10, 8);
                 if (property.ClrType == typeof(byte[]) && name != "RowVersion")
                 {
-                    builder.HasMaxLength(32);
-                    entity.ToTable(t => t.HasCheckConstraint($"CK_{type.ClrType.Name}_{name}", $"[{name}] IS NULL OR DATALENGTH([{name}]) = 32"));
+                    var length = name == "BaselineSignerVersion" ? 8 : 32;
+                    builder.HasMaxLength(length);
+                    entity.ToTable(t => t.HasCheckConstraint($"CK_{type.ClrType.Name}_{name}", $"[{name}] IS NULL OR DATALENGTH([{name}]) = {length}"));
                 }
             }
         }
@@ -95,6 +105,9 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     private void GuardAuditMutations()
     {
         ChangeTracker.DetectChanges();
+        if (ChangeTracker.Entries<SignaturePreview>().Any(x => x.State == EntityState.Modified &&
+            x.Properties.Any(p => p.IsModified && p.Metadata.Name != nameof(SignaturePreview.UsedAt))))
+            throw new InvalidOperationException("Saved signature previews are immutable.");
         if (ChangeTracker.Entries<AuditEvent>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Audit events are append-only. Retention requires a separate privileged path.");
         foreach (var entry in ChangeTracker.Entries<AuditEvent>().Where(x => x.State == EntityState.Added))

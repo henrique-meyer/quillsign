@@ -565,6 +565,127 @@ namespace QuillSign.Data.Migrations
                     b.ToTable("Recipients");
                 });
 
+            modelBuilder.Entity("QuillSign.Data.SignaturePreview", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AdoptionVersion")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<byte[]>("BaselineSignerVersion")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("varbinary(8)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("DisclosureSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("DocumentSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("InitialsHeight")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("InitialsObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("InitialsSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<int>("InitialsWidth")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("NormalizationVersion")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<byte[]>("SessionSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<int>("SignatureHeight")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SignatureObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("SignatureSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<int>("SignatureWidth")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SignerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("TypedInitials")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("TypedName")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<DateTimeOffset?>("UsedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeId", "SignerId", "ExpiresAt");
+
+                    b.ToTable("SignaturePreviews", t =>
+                        {
+                            t.HasCheckConstraint("CK_SignaturePreview_BaselineSignerVersion", "[BaselineSignerVersion] IS NULL OR DATALENGTH([BaselineSignerVersion]) = 8");
+
+                            t.HasCheckConstraint("CK_SignaturePreview_Dimensions", "[SignatureWidth] BETWEEN 1 AND 2048 AND [InitialsWidth] BETWEEN 1 AND 2048 AND [SignatureHeight] BETWEEN 1 AND 1024 AND [InitialsHeight] BETWEEN 1 AND 1024");
+
+                            t.HasCheckConstraint("CK_SignaturePreview_DisclosureSha256", "[DisclosureSha256] IS NULL OR DATALENGTH([DisclosureSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignaturePreview_DocumentSha256", "[DocumentSha256] IS NULL OR DATALENGTH([DocumentSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignaturePreview_Expiry", "[ExpiresAt] > [CreatedAt] AND ([UsedAt] IS NULL OR [UsedAt] >= [CreatedAt])");
+
+                            t.HasCheckConstraint("CK_SignaturePreview_InitialsSha256", "[InitialsSha256] IS NULL OR DATALENGTH([InitialsSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignaturePreview_Method", "[Method] IS NULL OR [Method] IN ('Typed','Drawn','Uploaded')");
+
+                            t.HasCheckConstraint("CK_SignaturePreview_SessionSha256", "[SessionSha256] IS NULL OR DATALENGTH([SessionSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignaturePreview_SignatureSha256", "[SignatureSha256] IS NULL OR DATALENGTH([SignatureSha256]) = 32");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.Signer", b =>
                 {
                     b.Property<Guid>("Id")
@@ -607,6 +728,10 @@ namespace QuillSign.Data.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("nvarchar(512)");
 
+                    b.Property<byte[]>("InitialsImageSha256")
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
                     b.Property<int>("Order")
                         .HasColumnType("int");
 
@@ -620,13 +745,39 @@ namespace QuillSign.Data.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
 
+                    b.Property<DateTimeOffset?>("SignatureAdoptedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("SignatureAdoptionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SignatureAdoptionVersion")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
                     b.Property<string>("SignatureImageBlob")
                         .HasMaxLength(512)
                         .HasColumnType("nvarchar(512)");
 
+                    b.Property<byte[]>("SignatureImageSha256")
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
                     b.Property<string>("SignatureMethod")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("SignatureNormalizationVersion")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("SignatureTypedInitials")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("SignatureTypedName")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
 
                     b.Property<DateTimeOffset?>("SignedAt")
                         .HasColumnType("datetimeoffset");
@@ -654,7 +805,11 @@ namespace QuillSign.Data.Migrations
 
                     b.ToTable("Signers", t =>
                         {
+                            t.HasCheckConstraint("CK_Signer_InitialsImageSha256", "[InitialsImageSha256] IS NULL OR DATALENGTH([InitialsImageSha256]) = 32");
+
                             t.HasCheckConstraint("CK_Signer_Order", "[Order] > 0");
+
+                            t.HasCheckConstraint("CK_Signer_SignatureImageSha256", "[SignatureImageSha256] IS NULL OR DATALENGTH([SignatureImageSha256]) = 32");
 
                             t.HasCheckConstraint("CK_Signer_SignatureMethod", "[SignatureMethod] IS NULL OR [SignatureMethod] IN ('Typed','Drawn','Uploaded')");
 
@@ -798,6 +953,22 @@ namespace QuillSign.Data.Migrations
                     b.HasOne("QuillSign.Data.Envelope", null)
                         .WithMany()
                         .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.SignaturePreview", b =>
+                {
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.Signer", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "SignerId")
+                        .HasPrincipalKey("EnvelopeId", "Id")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
                 });
