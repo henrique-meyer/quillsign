@@ -1,0 +1,16 @@
+@page "/sign/{publicId}/confirmed"
+@model QuillSign.Pages.Sign.ConfirmedModel
+@{ ViewData["Title"]="Your signing confirmation"; }
+@section Styles { <link rel="stylesheet" href="~/signer.css" asp-append-version="true" /> }
+<section class="signer-flow">
+<p class="eyebrow">Your signing confirmation</p><h1>@(Model.Acceptance is null ? "Check your signing state" : "Your Finish was accepted")</h1>
+@if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
+@if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p> }
+@if(Model.Acceptance is { } accepted) {
+<p>Your entries are frozen. Finish was accepted at @accepted.FinishedAt.ToString("u"). Date Signed: @accepted.DateSigned.ToString("yyyy-MM-dd") (UTC).</p>
+@if(accepted.ProcessingPending) { <p class="notice" role="status">Your signing copy is being processed. Refresh this page manually to check when it is ready.</p> }
+else { <p class="notice" role="status">Your signing copy is ready.</p><p><a class="button-link" asp-page-handler="Pdf">Download your signing copy</a></p> }
+<p>This is your saved signing checkpoint. The complete request may still need other signers and final sealing. This page does not confirm final completion.</p>
+}
+<p><a href="">Refresh confirmation</a></p>
+</section>

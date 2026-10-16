@@ -2,18 +2,40 @@
 @model QuillSign.Pages.Sign.ReviewModel
 @using QuillSign.Data
 @using QuillSign.Signing
-@{ ViewData["Title"]="Review saved entries"; }
-@section Styles { <link rel="stylesheet" href="~/signer.css" asp-append-version="true" /> }
+@{ ViewData["Title"]="Review and Finish"; }
+@section Styles { <link rel="stylesheet" href="~/signer.css" asp-append-version="true" /><link rel="stylesheet" href="~/vendor/pdfjs/web/pdf_viewer.css" /> }
 <section class="signer-flow">
-<p class="eyebrow">Saved-entry review</p><h1>Review your saved entries</h1>
+<p class="eyebrow">Review and Finish</p><h1>Review your saved entries</h1>
+@if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
 @if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p><p><a href="">Reload this page</a></p> }
 @if(Model.Data is { } data) {
 <p>@data.Context.Title · For @data.Context.SignerName</p>
-<p class="notice">Signing is not complete. Finish is not available in this release. This page shows saved entries, not a final stamped or sealed PDF.</p>
+<p class="notice">Signing is not complete. Check your saved entries, then explicitly prepare the exact PDF you will sign with Finish.</p>
 <p>@data.Missing required entries missing · @data.Stale entries need reapplication or clearing.</p>
 @if(data.Marks is null) { <p>No marks have been adopted. <a asp-page="/Sign/Signature" asp-route-publicId="@data.Snapshot.PublicId">Adopt your signature and initials</a>.</p> }
 else { <p>Your current adopted marks were verified.</p> }
 <p><a class="button-link" asp-page="/Sign/Fields" asp-route-publicId="@data.Snapshot.PublicId">Return to fields</a> · <a asp-page="/Sign/Signature" asp-route-publicId="@data.Snapshot.PublicId">Review or replace adopted marks</a></p>
+<form method="post" asp-page-handler="Prepare"><button type="submit" disabled="@(data.Missing!=0 || data.Stale!=0 || data.Marks is null)">@(Model.Candidate is null ? "Prepare exact review PDF" : "Prepare review again")</button></form>
+@if(Model.Candidate is { } candidate) {
+<section class="start-card">
+<h2>Your exact review PDF</h2>
+<p>Prospective Date Signed: @candidate.ProspectiveDate.ToString("yyyy-MM-dd") (UTC). This review expires at @candidate.ExpiresAt.ToString("u"). Finish must occur before expiry and on that UTC date; changed entries or marks need a new review.</p>
+<div class="pdf-toolbar" aria-label="PDF controls"><button type="button" id="previous-page" disabled aria-label="Previous page">Previous</button><span id="page-number" aria-live="polite">Loading…</span><button type="button" id="next-page" disabled aria-label="Next page">Next</button><label for="pdf-zoom">Zoom</label><select id="pdf-zoom"><option value="fit">Fit width</option><option value="1">100%</option><option value="2">200%</option></select></div>
+<p id="preview-status" role="status">Loading exact review PDF…</p>
+<div id="pdf-preview" class="pdf-preview" data-url="/sign/@data.Snapshot.PublicId/review?handler=Pdf" data-load-error="This exact review is unavailable or changed. Check your saved entries and prepare it again." aria-label="Exact review PDF"><div class="pdf-page"><canvas aria-label="Review PDF page"></canvas><div class="textLayer"></div></div></div>
+<p><a asp-page-handler="Pdf" asp-route-download="true">Download exact review PDF</a> · <a asp-page-handler="Pdf" target="_blank" rel="noopener">Open exact PDF in a new tab</a></p>
+<p>If the preview is unavailable, download and open this PDF in a viewer. Do not Finish unless you can review the exact copy.</p>
+<form method="post" asp-page-handler="Finish" id="finish-form">
+<input type="hidden" name="StatementVersion" value="@SignerFinishStatement.Version" />
+<fieldset><legend>How did you access this exact PDF?</legend><label class="check-label"><input type="radio" asp-for="AccessMethod" value="preview" required /> I viewed this exact review PDF in the browser.</label><label class="check-label"><input type="radio" asp-for="AccessMethod" value="download" required /> I opened this exact downloaded review PDF.</label></fieldset>
+<label class="check-label"><input type="checkbox" asp-for="Reviewed" required /> I reviewed this exact PDF and my saved entries.</label>
+<p>@SignerFinishStatement.Text</p>
+<label class="check-label"><input type="checkbox" asp-for="Acknowledged" required /> I agree to the Finish statement above and intend to sign.</label>
+<p class="hint">The server verifies the exact PDF prepared for your session. These confirmations report your access, review and intent; the server cannot determine what you read.</p>
+<button type="submit">Finish</button>
+</form>
+</section>
+}
 @foreach(var field in data.Snapshot.Fields) {
 <section class="start-card">
 <h2>@SignerFieldViewData.Label(field)</h2>
@@ -29,3 +51,4 @@ else { <p class="saved-entry">@(field.Type==FieldType.Checkbox && field.Filled ?
 <p><a asp-page="/Sign/Index" asp-route-publicId="@data.Snapshot.PublicId">Review the document and disclosure</a></p>
 }
 </section>
+@section Scripts { <script type="module" src="~/js/signer-review.mjs" asp-append-version="true"></script> }

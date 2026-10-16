@@ -134,6 +134,10 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
             builder.Services.AddScoped(_=>fixture.Open()); builder.Services.AddSingleton<TimeProvider>(run.Clock); builder.Services.AddQuillSignSender(new ConfigurationBuilder().Build(),builder.Environment); builder.Services.AddQuillSignSignerAccess(new ConfigurationBuilder().Build(),builder.Environment);
             builder.Services.AddScoped<SignatureAdoption>(); builder.Services.AddScoped<SignaturePreviewProtection>();
             builder.Services.AddScoped<SignerFields>(); builder.Services.AddScoped<SignerFieldView>(); builder.Services.AddScoped<SignerPdfAccess>();
+            builder.Services.AddScoped<SignerReviewCandidates>(); builder.Services.AddScoped<SignerReviewProtection>(); builder.Services.AddScoped<SignerFinish>();
+            builder.Services.AddScoped<SignerCheckpointReads>(); builder.Services.AddScoped<SignerCheckpointState>(); builder.Services.AddScoped<SignerCheckpointBlobs>();
+            builder.Services.AddScoped<QuillSign.Work.SignerCheckpointJobs>(); builder.Services.AddScoped<Func<QuillSign.Work.IWorkSignals>>(_=>()=>new SignerReviewCandidateTests.CheckpointSignals());
+            builder.Services.AddSingleton(new QuillSign.Documents.SignerPdfRenderer(25*1024*1024,20,200)); builder.Services.AddSignerReviewBrowser();
             builder.Services.AddSingleton(new QuillSign.Documents.DocumentOptions());
             builder.Services.AddSingleton(new QuillSign.Email.EmailOptions());
             builder.Services.AddSingleton(new QuillSign.Work.WorkOptions());

@@ -128,7 +128,7 @@ The backend [signer-access foundation](docs/signer-access.md) provides single-us
 
 The [signature asset processor](docs/signature-assets.md) validates and normalizes bounded PNG marks for adoption previews. It provides image processing only; the separate adoption workflow authorizes storage and records explicit adoption.
 
-The [signer field screens and backend](docs/signer-fields.md) record one deliberate owned-field application at a time, bound to the current adoption ID/image hash. Signers select fields, explicitly apply/save/clear each entry, and review server-saved values. Replacement makes older mark applications stale until each is reapplied or cleared. Finish remains subsequent work.
+The [signer field screens and backend](docs/signer-fields.md) record one deliberate owned-field application at a time, bound to the current adoption ID/image hash. Signers select fields, explicitly apply/save/clear each entry, and review server-saved values. Replacement makes older mark applications stale until each is reapplied or cleared. [Exact PDF review and Finish](docs/signer-review-finish.md) require explicit preparation, verified PDF access and affirmative review/intent before freezing entries. Confirmation offers the signer's exact checkpoint copy after processing; final sealing and completion delivery remain subsequent work.
 
 The internal [signer PDF renderer](docs/signer-pdf-rendering.md) turns a verified saved-field snapshot into a new hash-bound copy, preserving earlier contents and page geometry. It derives Full Name and Date Signed from server inputs and verifies applied mark bindings. The later Finish transaction will authorize and publish these copies; rendering alone does not complete signing.
 

@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace QuillSign.Sender;
 
-public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed, SignerSaved, SignerRemoved, SignersReordered, PreviewRequired, DetailsSaved, RecipientSaved, RecipientRemoved, SignatureAdopted, SignerFieldSaved }
+public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed, SignerSaved, SignerRemoved, SignersReordered, PreviewRequired, DetailsSaved, RecipientSaved, RecipientRemoved, SignatureAdopted, SignerFieldSaved, SignerReviewPrepared, SignerFinishAccepted }
 
 public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvironment environment)
 {
@@ -50,6 +50,8 @@ public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvi
         NoticeCode.RecipientRemoved => "Completion recipient removed from this draft.",
         NoticeCode.SignatureAdopted => "Your signature and initials were adopted. Apply each field deliberately and review saved entries. Signing is not complete.",
         NoticeCode.SignerFieldSaved => "Field saved. Signing is not complete.",
+        NoticeCode.SignerReviewPrepared => "Review prepared. Open the exact PDF, check it and confirm your intent before Finish.",
+        NoticeCode.SignerFinishAccepted => "Your Finish was accepted. Your entries are frozen.",
         _ => "We couldn't complete that request right now. Please try again shortly."
     };
 }
