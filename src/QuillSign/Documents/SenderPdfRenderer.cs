@@ -18,7 +18,7 @@ public sealed class SenderPdfRenderer
 {
     private const long MemoryByteCeiling = 64 * 1024 * 1024;
     // Bound concurrent PDFsharp work/font cache access and peak serialization allocation per process.
-    private static readonly object RenderGate = new();
+    internal static readonly object RenderGate = new();
     private readonly long maximumBytes;
     private readonly int maximumPages;
     private readonly int maximumFields;
@@ -88,13 +88,13 @@ public sealed class SenderPdfRenderer
         }
     }
 
-    private static bool GeometryMatches(IReadOnlyList<PageGeometry> actual, IReadOnlyList<PageGeometry> expected) =>
+    internal static bool GeometryMatches(IReadOnlyList<PageGeometry> actual, IReadOnlyList<PageGeometry> expected) =>
         actual.Count == expected.Count && actual.Zip(expected).All(pair => pair.Second is not null &&
             pair.First.Rotation == pair.Second.Rotation && Near(pair.First.Width, pair.Second.Width) && Near(pair.First.Height, pair.Second.Height) &&
             Near(pair.First.UserUnit, pair.Second.UserUnit) && BoxMatches(pair.First.MediaBox, pair.Second.MediaBox) && BoxMatches(pair.First.CropBox, pair.Second.CropBox));
     private static bool Near(double actual, double expected) => double.IsFinite(expected) && Math.Abs(actual - expected) < .00001;
     private static bool BoxMatches(double[] actual, double[]? expected) => expected is { Length: 4 } && actual.Zip(expected).All(p => Near(p.First, p.Second));
-    private static XMatrix DisplayToGraphics(PageGeometry p)
+    internal static XMatrix DisplayToGraphics(PageGeometry p)
     {
         var b = p.CropBox; var h = p.MediaBox[3] - p.MediaBox[1]; var s = 1 / p.UserUnit;
         return p.Rotation switch
@@ -111,7 +111,7 @@ public sealed class SenderPdfRenderer
         try { return value.Replace("\r\n", "\n").Replace('\r', '\n').Normalize(NormalizationForm.FormC); }
         catch (ArgumentException) { throw new DocumentRejectedException("The sender field contains invalid Unicode text."); }
     }
-    private static void ValidateValue(SenderPrefillField field)
+    internal static void ValidateValue(SenderPrefillField field)
     {
         var value = field.Value;
         if (string.IsNullOrWhiteSpace(value) || value.Length > 4000) throw new DocumentRejectedException("Fill or delete every sender field.");
@@ -128,7 +128,7 @@ public sealed class SenderPdfRenderer
                 throw new DocumentRejectedException($"This field contains unsupported text (U+{rune.Value:X4}). Use supported text before sending.");
         }
     }
-    private static void DrawText(XGraphics graphics, string value, XRect box)
+    internal static void DrawText(XGraphics graphics, string value, XRect box)
     {
         const double padding = 2; var lines = Normalize(value).Split('\n');
         if (box.Width <= 2 * padding || box.Height <= 2 * padding) throw new DocumentRejectedException("Enlarge the sender text field.");
@@ -144,7 +144,7 @@ public sealed class SenderPdfRenderer
             if (lines[i].Length > 0) graphics.DrawString(lines[i], chosen, XBrushes.Black,
                 new XRect(box.X + padding, box.Y + padding + i * chosen.GetHeight(), box.Width - 2 * padding, chosen.GetHeight()), XStringFormats.TopLeft);
     }
-    private static void DrawCheckbox(XGraphics graphics, bool selected, XRect box)
+    internal static void DrawCheckbox(XGraphics graphics, bool selected, XRect box)
     {
         var side = Math.Min(box.Width, box.Height);
         if (side < 8) throw new DocumentRejectedException("Enlarge the sender checkbox field.");

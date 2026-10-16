@@ -130,6 +130,8 @@ The [signature asset processor](docs/signature-assets.md) validates and normaliz
 
 The internal [signer field backend](docs/signer-fields.md) records one deliberate owned-field application at a time, bound to the current adoption ID/image hash. Replacement makes older applications stale. The public field UI, review and Finish remain subsequent work.
 
+The internal [signer PDF renderer](docs/signer-pdf-rendering.md) turns a verified saved-field snapshot into a new hash-bound copy, preserving earlier contents and page geometry. It derives Full Name and Date Signed from server inputs and verifies applied mark bindings. The later Finish transaction will authorize and publish these copies; rendering alone does not complete signing.
+
 PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.js 6.4.299 is vendored locally, including its font/decoder assets and license notices. Its four Liberation Sans fonts are replaced with unmodified upstream 2.1.5 under OFL-1.1. CI verifies the committed asset hashes with `python scripts/dev/vendor_pdfjs.py --verify`; maintainers regenerate the pinned distribution with the same script without `--verify`. See [third-party notices](THIRD-PARTY-NOTICES.txt) for attribution.
 
 The standalone [PDF field feasibility harness](docs/pdf-field-feasibility.md) checks stamping geometry, embedded text, checkboxes and image marks with independent rendering and text extraction. Run `pwsh -File scripts/dev/Test-PdfFieldSpike.ps1`; generated fixtures stay ignored. The harness does not enable production stamping or signing.

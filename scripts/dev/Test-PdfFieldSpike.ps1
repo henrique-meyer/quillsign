@@ -22,7 +22,7 @@ try {
     dotnet run --project tools/PdfFieldSpike/PdfFieldSpike.csproj -c Release --no-restore -- $taskOutput
     if ($LASTEXITCODE -ne 0) { throw 'PDF field feasibility checks failed.' }
     $taskReport = Get-Content -LiteralPath (Join-Path $taskOutput 'report.json') -Raw | ConvertFrom-Json
-    if ($taskReport.cases.Count -ne 9 -or $taskReport.productionCases.Count -ne 9 -or $taskReport.rejected.Count -ne 25 -or !$taskReport.naiveTransformDetected -or !$taskReport.canonicalAccent) {
+    if ($taskReport.cases.Count -ne 9 -or $taskReport.productionCases.Count -ne 9 -or $taskReport.signerCases.Count -ne 9 -or $taskReport.rejected.Count -ne 25 -or !$taskReport.naiveTransformDetected -or !$taskReport.canonicalAccent) {
         throw 'The feasibility report is incomplete.'
     }
     if ($taskReport.signatureNormalization.Version -ne 'png-rgba-crop-v1' -or $taskReport.signatureNormalization.Width -lt 1 -or
