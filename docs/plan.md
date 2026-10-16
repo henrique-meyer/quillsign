@@ -193,7 +193,7 @@ Validation: All 162 SQL/Azurite/Mailpit tests pass. Signer tests cover normalize
 
 ## QUILS-21: Prepare document details and completion recipients
 
-Status: To Do. Confirmed-PDF and signer foundations are complete. Field-editor navigation integration depends on QUILS-20. Owned by the overnight-development chat.
+Status: In Progress. Confirmed-PDF and signer foundations are complete. Field-editor navigation integration depends on QUILS-20. Owned by the overnight-development chat.
 
 Let the verified sender edit the title and optional message for their own confirmed PDF draft, and add/edit/remove named completion recipients (CC). Clearly distinguish recipients from sequential signers: they receive only the final packet and do not sign. Preserve stable recipient IDs. Allow overlap with sender/signers; future completion dispatch deduplicates normalized addresses. Enforce case-insensitive unique recipient emails, names/title up to 512 characters, message up to 4,000 characters, and a configurable default recipient cap of 20 (supported range 1–100).
 

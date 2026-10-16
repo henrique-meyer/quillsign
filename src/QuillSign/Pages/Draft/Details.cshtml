@@ -1,0 +1,54 @@
+@page "/draft/{publicId}/details"
+@model QuillSign.Pages.Draft.DetailsModel
+@{ ViewData["Title"] = "Document details and recipients"; }
+<p class="eyebrow">THE FINISHING DETAILS</p>
+<h1>A clear title.<br />The right people.</h1>
+<p class="intro">Name your document and add anyone who should receive the completed packet without signing.</p>
+@if (Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
+<div asp-validation-summary="All" class="validation" role="alert"></div>
+@if (Model.Conflict)
+{
+    <section class="notice" aria-labelledby="saved-details-title"><h2 id="saved-details-title">Current saved details</h2>
+        <p><strong>@Model.Draft.Title</strong></p><p class="document-message">@Model.Draft.Message</p>
+        <p>Review these saved details and the recipient list before submitting your edits again.</p>
+    </section>
+}
+<section class="start-card" aria-labelledby="details-title">
+    <h2 id="details-title">Document details</h2>
+    <form method="post" asp-page-handler="SaveDetails">
+        <input type="hidden" asp-for="Version" id="DetailsVersion" />
+        <label asp-for="Details.Title">Document title</label><input asp-for="Details.Title" maxlength="512" required />
+        <label asp-for="Details.Message">Message <span class="hint">(optional)</span></label><textarea asp-for="Details.Message" maxlength="4000" rows="5"></textarea>
+        <p class="hint">Signers will see this message when invitations are available.</p><button type="submit">Save document details</button>
+    </form>
+</section>
+<section class="signer-list" aria-labelledby="recipients-title">
+    <h2 id="recipients-title">Completion recipients (CC)</h2>
+    <p>These people receive the final PDF and certificate. They do not sign or receive signing invitations. Add up to @Model.MaximumRecipients recipients.</p>
+    @if (Model.Draft.Recipients.Count == 0) { <p>No completion recipients added. This list is optional.</p> }
+    <ul class="recipient-cards">
+    @foreach (var recipient in Model.Draft.Recipients)
+    {
+        <li class="signer-card"><strong>@recipient.Name</strong><span class="signer-email">@recipient.Email</span>
+            <div class="signer-actions"><a href="/draft/@Model.Draft.PublicId/details?editId=@recipient.Id" aria-label="Edit @recipient.Name">Edit</a>
+                <form method="post" asp-page-handler="RemoveRecipient"><input type="hidden" name="Version" value="@Model.Version" /><input type="hidden" name="RecipientId" value="@recipient.Id" />
+                    <button type="submit" class="quiet-button" aria-label="Remove @recipient.Name">Remove</button>
+                </form>
+            </div>
+        </li>
+    }
+    </ul>
+</section>
+<section class="start-card" aria-labelledby="recipient-title">
+    <h2 id="recipient-title">@(Model.Recipient.Id is null ? "Add a completion recipient" : "Edit completion recipient")</h2>
+    <form method="post" asp-page-handler="SaveRecipient">
+        <input type="hidden" asp-for="Version" id="RecipientVersion" /><input type="hidden" asp-for="Recipient.Id" />
+        <label asp-for="Recipient.Name">Recipient name</label><input asp-for="Recipient.Name" maxlength="512" required />
+        <label asp-for="Recipient.Email">Recipient email</label><input asp-for="Recipient.Email" type="email" maxlength="320" required />
+        <button type="submit">@(Model.Recipient.Id is null ? "Add completion recipient" : "Save completion recipient")</button>
+        @if (Model.Recipient.Id is not null) { <a href="/draft/@Model.Draft.PublicId/details">Cancel editing</a> }
+    </form>
+    <p class="hint">The sender and all signers already receive the completed packet. Adding their address here will not require another signature.</p>
+</section>
+<p class="hint">Your document stays a draft. Nothing is sent from this screen.</p>
+<p><a href="/draft/@Model.Draft.PublicId/signers">Back to signers</a></p>
