@@ -2,6 +2,7 @@ using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
 using QuillSign.Signing;
+using QuillSign.Sealing;
 
 namespace QuillSign.Work;
 
@@ -63,6 +64,8 @@ public static class WorkConfiguration
             services.AddScoped<QuillSign.Completion.CompletionEvidenceCollector>();
             services.AddSingleton<QuillSign.Completion.CompletionCertificateRenderer>();
             services.AddScoped<QuillSign.Completion.CompletionCandidates>();
+            services.AddPlatformPdfSeals(config);
+            services.AddScoped<QuillSign.Completion.CompletionSealOutputs>();
             services.AddScoped<IWorkHandler,SignerCheckpointHandler>();
         }
         return services;

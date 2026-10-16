@@ -11,6 +11,7 @@ public enum EmailStatus { Queued, Sent, Failed, Bounced, Complained }
 public enum WorkStatus { Queued, Leased, Completed, Failed }
 public enum WorkKind { Conversion, Ai, Rendering, Sealing, Email, Purge }
 public enum SuppressionReason { Bounce, Complaint, Unsubscribe, BlockedSender }
+public enum CompletionSealKind { Executed, Certificate }
 
 public interface IVersionedRecord { byte[] RowVersion { get; set; } }
 
@@ -199,6 +200,28 @@ public sealed class CompletionCandidate : IVersionedRecord
     public string RendererVersion { get; set; } = "";
     public string SnapshotVersion { get; set; } = "";
     public DateTimeOffset PreparedAt { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
+public sealed class CompletionSealOutput : IVersionedRecord
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid EnvelopeId { get; set; }
+    public Guid CandidateId { get; set; }
+    public CompletionSealKind Kind { get; set; }
+    public Guid SourceObjectId { get; set; }
+    public long SourceLength { get; set; }
+    public byte[] SourceSha256 { get; set; } = [];
+    public Guid PdfObjectId { get; set; }
+    public long PdfLength { get; set; }
+    public byte[] PdfSha256 { get; set; } = [];
+    public int PageCount { get; set; }
+    public byte[] EvidenceSha256 { get; set; } = [];
+    public byte[] CandidateRecipeSha256 { get; set; } = [];
+    public byte[]? ExecutedSha256 { get; set; }
+    public string MetadataJson { get; set; } = "";
+    public string RecipeVersion { get; set; } = "";
+    public byte[] RecipeSha256 { get; set; } = [];
     public byte[] RowVersion { get; set; } = [];
 }
 

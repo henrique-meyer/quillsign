@@ -10,7 +10,8 @@ using QuillSign.Storage;
 namespace QuillSign.Completion;
 
 public sealed record CompletionCandidateData(Guid Id,Guid EnvelopeId,Guid FinishId,Guid SourceObjectId,Guid PdfObjectId,
-    CompletionEvidence Evidence,PreparedCompletionPacket Packet,IReadOnlyList<PageGeometry> SourcePages);
+    CompletionEvidence Evidence,PreparedCompletionPacket Packet,IReadOnlyList<PageGeometry> SourcePages,
+    byte[] RecipeSha256,byte[] FrozenStateSha256,long AuditSequence,byte[] AuditAnchor,byte[] RowVersion);
 
 // Internal explicit preparation/read service. No public authority, worker enqueue, seal or mail.
 public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenceCollector collector,
@@ -151,7 +152,8 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
             await transaction.CommitAsync(ct);
         }
         return new(row.Id,row.EnvelopeId,row.FinishId,row.SourceObjectId,row.PdfObjectId,evidence,
-            new(bytes,row.PdfSha256.ToArray(),row.SourceSha256.ToArray(),row.EvidenceSha256.ToArray(),[],row.DocumentPages,row.CertificatePages,row.RendererVersion),geometry);
+            new(bytes,row.PdfSha256.ToArray(),row.SourceSha256.ToArray(),row.EvidenceSha256.ToArray(),[],row.DocumentPages,row.CertificatePages,row.RendererVersion),geometry,
+            row.RecipeSha256.ToArray(),row.FrozenStateSha256.ToArray(),row.AuditSequence,row.AuditAnchor.ToArray(),row.RowVersion.ToArray());
     }
 
     private async Task<byte[]> ReadPdf(CompletionCandidate row,CancellationToken ct)
