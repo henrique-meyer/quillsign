@@ -1,3 +1,6 @@
 .draft-review { overflow-wrap: anywhere; }
 .draft-review .signer-list { max-width: 590px; }
 .draft-review .notice li a { display: block; }
+.send-disclosure { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 24rem; overflow: auto; }
+.send-check { display: flex; align-items: flex-start; gap: .65rem; margin: 1rem 0; }
+.send-check input[type="checkbox"] { width: 1.1rem; min-width: 1.1rem; margin-top: .25rem; }
