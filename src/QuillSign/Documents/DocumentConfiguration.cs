@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.Features;
+using QuillSign.Signing;
 
 namespace QuillSign.Documents;
 
@@ -14,6 +15,8 @@ public static class DocumentConfiguration
         var preparation = config.GetSection("Preparation").Get<PreparationOptions>() ?? new();
         if (preparation.MaximumRecipients is < 1 or > 100) throw new InvalidOperationException("Preparation:MaximumRecipients must be between 1 and 100.");
         services.AddSingleton(preparation); services.AddScoped<DraftDetails>();
+        services.AddSingleton(sp => new SenderPdfRenderer(storageMaximum, options.MaximumPages,
+            sp.GetRequiredService<FieldEditorOptions>().MaximumFields));
         services.Configure<FormOptions>(form => { form.MultipartBodyLengthLimit = options.MaximumBytes; form.ValueCountLimit = 16; });
         return services;
     }

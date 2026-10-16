@@ -16,7 +16,13 @@
   <ItemGroup>
     <Compile Include="../../src/QuillSign/Documents/PdfValidation.cs" Link="Shared/PdfValidation.cs" />
     <Compile Include="../../src/QuillSign/Signing/FieldGeometry.cs" Link="Shared/FieldGeometry.cs" />
+    <Compile Include="../../src/QuillSign/Documents/EmbeddedPdfFont.cs" Link="Shared/EmbeddedPdfFont.cs" />
+    <Compile Include="../../src/QuillSign/Documents/SenderPdfRenderer.cs" Link="Shared/SenderPdfRenderer.cs" />
+    <EmbeddedResource Include="../../src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf" LogicalName="QuillSign.Fonts.LiberationSans-Regular.ttf" />
     <Content Include="../../src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf" Link="fonts/LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LICENSE_LIBERATION" Link="fonts/LICENSE" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../licenses/PdfPig-LICENSE.txt" Link="licenses/PdfPig-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../licenses/PdfPig-NOTICES.txt" Link="licenses/PdfPig-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../licenses/PDFsharp-MIT.txt" Link="licenses/PDFsharp-MIT.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
