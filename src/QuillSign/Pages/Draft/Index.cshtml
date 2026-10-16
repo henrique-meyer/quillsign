@@ -2,7 +2,54 @@
 @model QuillSign.Pages.Draft.IndexModel
 @{ ViewData["Title"] = "Your draft"; }
 <p class="eyebrow">YOUR DOCUMENT</p>
-<h1>Your draft<br />starts here.</h1>
-<p class="intro">Email verified for <strong>@Model.SenderEmail</strong>.</p>
-<aside aria-label="Draft status"><strong>You're ready for the next step.</strong><p>Document upload will be available soon. Signing and sending are still being developed.</p></aside>
+<h1>Make it<br />your document.</h1>
+<p class="intro">Email verified for <strong>@Model.Draft.SenderEmail</strong>.</p>
+@if (Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
+@if (Model.Error is not null) { <p class="validation document-error" role="alert">@Model.Error</p> }
+<section class="start-card" aria-labelledby="upload-title">
+    <h2 id="upload-title">@(Model.Draft.PdfBlob is null ? "Upload your PDF" : "Replace this PDF")</h2>
+    <p>One PDF, up to @(Math.Round(Model.Limits.MaximumBytes / 1048576d, 3)) MiB and @Model.Limits.MaximumPages pages. Use an unsigned, unencrypted PDF.</p>
+    @if (Model.Draft.PdfBlob is not null) { <p>Replacing it clears this preview's confirmation and any document fields.</p> }
+    <form method="post" enctype="multipart/form-data" asp-page-handler="Upload" data-pdf-upload data-maximum-bytes="@Model.Limits.MaximumBytes">
+        <input type="hidden" asp-for="Version" id="UploadVersion" />
+        <label asp-for="Upload">PDF file</label>
+        <input asp-for="Upload" type="file" accept="application/pdf,.pdf" required />
+        <p class="validation" data-upload-error hidden tabindex="-1" role="alert"></p>
+        <button type="submit">@(Model.Draft.PdfBlob is null ? "Upload PDF" : "Replace PDF")</button>
+    </form>
+</section>
+@if (Model.Draft.PdfBlob is not null)
+{
+    <section class="document-preview" aria-labelledby="preview-title">
+        <h2 id="preview-title">@Model.Draft.Title</h2>
+        <p>@Model.Draft.PageCount @(Model.Draft.PageCount == 1 ? "page" : "pages") · @(Model.Draft.PreviewConfirmedAt is null ? "Review needed" : "Preview confirmed")</p>
+        <div class="pdf-toolbar" aria-label="PDF preview controls">
+            <button type="button" id="previous-page" disabled aria-label="Previous page">Previous</button>
+            <span id="page-number" aria-live="polite">Loading…</span>
+            <button type="button" id="next-page" disabled aria-label="Next page">Next</button>
+            <label for="pdf-zoom">Zoom</label>
+            <select id="pdf-zoom"><option value="fit">Fit width</option><option value="0.5">50%</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select>
+        </div>
+        <p id="preview-status" role="status">Loading your preview…</p>
+        <div id="pdf-preview" class="pdf-preview" data-url="/draft/@Model.Draft.PublicId/document/@Model.Draft.PdfBlob" aria-label="PDF preview">
+            <div class="pdf-page"><canvas aria-hidden="true"></canvas><div class="textLayer"></div></div>
+        </div>
+        <p><a href="/draft/@Model.Draft.PublicId/document/@Model.Draft.PdfBlob" target="_blank" rel="noopener">Open or download the PDF</a></p>
+        <noscript><p>Enable JavaScript to see the interactive preview, or open the PDF using the link above.</p></noscript>
+        @if (Model.Draft.PreviewConfirmedAt is null)
+        {
+            <form method="post" asp-page-handler="Confirm" class="confirmation">
+                <input type="hidden" asp-for="Version" id="ConfirmVersion" /><input type="hidden" asp-for="DocumentId" />
+                <label class="check-label"><input asp-for="PreviewMatches" required /> This preview matches my document.</label>
+                <button type="submit">Confirm preview</button>
+            </form>
+        }
+        <p class="hint">Your document stays a draft. Confirmation does not send it or start signing.</p>
+    </section>
+}
 <p><a href="/">Start a new document</a></p>
+@section Styles { <link rel="stylesheet" href="~/vendor/pdfjs/web/pdf_viewer.css" /> }
+@section Scripts {
+    <script type="module" src="~/js/document-upload.mjs"></script>
+    <script type="module" src="~/js/pdf-preview.mjs"></script>
+}

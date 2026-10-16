@@ -6,6 +6,7 @@
     <title>@(ViewData["Title"] ?? "Demo") · QuillSign</title>
     <link rel="icon" href="~/logo.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="~/site.css" />
+    @await RenderSectionAsync("Styles", required: false)
 </head>
 <body>
     <main>
@@ -13,5 +14,6 @@
         @RenderBody()
         <footer>Demo instance · Data will be purged periodically. Software provided as-is. Operators are responsible for checking suitability for their use case and jurisdiction.</footer>
     </main>
+    @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

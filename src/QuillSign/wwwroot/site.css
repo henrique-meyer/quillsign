@@ -24,4 +24,18 @@ a:focus-visible, input:focus-visible, button:focus-visible { outline: 3px solid 
 .notice { max-width: 590px; padding: 16px 20px; background: #f3eee5; border-left: 4px solid #f26b5e; border-radius: 4px; line-height: 1.6; }
 .validation { color: #a12121; font-size: 14px; }
 .hint { font-size: 13px; margin-bottom: 0; }
+.document-preview { margin-top: 44px; }
+.document-preview h2 { overflow-wrap: anywhere; }
+.document-error { padding: 16px; border: 1px solid #a12121; border-radius: 5px; }
+.pdf-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 20px 0; }
+.pdf-toolbar button { margin: 0; padding: 10px 14px; }
+button:disabled { opacity: .55; cursor: default; }
+select { padding: 10px; font: inherit; border: 1px solid #83909a; border-radius: 5px; }
+.pdf-preview { overflow: auto; max-height: 75vh; background: #e7e4df; padding: 12px; border: 1px solid #c3c8ca; border-radius: 5px; }
+.pdf-page { position: relative; margin: 0 auto; background: white; --total-scale-factor: calc(var(--scale-factor) * var(--user-unit)); --scale-round-x: 1px; --scale-round-y: 1px; }
+.pdf-page canvas { display: block; }
+.confirmation { margin: 28px 0 12px; }
+.check-label { display: flex; align-items: flex-start; gap: 12px; line-height: 1.5; }
+.check-label input { width: 20px; height: 20px; flex: 0 0 20px; margin: 2px 0 0; }
+select:focus-visible { outline: 3px solid #172d40; outline-offset: 3px; }
 @media (max-width: 520px) { main { padding: 28px 22px; } .eyebrow { margin-top: 52px; } h1 { letter-spacing: -2px; } }

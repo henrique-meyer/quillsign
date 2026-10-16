@@ -4,6 +4,8 @@ COPY src/QuillSign/QuillSign.csproj src/QuillSign/
 RUN dotnet restore src/QuillSign/QuillSign.csproj
 COPY src/ src/
 COPY assets/ assets/
+COPY licenses/ licenses/
+COPY THIRD-PARTY-NOTICES.txt ./THIRD-PARTY-NOTICES.txt
 RUN dotnet publish src/QuillSign/QuillSign.csproj -c Release --no-restore -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime

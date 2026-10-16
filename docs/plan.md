@@ -143,9 +143,13 @@ Validation: All 131 SQL/Azurite/Mailpit tests pass, including concurrent address
 
 ## QUILS-16: Build verified-sender PDF upload and preview confirmation
 
-Status: To Do. Depends on QUILS-9, QUILS-12, and QUILS-15. Hosted rollout also requires QUILS-10.
+Status: Implementation complete. Depends on completed QUILS-9, QUILS-12, and QUILS-15. Hosted SQL is connected; public email delivery remains gated on SES readiness.
 
 Let the verified sender upload/read/replace one PDF in their own draft, preview it with PDF.js, and explicitly confirm it. Enforce content sniffing, configurable byte/page limits, bounded streaming, safe filenames, and access isolation. Reject malformed, encrypted, XFA, and already-signed PDFs; this slice excludes images and Office conversion. Record original/normalized hashes, page dimensions/count, and upload/confirmation audit events. Replacement clears obsolete confirmation/incompatible draft state; failures must not leave falsely completed records. Confirming the preview does not send or freeze a signing copy. Exercise the responsive/accessible browser flow, restarts, isolation, invalid/oversize inputs, and storage failures using synthetic fixtures.
+
+Implementation defaults: 10 MiB and 20 pages, configurable within the storage limit. Pin MIT-licensed PDFsharp 6.2.4 (later releases changed license) for validation and PDF rewriting; serve a pinned local PDF.js distribution for preview with page navigation, zoom, selectable text, and a download fallback. Bind preview/read/confirmation to the current document version, and use SQL concurrency checks so stale confirmations or competing replacements cannot overwrite newer state. Commit document references and audit events only after both private blobs exist; handle failed writes and replacement cleanup without deleting a committed document. Clear obsolete field/suggestion/confirmation state when replacing. No new cloud resources, Office conversion, sealing, or public email enablement.
+
+Validation: All 156 tests passed, covering PDF parsing/rejection, encrypted and signed input, crop/rotation/user units, hashes, bounded streams, concurrent replacements, stale confirmation, scoped access, actual Razor upload/read/confirmation with antiforgery, and storage/database failures including uncertain commits. Desktop and 390-pixel browser checks exercised Mailpit verification, PDF.js page navigation/zoom/selectable text, confirmation, replacement, invalid/oversize input, notices, and restart persistence. Release build, dependency audit, model/migration check, vendor hash verification, and secret scans passed. PDF attribution is included in the published app; public email remains disabled.
 
 ## QUILS-11: Change the project license to AGPL-3.0-or-later
 
@@ -164,6 +168,16 @@ Create tracked `docs/e-signature-requirements.md` with a README link. Cover US E
 Validate source provisions, consumer access/withdrawal/change disclosures, retained copies and delivery-failure handling, an unchecked release checklist, Markdown links, whitespace, and secret scans. Commit, push, open and merge a small QUILS-17 PR, then move Jira to Done in the same pass.
 
 Validation: Primary legal/technical sources were reviewed and linked with pinpoint provisions and a review date. Local links and source references resolve, all 15 release criteria remain unchecked, whitespace checks pass, and Gitleaks reports no documentation secrets. The guide distinguishes legal duties from product controls and planned behavior from compliance claims. No application or cloud configuration changed.
+
+## QUILS-18: Validate completion PDF sealing and timestamp feasibility
+
+Status: Implementation complete. Independent feasibility spike; QUILS-16 continues separately.
+
+Add a standalone .NET 10 developer harness using MIT-licensed PDFsharp 6.2.4 and permissive BouncyCastle. Generate synthetic PDFs and ephemeral certificates only. Exercise one completion signature, inspect ByteRange/SubFilter/CMS attributes and an RFC 3161 timestamp, and independently verify integrity and timestamp binding. Include deterministic offline TSA simulation and altered/truncated/failed-TSA cases so CI needs no external services or credentials. Keep the harness separate from production APIs, certificate providers, storage, and signing workflow.
+
+Document reproducible commands, precise format/trust findings, sizing/round-trip behavior, independent validation evidence and limits, and completion integration decisions. Do not claim Acrobat/DSS or PAdES conformance without observed results. Generated PDFs and keys remain ignored or outside git. Pass meaningful Windows/Linux checks and secret scans, commit/push/merge a small QUILS-18 PR, and move Jira Done. No cloud resources or live email.
+
+Validation: The Windows offline harness passes CMS/timestamp verification in .NET, BouncyCastle, and OpenSSL, rejecting changed/truncated/appended content, unexpected certificates, and HTTP/malformed/imprint/nonce TSA failures. It confirms two initial TSA calls and one on signer reuse. The built-in signer's unsigned signing-time is rejected by BouncyCastle; the custom prototype fixes attribute placement and adds signed certificate binding. [Findings and commands](pdf-seal-feasibility.md) document the observed `adbe.pkcs7.detached` container and pending Acrobat/DSS/public-trust/PAdES integration gates. Dedicated Windows/Linux CI repeats the harness. No runtime or cloud configuration changed.
 
 ## QUILS-19: Build signer setup and sequential ordering for confirmed drafts
 
