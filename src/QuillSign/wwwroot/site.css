@@ -23,6 +23,7 @@ a { color: #96342d; }
 a:focus-visible, input:focus-visible, button:focus-visible { outline: 3px solid #172d40; outline-offset: 3px; }
 .notice { max-width: 590px; padding: 16px 20px; background: #f3eee5; border-left: 4px solid #f26b5e; border-radius: 4px; line-height: 1.6; }
 .validation { color: #a12121; font-size: 14px; }
+.validation-summary-valid { display: none; }
 .hint { font-size: 13px; margin-bottom: 0; }
 .document-preview { margin-top: 44px; }
 .document-preview h2 { overflow-wrap: anywhere; }
@@ -39,3 +40,11 @@ select { padding: 10px; font: inherit; border: 1px solid #83909a; border-radius:
 .check-label input { width: 20px; height: 20px; flex: 0 0 20px; margin: 2px 0 0; }
 select:focus-visible { outline: 3px solid #172d40; outline-offset: 3px; }
 @media (max-width: 520px) { main { padding: 28px 22px; } .eyebrow { margin-top: 52px; } h1 { letter-spacing: -2px; } }
+.signer-cards { padding-left: 1.7rem; }
+.signer-card { padding: 1rem; margin: .8rem 0; border: 1px solid var(--line, #d9d5cd); border-radius: .75rem; background: #fffdf7; }
+.signer-email, .signer-role { display: block; overflow-wrap: anywhere; margin-top: .3rem; }
+.signer-actions, .signer-actions form { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; }
+.signer-actions { margin-top: .8rem; }
+.signer-actions button { padding: .55rem .75rem; margin: 0; }
+.quiet-button { background: transparent; color: #172d45; border: 1px solid currentColor; }
+.button-link { display: inline-block; padding: .75rem 1rem; border-radius: .6rem; background: #f26b5e; color: #172d45; font-weight: 700; }

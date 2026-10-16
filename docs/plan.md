@@ -179,6 +179,18 @@ Document reproducible commands, precise format/trust findings, sizing/round-trip
 
 Validation: The Windows offline harness passes CMS/timestamp verification in .NET, BouncyCastle, and OpenSSL, rejecting changed/truncated/appended content, unexpected certificates, and HTTP/malformed/imprint/nonce TSA failures. It confirms two initial TSA calls and one on signer reuse. The built-in signer's unsigned signing-time is rejected by BouncyCastle; the custom prototype fixes attribute placement and adds signed certificate binding. [Findings and commands](pdf-seal-feasibility.md) document the observed `adbe.pkcs7.detached` container and pending Acrobat/DSS/public-trust/PAdES integration gates. Dedicated Windows/Linux CI repeats the harness. No runtime or cloud configuration changed.
 
+## QUILS-19: Build signer setup and sequential ordering for confirmed drafts
+
+Status: Implementation complete. Depends on completed QUILS-16 and the sender/persistence foundation. Owned by the overnight-development chat.
+
+Let the verified sender manage the ordered signer list for their own confirmed PDF draft. Provide accessible responsive Razor Pages to add/edit/remove signers, enter full name/email/optional role, add the verified sender, and reorder with keyboard-accessible controls. Require the current PDF confirmation, sender/envelope ownership, and draft status. Enforce server validation, normalized case-insensitive unique emails, and a configurable maximum of 10 signers by default. Use antiforgery and clean redirect/one-time browser notices.
+
+Persist consecutive sequential order atomically, with concurrency protection against competing edits and cross-envelope IDs. Audit list changes through the existing canonical chain. Reject destructive changes that would silently reassign existing fields. Preserve form input on validation errors. This slice does not send invitations, accept signatures/consent, freeze signing content, place fields, or call AI.
+
+Test ownership, validation, duplicates/caps, reorder concurrency/rollback, field references, audit events, and actual desktop/mobile/keyboard flow from PDF confirmation to signer setup using synthetic fixtures. Pass appropriate checks/secret scans, commit/push/open/attach/merge a small QUILS-19 PR, and move Done after merge. No cloud changes or live email.
+
+Validation: All 162 SQL/Azurite/Mailpit tests pass. Signer tests cover normalized email, consecutive ordering, ownership/state/confirmation gates, stale and competing mutations, caps, assigned-field protection, audit hashes, and rollback after the temporary order phase. The actual local verification/upload/confirmation-to-signer flow passes on desktop and at 390-pixel phone width, including keyboard submission/removal, add-self prefill, editing, reordering, duplicate errors with retained input, clean redirects, and one-time notices. Build and dependency checks pass. Field placement and invitations remain later work; no cloud configuration or live email changed.
+
 ## QUILS-20: Build the manual PDF field editor with signer assignment and sender prefill
 
 Status: To Do. Independent geometry/field-contract work can use the existing schema; final integration, browser validation, and merge depend on completed QUILS-19. Owned by the overnight-development chat.
