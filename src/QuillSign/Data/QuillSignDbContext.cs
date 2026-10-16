@@ -22,6 +22,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<Envelope>().HasIndex(x => x.PublicId).IsUnique();
         model.Entity<Envelope>().HasIndex(x => x.PurgeAfter);
         model.Entity<Envelope>().ToTable(t => t.HasCheckConstraint("CK_Envelope_PageCount", "[PageCount] IS NULL OR [PageCount] > 0"));
+        model.Entity<Envelope>().ToTable(t => t.HasCheckConstraint("CK_Envelope_ErsdText", "[ErsdText] IS NULL OR DATALENGTH([ErsdText]) <= 65536"));
 
         model.Entity<Signer>().HasIndex(x => new { x.EnvelopeId, x.Email }).IsUnique();
         model.Entity<Signer>().HasIndex(x => new { x.EnvelopeId, x.Order }).IsUnique();
@@ -70,6 +71,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
                         builder.HasColumnType("nvarchar(max)");
                         entity.ToTable(t => t.HasCheckConstraint($"CK_{type.ClrType.Name}_{name}", $"[{name}] IS NULL OR ISJSON([{name}]) = 1"));
                     }
+                    else if (name == "ErsdText") builder.HasColumnType("nvarchar(max)").HasMaxLength(32768);
                     else builder.HasMaxLength(name == "PublicId" ? 64 : name.Contains("Email") || name == "To" ? 320 : name is "Value" or "Message" or "LastError" ? 4000 : name.Contains("Ua") || name == "UserAgent" ? 2048 : name.EndsWith("Ip") || name == "Ip" ? 45 : 512);
                 }
                 var enumType = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
