@@ -44,6 +44,14 @@ Integrity metadata: src/QuillSign/Build/signature-pad.manifest.json.
 These notices describe the bundled browser/PDF components. Other .NET dependencies
 retain the licenses recorded in their NuGet packages; QuillSign's own license is in LICENSE.
 
+Azure.Security.KeyVault.Certificates 4.9.2 and Azure.Security.KeyVault.Secrets 4.11.2 — MIT
+Copyright (c) 2015 Microsoft
+Source: https://github.com/Azure/azure-sdk-for-net
+The identical unmodified LICENSE.txt from the package source commits is retained
+and distributed as licenses/Azure-SDK-MIT.txt. Source commits:
+https://github.com/Azure/azure-sdk-for-net/tree/6bf28f594f509bdc67b27b9776baf79d7499b0d3
+https://github.com/Azure/azure-sdk-for-net/tree/812a58bac46715e35f65e0bda1b017ff2c98ce41
+
 PdfPig 0.1.16 — Apache-2.0, with permissive external-component notices
 Source: https://github.com/UglyToad/PdfPig/tree/a7bb35662bbbf405efddad50aedc9bcdcf515afc
 The unmodified upstream LICENSE and NOTICES.txt at the NuGet package's source commit

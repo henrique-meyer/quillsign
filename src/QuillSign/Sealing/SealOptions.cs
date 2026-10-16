@@ -11,6 +11,9 @@ public sealed class SealOptions
     public int TsaMaximumClockSkewSeconds { get; set; } = 120;
     public string[] TsaTrustedRootPaths { get; set; } = [];
     public PfxSealOptions Pfx { get; set; } = new();
+    public string Provider { get; set; }="Auto";
+    public KeyVaultSealOptions KeyVault { get; set; }=new();
+    public SelfSignedSealOptions SelfSigned { get; set; }=new();
     internal Uri Validate(bool development)
     {
         if(MaximumBytes is <1024 or >64*1024*1024 || MaximumPages is <1 or >200 || SignatureCapacityBytes is <32*1024 or >256*1024 ||
@@ -33,7 +36,19 @@ public static class SealConfiguration
     public static IServiceCollection AddPlatformPdfSeals(this IServiceCollection services,IConfiguration config)
     {
         services.AddSingleton(config.GetSection("Seal").Get<SealOptions>() ?? new());
-        services.AddSingleton<ISealCertificateProvider,PfxSealCertificateProvider>();
+        services.AddSingleton<PfxSealCertificateProvider>(); services.AddSingleton<KeyVaultSealCertificateProvider>(); services.AddSingleton<SelfSignedSealCertificateProvider>();
+        services.AddSingleton<Func<PfxSealCertificateProvider>>(sp=>()=>sp.GetRequiredService<PfxSealCertificateProvider>());
+        services.AddSingleton<Func<KeyVaultSealCertificateProvider>>(sp=>()=>sp.GetRequiredService<KeyVaultSealCertificateProvider>());
+        services.AddSingleton<Func<SelfSignedSealCertificateProvider>>(sp=>()=>sp.GetRequiredService<SelfSignedSealCertificateProvider>());
+        services.AddSingleton<ISealCertificateProvider,SelectedSealCertificateProvider>();
+        services.AddSingleton<IKeyVaultSealClients,ManagedIdentitySealClients>(); services.AddSingleton<IKeyVaultSealSource,SdkKeyVaultSealSource>();
+        services.AddSingleton<IProtectedSealStore>(sp=> {
+            var provider=config["Storage:Provider"];
+            if(provider is not ("Azure" or "Azurite") || sp.GetService<Azure.Storage.Blobs.BlobServiceClient>() is not { } client)
+                throw new SealUnavailableException("Configure persistent protected storage for the demo seal identity.");
+            return new BlobProtectedSealStore(client,provider=="Azurite",sp.GetRequiredService<SealOptions>().SelfSigned.BlobName);
+        });
+        services.AddSingleton<Func<IProtectedSealStore>>(sp=>()=>sp.GetRequiredService<IProtectedSealStore>());
         services.AddSingleton<TimestampAuthority>(); services.AddSingleton<PlatformPdfSeal>(); return services;
     }
 }

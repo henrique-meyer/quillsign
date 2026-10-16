@@ -140,7 +140,7 @@ PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.
 
 The standalone [PDF field feasibility harness](docs/pdf-field-feasibility.md) checks stamping geometry, embedded text, checkboxes and image marks with independent rendering and text extraction. Run `pwsh -File scripts/dev/Test-PdfFieldSpike.ps1`; generated fixtures stay ignored. The harness does not enable production stamping or signing.
 
-The internal [timestamped platform seal engine](docs/platform-pdf-seals.md) validates an exact prepared source, applies one detached CMS seal and verifies its RFC 3161 timestamp and complete output. PFX/TSA configuration is private and empty by default. Generated local tests run independently with OpenSSL on Windows and Linux; completion pages, final publication and delivery remain separate work.
+The internal [timestamped platform seal engine](docs/platform-pdf-seals.md) validates an exact prepared source, applies one detached CMS seal and verifies its RFC 3161 timestamp and complete output. Certificate providers support configured PFX, managed-identity Key Vault backing material and a persistent encrypted demo identity. Provider/TSA values remain private, and configured failures never silently replace an identity. Generated local tests run independently with OpenSSL on Windows and Linux; completion pages, final publication and delivery remain separate work.
 
 The backend [sender-prefill renderer](docs/sender-pdf-rendering.md) now shares these independent geometry checks. It validates source bytes and sender text/date/checkbox fields, embeds the pinned font, and returns bounded output and hashes. It has no endpoint and does not yet freeze, send or sign drafts.
 
