@@ -1,0 +1,8 @@
+.signer-flow { overflow-wrap: anywhere; }
+.signer-flow h1 { font-size: clamp(2rem, 6vw, 3rem); letter-spacing: -1px; }
+.signer-flow h2 { margin-top: 2rem; }
+.disclosure { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; padding: 1.2rem; background: white; border: 1px solid #c3c8ca; border-radius: 5px; }
+.signer-flow fieldset { min-width: 0; padding: 1rem; border: 1px solid #83909a; }
+.signer-flow fieldset label { margin-top: .75rem; }
+.signer-flow .check-label { font-weight: 500; }
+.signer-flow .pdf-toolbar { gap: .6rem; }

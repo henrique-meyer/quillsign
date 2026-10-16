@@ -69,7 +69,7 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
 }
 
 public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options, EmailPayloadProtection protection,
-    VerificationEmailTemplate template, IEmailSender sender, TimeProvider time) : IWorkHandler
+    VerificationEmailTemplate template, IEmailSender sender, TimeProvider time,DeclinePayloadProtection? declines = null) : IWorkHandler
 {
     public WorkKind Kind => WorkKind.Email;
 
@@ -77,19 +77,28 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
     {
         if (!options.Enabled) return new(WorkOutcome.Retry, "delivery-disabled");
         var email = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id, cancellationToken);
-        if (email.Template != "sender-verification") return new(WorkOutcome.Failed, "unsupported-template");
+        if (email.Template is not ("sender-verification" or "signer-declined")) return new(WorkOutcome.Failed, "unsupported-template");
+        var isDecline = email.Template == "signer-declined";
         VerificationPayload payload;
         OutgoingEmail outgoing;
         try
         {
-            payload = protection.Unprotect(email.PayloadJson);
-            outgoing = (await template.RenderAsync(email.To, payload.Token, cancellationToken)) with { EnvelopeId = email.EnvelopeId };
+            if (isDecline)
+            {
+                payload = new("",Guid.Empty);
+                outgoing = DeclinePayloadProtection.Render(email.To,email.EnvelopeId,(declines ?? throw new InvalidOperationException("Missing decline template.")).Read(email.PayloadJson));
+            }
+            else
+            {
+                payload = protection.Unprotect(email.PayloadJson);
+                outgoing = (await template.RenderAsync(email.To, payload.Token, cancellationToken)) with { EnvelopeId = email.EnvelopeId };
+            }
         }
         catch (CryptographicException)
         { return new(WorkOutcome.Retry, "payload-unavailable"); }
         catch (Exception e) when (e is JsonException or ArgumentException or InvalidOperationException)
         { return new(WorkOutcome.Failed, "invalid-payload"); }
-        if (email.EnvelopeId is null || payload.TokenId == Guid.Empty) return new(WorkOutcome.Failed, "invalid-token-scope");
+        if (email.EnvelopeId is null || (!isDecline && payload.TokenId == Guid.Empty)) return new(WorkOutcome.Failed, "invalid-token-scope");
         if (await db.Suppressions.AnyAsync(x => x.Email == email.To, cancellationToken)) return new(WorkOutcome.Failed, "recipient-suppressed");
         var at = time.GetUtcNow();
         await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
@@ -103,19 +112,22 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
             var changed = await db.EmailOutbox.Where(x => x.Id == lease.Id && x.Status == EmailStatus.Queued && x.SubmissionStartedAt == null)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.SubmissionStartedAt, at).SetProperty(x => x.Attempts, lease.Attempt), cancellationToken);
             if (changed != 1) throw new InvalidOperationException("Email submission is no longer available.");
-            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload.Token));
-            var token = await db.AuthTokens.AsNoTracking().SingleOrDefaultAsync(x => x.Id == payload.TokenId, cancellationToken);
-            if (token is null)
+            if (!isDecline)
             {
-                db.AuthTokens.Add(new() { Id = payload.TokenId, TokenSha256 = hash, Purpose = TokenPurpose.SenderVerify,
-                    EnvelopeId = email.EnvelopeId, Email = email.To, PartyType = PartyType.Sender, ExpiresAt = at.AddMinutes(15) });
-                await db.SaveChangesAsync(cancellationToken);
-            }
-            else
-            {
-                if (token.UsedAt is not null || token.EnvelopeId != email.EnvelopeId || token.Email != email.To || token.Purpose != TokenPurpose.SenderVerify ||
-                    !CryptographicOperations.FixedTimeEquals(token.TokenSha256, hash)) throw new InvalidOperationException("Token scope is no longer available.");
-                await db.AuthTokens.Where(x => x.Id == token.Id).ExecuteUpdateAsync(set => set.SetProperty(x => x.ExpiresAt, at.AddMinutes(15)), cancellationToken);
+                var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload.Token));
+                var token = await db.AuthTokens.AsNoTracking().SingleOrDefaultAsync(x => x.Id == payload.TokenId, cancellationToken);
+                if (token is null)
+                {
+                    db.AuthTokens.Add(new() { Id = payload.TokenId, TokenSha256 = hash, Purpose = TokenPurpose.SenderVerify,
+                        EnvelopeId = email.EnvelopeId, Email = email.To, PartyType = PartyType.Sender, ExpiresAt = at.AddMinutes(15) });
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                else
+                {
+                    if (token.UsedAt is not null || token.EnvelopeId != email.EnvelopeId || token.Email != email.To || token.Purpose != TokenPurpose.SenderVerify ||
+                        !CryptographicOperations.FixedTimeEquals(token.TokenSha256, hash)) throw new InvalidOperationException("Token scope is no longer available.");
+                    await db.AuthTokens.Where(x => x.Id == token.Id).ExecuteUpdateAsync(set => set.SetProperty(x => x.ExpiresAt, at.AddMinutes(15)), cancellationToken);
+                }
             }
             await transaction.CommitAsync(cancellationToken);
         }

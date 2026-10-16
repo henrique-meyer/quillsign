@@ -10,8 +10,9 @@ public static class WorkCommands
 {
     public static async Task<int> RunAsync(string[] args)
     {
-        if (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify"))
-        { Console.Error.WriteLine("Usage: work once|recover|listen|verify"); return 2; }
+        var republish = args.Length == 2 && args[0] == "publish-notification" && Guid.TryParseExact(args[1],"N",out _);
+        if (!republish && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
+        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work publish-notification <32-character-item-id>"); return 2; }
         try
         {
             var builder = WebApplication.CreateBuilder();
@@ -32,7 +33,13 @@ public static class WorkCommands
             Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; timeout.Cancel(); };
             var signals = app.Services.GetRequiredService<IWorkSignals>();
             var count = 0;
-            if (args[0] == "recover") count = await signals.RecoverAsync(DateTimeOffset.UtcNow, timeout.Token);
+            if (republish)
+            {
+                await using var scope = app.Services.CreateAsyncScope();
+                var writer = scope.ServiceProvider.GetRequiredService<DeclineNotificationWriter>();
+                count = await writer.RepublishAsync(Guid.ParseExact(args[1],"N"),timeout.Token) ? 1 : 0;
+            }
+            else if (args[0] == "recover") count = await signals.RecoverAsync(DateTimeOffset.UtcNow, timeout.Token);
             else if (args[0] == "verify")
             {
                 await using var scope = app.Services.CreateAsyncScope();

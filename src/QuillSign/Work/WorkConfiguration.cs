@@ -13,6 +13,7 @@ public static class WorkConfiguration
             options.VisibilitySeconds < options.LeaseSeconds + 60 || options.VisibilitySeconds > 7200)
             throw new InvalidOperationException("Invalid work retry/lease configuration.");
         services.AddSingleton(options);
+        services.AddScoped<Func<IWorkSignals>>(sp => () => sp.GetRequiredService<IWorkSignals>());
         services.AddSingleton(TimeProvider.System);
         if (options.Enabled)
         {
@@ -48,6 +49,8 @@ public static class WorkConfiguration
         else services.AddSingleton<IWorkSignals>(_ => throw new InvalidOperationException("Durable work is disabled."));
         if (registerHandlers)
         {
+            services.AddScoped<DeclinePayloadProtection>();
+            services.AddScoped<DeclineNotificationWriter>();
             services.AddScoped<WorkStore>();
             services.AddScoped<WorkProcessor>();
             services.AddScoped<EmailPayloadProtection>();

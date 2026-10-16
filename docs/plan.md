@@ -283,7 +283,7 @@ Validation: All 262 application tests pass. New coverage verifies four concurren
 
 ## QUILS-27: Build signer disclosure consent, frozen PDF review and decline flow
 
-Status: To Do. Depends on merged QUILS-25 and QUILS-26. Owned by the overnight-development chat.
+Status: Implementation complete. Depends on merged QUILS-25 and QUILS-26. Owned by the overnight-development chat.
 
 Add a safe invitation landing with non-consuming GET, rate-limited antiforgery POST redemption, committed signer cookie and clean redirect. Use generic invalid/expired responses, no-store/no-referrer and safe notices; keep tokens out of logs. Every signer page, disclosure and frozen-PDF read revalidates current sequential scope. Display encoded exact stored ERSD and title/contact, retainable downloads and local PDF.js preview/navigation/zoom with accessible fallback. Bound/stage and verify PDF bytes before successful responses and show failures honestly.
 
@@ -292,3 +292,7 @@ Issue a short-lived protected access receipt bound to signer/session/PDF/ERSD af
 Offer Decline with optional bounded reason before consent/signing. Atomically decline signer/envelope, audit actor/reason, prepare durable sender notification and publish work after commit. Add the needed notification dispatch/template with retry/idempotence and no SQL polling. End other sessions through current-state checks, show truthful confirmation and stored paper/contact instructions, and preserve the distinction between decline and the broader withdrawal procedure.
 
 Test actual Razor HTTP scopes/CSRF/prefetch/rate limits, PDF/ERSD hash/storage failures, receipt/affirmative boundaries, concurrent/idempotent consent, decline/audit/outbox rollback/retry and unchanged fields/PDF. Exercise desktop, 390-pixel phone and keyboard browser flows using clearly synthetic non-agreement fixtures and Mailpit. Pass required checks/scans, commit/push/open/attach/merge a small QUILS-27 PR, then move Done. Do not fabricate operator policies or enable live mail, deployed settings or cloud resources.
+
+Decline remains available with work/email disabled: retain its queued notification and use an explicit operator command to republish a specific item after approved configuration is available, without idle SQL scanning. Recheck frozen PDF availability on consent POST. Optional decline reasons use the existing 512-character schema bound.
+
+Validation: 289 application tests pass, including actual Razor CSRF/private scopes/rate limiting, exact downloads, missing/malformed/oversized/hash-mismatched PDF storage, failure between page load and consent, receipt/affirmation boundaries, concurrent consent, audit/outbox rollback and retry, disabled-work preservation and explicit recovery, commit-before-publication, no-token decline dispatch, duplicate wakeups and local Mailpit delivery. Desktop and 390-pixel keyboard/browser flows verify paging, 200%/fit zoom, downloads, consent, decline and missing-PDF errors. No signature, field/PDF mutation, live email, deployed configuration or cloud changes.
