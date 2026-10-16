@@ -26,4 +26,4 @@ Candidate objects use a separate `completion-candidates` path beneath their enve
 
 PDFs remain bounded to 64 MiB and 200 total pages, including at most 64 certificate pages. Evidence retains existing renderer limits and has a 32 MiB UTF-8 serialized ceiling, with SQL text-size checks before materialization; source geometry is bounded separately. Counts, hashes, versions and same-envelope references fail closed. Original, sent and accepted checkpoint bytes stay unchanged.
 
-Final sealing/publication must use this committed candidate's exact packet and snapshot, verify its eligibility at publication and durably recover both sealed outputs. Final attachments, download authority, delivery and the Completed state remain dependent work.
+[Resumable sealing](completion-seals.md) uses this committed candidate's exact packet and snapshot and durably recovers both private sealed outputs. Final publication must verify eligibility and account for its own state transition. Final attachments, download authority, delivery and the Completed state remain dependent work.

@@ -15,13 +15,19 @@ public sealed class AzureBlobStore(BlobServiceClient service, long maximumBytes,
     private BlobContainerClient Container(DocumentBlobKind kind) => service.GetBlobContainerClient(kind switch
     {
         DocumentBlobKind.Original => "originals",
-        DocumentBlobKind.Normalized or DocumentBlobKind.Signature or DocumentBlobKind.Initials or DocumentBlobKind.CompletionCandidate => "normalized",
+        DocumentBlobKind.Normalized or DocumentBlobKind.Signature or DocumentBlobKind.Initials or DocumentBlobKind.CompletionCandidate or
+            DocumentBlobKind.CompletionExecutedSeal or DocumentBlobKind.CompletionCertificateSource or DocumentBlobKind.CompletionCertificateSeal => "normalized",
         DocumentBlobKind.Preview => "previews",
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     });
 
-    private static string Path(DocumentBlob blob) => blob.Kind==DocumentBlobKind.CompletionCandidate
-        ? $"{blob.EnvelopeId:N}/completion-candidates/{blob.ObjectId:N}" : $"{blob.EnvelopeId:N}/{blob.ObjectId:N}";
+    private static string Path(DocumentBlob blob) => blob.Kind switch {
+        DocumentBlobKind.CompletionCandidate=>$"{blob.EnvelopeId:N}/completion-candidates/{blob.ObjectId:N}",
+        DocumentBlobKind.CompletionExecutedSeal=>$"{blob.EnvelopeId:N}/completion-seals/executed/{blob.ObjectId:N}",
+        DocumentBlobKind.CompletionCertificateSource=>$"{blob.EnvelopeId:N}/completion-seals/certificate-source/{blob.ObjectId:N}",
+        DocumentBlobKind.CompletionCertificateSeal=>$"{blob.EnvelopeId:N}/completion-seals/certificate/{blob.ObjectId:N}",
+        _=>$"{blob.EnvelopeId:N}/{blob.ObjectId:N}"
+    };
 
     public async Task WriteAsync(ClaimsPrincipal sender, DocumentBlob blob, Stream source, long length,
         CancellationToken cancellationToken = default)
