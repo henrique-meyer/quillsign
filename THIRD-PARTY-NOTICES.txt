@@ -4,6 +4,12 @@ MIT license: licenses/PDFsharp-MIT.txt
 Source: https://github.com/empira/PDFsharp/tree/v6.2.4
 This version is pinned to retain its permissive license. Later releases use different licensing.
 
+BouncyCastle.Cryptography 2.7.0 — MIT
+Copyright (c) 2000-2026 The Legion of the Bouncy Castle Inc.
+Source: https://github.com/bcgit/bc-csharp
+The NuGet package's unmodified LICENSE.md is distributed as licenses/BouncyCastle-LICENSE.md.
+This pins the already-used MailKit dependency for independent seal/timestamp verification.
+
 PDF.js / pdfjs-dist 6.4.299
 Copyright Mozilla Foundation and contributors.
 Apache-2.0 license: src/QuillSign/wwwroot/vendor/pdfjs/LICENSE

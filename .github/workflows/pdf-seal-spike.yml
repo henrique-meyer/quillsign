@@ -1,4 +1,4 @@
-name: PDF seal feasibility
+name: PDF seal validation
 
 on:
   pull_request:
@@ -6,12 +6,24 @@ on:
       - 'tools/PdfSealSpike/**'
       - 'scripts/dev/Test-PdfSealSpike.ps1'
       - 'docs/pdf-seal-feasibility.md'
+      - 'src/QuillSign/Sealing/**'
+      - 'src/QuillSign/QuillSign.csproj'
+      - 'tests/QuillSign.Tests/PlatformPdfSealTests.cs'
+      - 'tests/QuillSign.Tests/SealFixtures.cs'
+      - 'scripts/dev/Test-PlatformPdfSeal.ps1'
+      - 'docs/platform-pdf-seals.md'
       - '.github/workflows/pdf-seal-spike.yml'
   push:
     paths:
       - 'tools/PdfSealSpike/**'
       - 'scripts/dev/Test-PdfSealSpike.ps1'
       - 'docs/pdf-seal-feasibility.md'
+      - 'src/QuillSign/Sealing/**'
+      - 'src/QuillSign/QuillSign.csproj'
+      - 'tests/QuillSign.Tests/PlatformPdfSealTests.cs'
+      - 'tests/QuillSign.Tests/SealFixtures.cs'
+      - 'scripts/dev/Test-PlatformPdfSeal.ps1'
+      - 'docs/platform-pdf-seals.md'
       - '.github/workflows/pdf-seal-spike.yml'
 
 permissions:
@@ -36,3 +48,9 @@ jobs:
         run: ./scripts/dev/Test-PdfSealSpike.ps1
       - name: Check dependency vulnerabilities
         run: dotnet list tools/PdfSealSpike/PdfSealSpike.csproj package --vulnerable --include-transitive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify production seals independently with generated local certificates
+        shell: pwsh
+        run: ./scripts/dev/Test-PlatformPdfSeal.ps1

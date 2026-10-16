@@ -469,7 +469,7 @@ Validation: All 724 .NET tests and 11 Node tests pass. Twenty-six new TestServer
 
 ## QUILS-39: Expose reviewed Send and private sender confirmation
 
-Status: Done on merge of PR #42. Depends on merged QUILS-28 and QUILS-38. Owned by this chat.
+Status: Done (PR #42). Depends on merged QUILS-28 and QUILS-38. Owned by this chat.
 
 Expose the agreed v1 sender Send action and a private in-session confirmation/status screen, using the merged QUILS-28 atomic send/freeze backend and QUILS-38 signer flow. This is a small public sender UI slice; final sealing/completion delivery and sender confirmation email/status magic links remain subsequent slices. Do not fabricate actual operator disclosure policies, enable live email, create/change cloud resources or incur purchases.
 
@@ -487,7 +487,7 @@ Validation: All 752 .NET tests and 11 Node tests pass. Twenty-eight new cases co
 
 ## QUILS-40: Add the internal timestamped platform PDF seal engine
 
-Status: In Progress. Depends on merged QUILS-18. Owned by this chat.
+Status: Done upon merge of this change. Depends on merged QUILS-18. Owned by this chat.
 
 Implement the internal production PDF seal engine from merged QUILS-18 feasibility, pinned to PDFsharp 6.2.4 (MIT), as a small prerequisite for final completion. This slice signs an already prepared, hash-verified PDF once and returns bounded sealed bytes plus verified seal/timestamp metadata. It does not prepare completion certificates, mutate envelope state, persist final blobs, queue unsupported jobs, expose public sealing/verification endpoints or send mail.
 
@@ -498,3 +498,5 @@ Require an explicitly configured timestamp service and never fall back to an unt
 Use a per-operation PDFsharp custom signer with bounded signature reservation so sizing does not contact a live TSA. Produce one detached CMS platform signature with SHA-256 and an RFC 3161 signature timestamp. Validate the resulting complete PDF ByteRange, detached CMS signature/digest, certificate binding and embedded timestamp before returning it; reject malformed, already signed, hash-mismatched, encrypted or oversized input and incomplete/trailing-uncovered output. Keep source bytes unchanged and record the actual output hash separately. Do not turn signer marks into signer-held cryptographic signatures.
 
 Test meaningful production sealing and independent validation using generated local certificates/TSA only: correct exact source and page preservation, detached signature/timestamp, tampering/ByteRange/trailing data, invalid PFX/key/usage/validity, nonce/imprint/EKU/chain/time failures, network limits/cancellation/redirects and missing configuration. Render synthetic output to verify its existing contents/geometry remain correct. Reuse existing permissive dependencies where available; add only a pinned permissive dependency if necessary. Keep secrets, certificates/private keys, TSA/operator values and test artifacts ignored. Run relevant full tests/model/vendor/license/secret checks, commit/push/create/attach/pass checks/merge a small QUILS-numbered PR and native Jira Done. No live TSA use, real mail, cloud changes, purchases, fabricated operator policies or scope expansion.
+
+Validation: All 805 .NET tests and 11 Node tests pass. Fifty-three new production cases cover exact source hashes, complete PDF ByteRange/Contents and detached CMS verification, signed certificate/time binding, nonce/imprint/algorithm/EKU/key/chain/time checks, RSA/ECDSA and concurrent isolated operations, bounded PFX/transport/output/capacity, redirects/cookie isolation, cancellation/recovery, unprepared/already-signed input and tampered/truncated/trailing/padding output. OpenSSL independently verifies production CMS and timestamp output and rejects changed content/imprints. Poppler renders both source/sealed pages pixel-identically; all four rotations preserve crop/media boxes, UserUnit and text. Model, browser-asset/license and dependency vulnerability checks pass. Actual PFX/TSA values remain empty; no public endpoint, envelope completion, final persistence, mail, live TSA or cloud resource change. See docs/platform-pdf-seals.md.

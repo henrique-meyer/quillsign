@@ -5,6 +5,7 @@ using QuillSign.Storage;
 using QuillSign.Sender;
 using QuillSign.Documents;
 using QuillSign.Signing;
+using QuillSign.Sealing;
 
 if (args.Length > 0 && args[0] == "database")
 {
@@ -44,6 +45,7 @@ builder.Services.AddSignerReviewBrowser();
 builder.Services.AddQuillSignSignerSetup(builder.Configuration);
 builder.Services.AddQuillSignFieldEditor(builder.Configuration);
 builder.Services.AddQuillSignDocuments(builder.Configuration);
+builder.Services.AddPlatformPdfSeals(builder.Configuration);
 builder.Services.AddScoped<SendDraftWorkflow>();
 builder.Services.AddScoped<Func<SendDraftWorkflow>>(sp=>()=>sp.GetRequiredService<SendDraftWorkflow>());
 builder.Services.AddScoped<SenderSentStatus>();
