@@ -30,6 +30,19 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
     public async Task<QueuedEmail> EnqueueVerificationAsync(Guid envelopeId, string recipient, CancellationToken cancellationToken = default)
     {
         if (!workOptions.Enabled || !emailOptions.Enabled) throw new EmailDisabledException();
+        Guid id;
+        await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
+        {
+            id = await PrepareVerificationAsync(envelopeId, recipient, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        return await PublishCommittedAsync(id, cancellationToken);
+    }
+
+    public async Task<Guid> PrepareVerificationAsync(Guid envelopeId, string recipient, CancellationToken cancellationToken = default)
+    {
+        if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("Preparing an outbox item requires a transaction.");
+        if (!workOptions.Enabled || !emailOptions.Enabled) throw new EmailDisabledException();
         recipient = EmailAddress.Normalize(recipient);
         if (!await db.Envelopes.AnyAsync(x => x.Id == envelopeId && x.SenderEmail == recipient && x.Status == EnvelopeStatus.Draft, cancellationToken))
             throw new InvalidOperationException("Verification requires a matching draft sender.");
@@ -38,18 +51,20 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
         var email = new EmailOutbox { EnvelopeId = envelopeId, To = recipient, Template = "sender-verification", PayloadJson = protection.Protect(payload), AvailableAt = time.GetUtcNow() };
         var item = new WorkItem { Id = email.Id, EnvelopeId = envelopeId, Kind = WorkKind.Email, AvailableAt = email.AvailableAt,
             PayloadJson = JsonSerializer.Serialize(new { emailId = email.Id }) };
-        await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
-        {
-            db.EmailOutbox.Add(email); db.WorkItems.Add(item);
-            await db.SaveChangesAsync(cancellationToken);
-            await signals.PutHintAsync(item.Id, item.AvailableAt, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-        }
+        db.EmailOutbox.Add(email); db.WorkItems.Add(item);
+        await db.SaveChangesAsync(cancellationToken);
+        await signals.PutHintAsync(item.Id, item.AvailableAt, cancellationToken);
+        return item.Id;
+    }
+
+    public async Task<QueuedEmail> PublishCommittedAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        if (db.Database.CurrentTransaction is not null) throw new InvalidOperationException("Commit before publishing work.");
         // Commit and queue publication cannot be atomic. The persisted hint makes a
         // lost publication recoverable, including cancellation immediately after commit.
-        try { await signals.PublishAsync(item.Id, TimeSpan.Zero, cancellationToken); return new(item.Id, true); }
+        try { await signals.PublishAsync(id, TimeSpan.Zero, cancellationToken); return new(id, true); }
         catch (Exception e) when (e is RequestFailedException or IOException or OperationCanceledException or HttpRequestException)
-        { return new(item.Id, false); }
+        { return new(id, false); }
     }
 }
 

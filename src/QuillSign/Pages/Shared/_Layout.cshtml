@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@(ViewData["Title"] ?? "Demo") · QuillSign</title>
+    <link rel="icon" href="~/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="~/site.css" />
+</head>
+<body>
+    <main>
+        <header><a href="/" class="wordmark"><img src="~/logo-mark.svg" alt="" width="42" height="46" /><span>QuillSign</span></a></header>
+        @RenderBody()
+        <footer>Demo instance · Data will be purged periodically. Software provided as-is. Operators are responsible for checking suitability for their use case and jurisdiction.</footer>
+    </main>
+</body>
+</html>

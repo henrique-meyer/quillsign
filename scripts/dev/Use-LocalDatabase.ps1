@@ -1,6 +1,10 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([ValidateSet('Migrate', 'Test', 'WorkOnce', 'RecoverWork', 'ListenWork', 'VerifyWork')][string]$Action = 'Migrate')
+param(
+    [ValidateSet('Migrate', 'Test', 'WorkOnce', 'RecoverWork', 'ListenWork', 'VerifyWork', 'RunApp')][string]$Action = 'Migrate',
+    [ValidateRange(1, 65535)][int]$AppPort,
+    [switch]$NoBuild
+)
 
 $ErrorActionPreference = 'Stop'
 Push-Location (Join-Path $PSScriptRoot '../..')
@@ -53,12 +57,18 @@ try {
             $env:Email__Enabled = 'true'
             $env:Email__Provider = 'Smtp'
             $env:Email__FromEmail = 'noreply@example.invalid'
-            $env:Email__BaseUrl = 'http://localhost:' + $resolved.services.app.ports[0].published
+            $port = if ($AppPort) { $AppPort } else { $resolved.services.app.ports[0].published }
+            $env:Email__BaseUrl = 'http://localhost:' + $port
             $env:Email__Smtp__Host = '127.0.0.1'
             $env:Email__Smtp__Port = $env:QUILLSIGN_TEST_SMTP_PORT
             $env:Email__Smtp__UseStartTls = 'false'
-            $command = @{ WorkOnce = 'once'; RecoverWork = 'recover'; ListenWork = 'listen'; VerifyWork = 'verify' }[$Action]
-            dotnet run --project src/QuillSign/QuillSign.csproj -c Release -- work $command
+            [string[]]$buildArguments = if ($NoBuild) { @('--no-build') } else { @() }
+            if ($Action -eq 'RunApp') {
+                dotnet run --project src/QuillSign/QuillSign.csproj -c Release -p:UseAppHost=false @buildArguments -- --urls $env:Email__BaseUrl
+            } else {
+                $command = @{ WorkOnce = 'once'; RecoverWork = 'recover'; ListenWork = 'listen'; VerifyWork = 'verify' }[$Action]
+                dotnet run --project src/QuillSign/QuillSign.csproj -c Release -p:UseAppHost=false @buildArguments -- work $command
+            }
         }
     }
     if ($LASTEXITCODE -ne 0) { throw "Local database action failed: $Action" }

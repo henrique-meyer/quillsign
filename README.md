@@ -4,9 +4,9 @@ An open-source e-signature app being built around sequential signing, no account
 
 ## Current status
 
-QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app currently serves a branded demo startup page and a database-independent `/health` endpoint returning `{"status":"ok"}`. Document upload, email verification, and signing are not implemented yet.
+QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app supports sender email verification and a session scoped to one draft. The `/health` endpoint returns `{"status":"ok"}` without querying the database. Document upload and signing follow next.
 
-The demo's cloud resources are provisioned: Azure hosts the app and data, and Amazon SES provides email. Hosted SQL connectivity and migrations are verified. Blob storage, persistent application keys, email adapters, and delivery feedback have local integration tests. Hosted storage/key configuration and public email delivery are still pending. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
+The demo's cloud resources are provisioned: Azure hosts the app, data, and background work; Amazon SES provides email. Hosted SQL, storage, application keys, and worker execution are verified. Public email delivery remains disabled pending SES readiness. The full sender verification flow runs locally with Mailpit. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
 
 ## Planned signing flow
 
@@ -56,7 +56,7 @@ The initializer generates local SQL and Azurite credentials in ignored `.env` co
 | SMTP capture | `localhost:1025` | `mailpit:1025` |
 | Gotenberg | Through the app container only | `gotenberg:3000` |
 
-The app still serves the bootstrap page. Persistence, storage, and email are exercised through integration tests; sender verification, upload, and conversion workflows follow in their own stories. Office uploads remain unavailable in the app.
+The app shows the verification form when database, storage, email, and background work are configured; otherwise it shows an email-unavailable notice. Document upload and Office conversion remain unavailable in the app.
 
 Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
 
@@ -79,7 +79,18 @@ Restore the pinned EF CLI with `dotnet tool restore`. Generate migrations using 
 
 ### Email development
 
-Compose selects SMTP and captures messages in Mailpit using a synthetic sender. `Use-LocalDatabase.ps1 -Action Test` exercises rendered HTML/text verification messages, local SMTP capture, simulated SES requests, signed SNS feedback, and suppression. No AWS credentials or live email are used by tests. The sender verification page and durable dispatch are subsequent work.
+Compose selects SMTP and captures messages in Mailpit using a synthetic sender. `Use-LocalDatabase.ps1 -Action Test` exercises sender verification, rendered HTML/text messages, local SMTP capture, simulated SES requests, signed SNS feedback, and suppression. No AWS credentials or live email are used by tests.
+
+For a complete browser flow using the local services, migrate first, then run these commands in separate terminals:
+
+```powershell
+pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action RunApp -AppPort 5081
+pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action ListenWork -AppPort 5081 -NoBuild
+```
+
+Start `RunApp` first so it builds the application; `-NoBuild` lets the listener use that build while the app is running. Open <http://localhost:5081>, enter a synthetic address such as `sender@example.invalid`, and open the captured message in <http://localhost:8025>. Follow its verification link to the draft. Use the same `AppPort` in both terminals so worker-generated links reach the app. The helper configures local SQL, Azurite, and SMTP without printing credentials.
+
+Verification links work once and expire 15 minutes after dispatch. Sender sessions last two hours without sliding renewal and only open their own draft. The default cap is five requests per address per UTC day, plus 20 HTTP requests per IP per ten-minute window. Configure these limits through the `Sender` section in `appsettings.example.json`. Suppressed and capped requests receive the same neutral inbox message. Browser notices appear once after a clean redirect; JSON clients receive the message body and still require antiforgery tokens for POST requests.
 
 Outside Compose, email is disabled by default. Use the `Email` section of `appsettings.example.json` for provider, sender, base URL, SMTP, SES configuration set, and SNS topic settings. `Email:BaseUrl` builds verification links; templates render when dispatching. `/webhooks/ses` processes authenticated delivery feedback and suppresses permanent bounces and complaints. Transient bounces do not permanently suppress recipients. Feedback and subscription auto-confirmation are disabled by default. Public SES delivery remains gated on durable dispatch, a confirmed feedback subscription, and approved SES readiness.
 
@@ -95,11 +106,11 @@ pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce
 pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action ListenWork
 ```
 
-`RecoverWork` runs storage-only wakeup recovery; `VerifyWork` checks storage, database access, and payload protection, then queues a synthetic wakeup with no email. Run `WorkOnce` to consume it locally. The helper supplies local Compose settings without printing credentials. `ListenWork` is Development-only and polls the emulator queue, never idle SQL. The optional Compose `workers` profile runs the same listener when an application SQL connection is configured. Hosted jobs use `dotnet QuillSign.dll work once` and `work recover`; work is disabled by default outside configured environments. Sender verification still follows in its own story.
+`RecoverWork` runs storage-only wakeup recovery; `VerifyWork` checks storage, database access, and payload protection, then queues a synthetic wakeup with no email. Run `WorkOnce` to consume it locally. The helper supplies local Compose settings without printing credentials. `ListenWork` is Development-only and polls the emulator queue, never idle SQL. The optional Compose `workers` profile runs the same listener when an application SQL connection is configured. Hosted jobs use `dotnet QuillSign.dll work once` and `work recover`; work is disabled by default outside configured environments.
 
 ### Document storage and application keys
 
-Compose configures Azurite automatically. The `IBlobStore` adapter checks a verified sender's envelope scope before storage access, uses opaque document references, and streams bounded blocks. It never returns public document URLs. Uploads become readable only after their declared size is verified; existing objects cannot be overwritten. Sender verification and the upload UI are separate work.
+Compose configures Azurite automatically. The `IBlobStore` adapter checks a verified sender's envelope scope before storage access, uses opaque document references, and streams bounded blocks. It never returns public document URLs. Uploads become readable only after their declared size is verified; existing objects cannot be overwritten. The upload UI follows next.
 
 For host-side development, configure `Storage:Provider` as `Azurite` and `Storage:ConnectionString` in ignored local settings, pointing to the published emulator endpoint. Hosted configuration uses `Azure`, `Storage:BlobServiceUri`, and optionally `Storage:ManagedIdentityClientId`; credentials come from managed identity. `Storage:MaximumBlobBytes` defaults to 25 MiB. See `appsettings.example.json` for the configuration keys; environment variables replace `:` with `__`.
 
@@ -113,7 +124,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- Hosted storage/key configuration and the sender/signing workflows.
+- PDF upload, preview, and the signing workflows.
 - Office conversion and background processing.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - PDF stamping, audit evidence, completion certificates, sealing, and verification.
