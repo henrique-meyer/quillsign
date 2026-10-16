@@ -45,6 +45,10 @@ builder.Services.AddQuillSignSignerSetup(builder.Configuration);
 builder.Services.AddQuillSignFieldEditor(builder.Configuration);
 builder.Services.AddQuillSignDocuments(builder.Configuration);
 builder.Services.AddScoped<SendDraftWorkflow>();
+builder.Services.AddScoped<Func<SendDraftWorkflow>>(sp=>()=>sp.GetRequiredService<SendDraftWorkflow>());
+builder.Services.AddScoped<SenderSentStatus>();
+builder.Services.AddScoped<Func<SenderSentStatus>>(sp=>()=>sp.GetRequiredService<SenderSentStatus>());
+builder.Services.AddScoped<SenderSendReadiness>();
 var app = builder.Build();
 app.UseForwardedHeaders();
 

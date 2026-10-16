@@ -40,6 +40,11 @@ public sealed class DraftReviewPageTests(SqlDatabaseFixture fixture) : IClassFix
         builder.Services.AddAuthentication(EnvelopeStorageAuthorization.SenderScheme).AddCookie(EnvelopeStorageAuthorization.SenderScheme,
             options => options.Events.OnRedirectToLogin = context => { context.Response.StatusCode = 401; return Task.CompletedTask; });
         builder.Services.AddAuthorization(); builder.Services.AddScoped(_ => fixture.Open()); builder.Services.AddScoped<DraftReview>();
+        builder.Services.AddSingleton(TimeProvider.System); builder.Services.AddSingleton(new QuillSign.Email.EmailOptions()); builder.Services.AddSingleton(new QuillSign.Work.WorkOptions());
+        builder.Services.AddSingleton<SenderAvailability>(); builder.Services.AddSingleton(new QuillSign.Legal.ElectronicRecordOptions()); builder.Services.AddSingleton<QuillSign.Legal.ElectronicRecordDisclosure>();
+        builder.Services.AddScoped<BrowserNotices>(); builder.Services.AddScoped<SenderSendReadiness>();
+        builder.Services.AddScoped<Func<SendDraftWorkflow>>(sp=>()=>sp.GetRequiredService<SendDraftWorkflow>());
+        builder.Services.AddScoped<Func<SenderSentStatus>>(sp=>()=>sp.GetRequiredService<SenderSentStatus>());
         await using var app = builder.Build(); app.UseRouting(); app.UseAuthentication(); app.UseAuthorization(); app.MapRazorPages();
         app.MapGet("/test-session", async (Microsoft.AspNetCore.Http.HttpContext context) =>
         {
