@@ -1,0 +1,9 @@
+@model QuillSign.Work.DeclinePayload
+@{ Layout = null; }
+QuillSign
+
+The signing request for @Html.Raw(Model.Title) was declined by @Html.Raw(Model.SignerName) (@Html.Raw(Model.SignerEmail)).
+
+Reason: @Html.Raw(Model.Reason ?? "No reason provided.")
+
+This envelope is closed. Contact the signer to discuss another arrangement.

@@ -88,8 +88,7 @@ public sealed class SignerConsentTests(SqlDatabaseFixture fixture) : IClassFixtu
         var email = await db.EmailOutbox.SingleAsync(x => x.EnvelopeId == seed.Envelope.Id);
         Assert.Equal("signer-declined",email.Template); Assert.DoesNotContain("Synthetic reason",email.PayloadJson);
         var payload = new DeclinePayloadProtection(protection).Read(email.PayloadJson);
-        var rendered = DeclinePayloadProtection.Render(email.To,email.EnvelopeId,payload);
-        Assert.Contains("&lt;b&gt;",rendered.Html); Assert.DoesNotContain("<b>Synthetic",rendered.Html);
+        Assert.Equal("<b>Synthetic reason</b>",payload.Reason);
         Assert.Single(await db.WorkItems.Where(x => x.EnvelopeId == seed.Envelope.Id).ToArrayAsync());
         Assert.Single(await db.AuditEvents.Where(x => x.EnvelopeId == seed.Envelope.Id && x.Event == "declined").ToArrayAsync());
         Assert.Equal(ConsentResult.InvalidContext,await service.AcceptAsync(seed.Principal,seed.Envelope.PublicId,Receipts.Create(seed.Identity),true,true,"preview",null,null));

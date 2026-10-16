@@ -69,7 +69,8 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
 }
 
 public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options, EmailPayloadProtection protection,
-    VerificationEmailTemplate template, IEmailSender sender, TimeProvider time,DeclinePayloadProtection? declines = null) : IWorkHandler
+    VerificationEmailTemplate template, IEmailSender sender, TimeProvider time,DeclinePayloadProtection? declines = null,
+    DeclineEmailTemplate? declineTemplate = null) : IWorkHandler
 {
     public WorkKind Kind => WorkKind.Email;
 
@@ -86,7 +87,8 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
             if (isDecline)
             {
                 payload = new("",Guid.Empty);
-                outgoing = DeclinePayloadProtection.Render(email.To,email.EnvelopeId,(declines ?? throw new InvalidOperationException("Missing decline template.")).Read(email.PayloadJson));
+                outgoing = await (declineTemplate ?? throw new InvalidOperationException("Missing decline template.")).RenderAsync(email.To,email.EnvelopeId,
+                    (declines ?? throw new InvalidOperationException("Missing decline protection.")).Read(email.PayloadJson),cancellationToken);
             }
             else
             {

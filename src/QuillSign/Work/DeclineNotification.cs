@@ -1,4 +1,3 @@
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -15,13 +14,6 @@ public sealed class DeclinePayloadProtection(IDataProtectionProvider provider)
     public string Protect(DeclinePayload value) => JsonSerializer.Serialize(new ProtectedWorkPayload(protector.Protect(JsonSerializer.Serialize(value))));
     public DeclinePayload Read(string value) => JsonSerializer.Deserialize<DeclinePayload>(protector.Unprotect(
         JsonSerializer.Deserialize<ProtectedWorkPayload>(value)?.Protected ?? throw new JsonException())) ?? throw new JsonException();
-    public static OutgoingEmail Render(string to,Guid? envelope,DeclinePayload value)
-    {
-        if (value.Title is not { Length: > 0 and <= 512 } || value.SignerName is not { Length: > 0 and <= 512 } || value.Reason is { Length: > 512 })
-            throw new ArgumentException("Invalid decline notification.");
-        var text = $"The signing request for {value.Title} was declined by {value.SignerName} ({value.SignerEmail}).\n\nReason: {value.Reason ?? "No reason provided."}\n\nThis envelope is closed. Contact the signer to discuss another arrangement.";
-        return new(EmailAddress.Normalize(to),"Your signing request was declined",text,"<p>" + HtmlEncoder.Default.Encode(text).Replace("\n","<br />") + "</p>",envelope);
-    }
 }
 public sealed class DeclineNotificationWriter(QuillSignDbContext db,Func<IWorkSignals> signals,WorkOptions options,
     DeclinePayloadProtection protection,TimeProvider time)
