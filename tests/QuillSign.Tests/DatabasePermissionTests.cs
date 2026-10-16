@@ -31,7 +31,7 @@ public sealed class DatabasePermissionTests(SqlDatabaseFixture fixture) : IClass
                     command.Parameters.Clear();
                     command.Parameters.AddWithValue("@object", "dbo." + table);
                     command.Parameters.AddWithValue("@permission", permission);
-                    var expected = permission == "ALTER" || (table is "AuditEvents" or "CompletionCandidates" or "CompletionSealOutputs" && permission is "UPDATE" or "DELETE") || (table is "SignaturePreviews" or "SignerReviewCandidates" or "SignerFinishAcceptances" && permission == "UPDATE") ? 0 : 1;
+                    var expected = permission == "ALTER" || (table is "AuditEvents" or "CompletionCandidates" or "CompletionSealOutputs" or "CompletionPublicationIntents" or "CompletionPublicationResults" && permission is "UPDATE" or "DELETE") || (table is "SignaturePreviews" or "SignerReviewCandidates" or "SignerFinishAcceptances" && permission == "UPDATE") ? 0 : 1;
                     Assert.Equal(expected, Convert.ToInt32(await command.ExecuteScalarAsync()));
                 }
             }

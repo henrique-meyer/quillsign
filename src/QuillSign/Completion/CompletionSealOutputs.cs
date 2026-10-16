@@ -44,16 +44,19 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
     }
 
     public async Task<CompletionSealPair?> ReadAsync(Guid envelopeId,CancellationToken ct=default)
+        =>await ReadCore(envelopeId,null,ct);
+    internal Task<CompletionSealPair?> ReadPublishedAsync(Guid id,PublishedCompletionSource source,CancellationToken ct)=>ReadCore(id,source,ct);
+    private async Task<CompletionSealPair?> ReadCore(Guid envelopeId,PublishedCompletionSource? published,CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested(); if(envelopeId==Guid.Empty)return null;
         try
         {
-            var candidate=await candidates.ReadAsync(envelopeId,ct); if(candidate is null)return null;
+            var candidate=published is null ? await candidates.ReadAsync(envelopeId,ct) : await candidates.ReadPublishedAsync(envelopeId,published,ct); if(candidate is null)return null;
             var rows=await Rows(envelopeId,ct); if(rows.Length==0)return null;
             var first=rows.SingleOrDefault(x=>x.Kind==CompletionSealKind.Executed) ?? throw Invalid();
-            var executed=await ReadStage(first,candidate,null,ct);
+            var executed=await ReadStage(first,candidate,null,ct,published);
             var second=rows.SingleOrDefault(x=>x.Kind==CompletionSealKind.Certificate); if(second is null)return null;
-            return new(envelopeId,candidate.Id,executed,await ReadStage(second,candidate,executed,ct));
+            return new(envelopeId,candidate.Id,executed,await ReadStage(second,candidate,executed,ct,published));
         }
         catch(Azure.RequestFailedException) {throw new IOException("Completion seal storage is unavailable.");}
         catch(Exception error) when(error is JsonException or FormatException or InvalidOperationException or ArgumentException or UnauthorizedAccessException or KeyNotFoundException or DocumentRejectedException or CryptographicException)
@@ -118,7 +121,7 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
         finally {if(!commitStarted && !committed)await Cleanup(owned);}
     }
 
-    private async Task<CompletionSealData> ReadStage(CompletionSealOutput row,CompletionCandidateData candidate,CompletionSealData? executed,CancellationToken ct)
+    private async Task<CompletionSealData> ReadStage(CompletionSealOutput row,CompletionCandidateData candidate,CompletionSealData? executed,CancellationToken ct,PublishedCompletionSource? published=null)
     {
         var proof=await Proof(row,ct);
         var source=row.Kind==CompletionSealKind.Executed ? candidate.Packet.Bytes : await ReadExact(SourceBlob(row),row.SourceLength,row.SourceSha256,ct);
@@ -128,7 +131,7 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         await using(var transaction=await db.Database.BeginTransactionAsync(ct))
         {
-            await RecheckLocked(candidate,ct);
+            await RecheckLocked(candidate,ct,published);
             await RecheckPredecessor(executed,candidate,ct);
             var saved=await db.CompletionSealOutputs.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==row.Id && x.EnvelopeId==row.EnvelopeId,ct);
             if(saved is null || !saved.RowVersion.AsSpan().SequenceEqual(row.RowVersion) || !Same(saved.RecipeSha256,row.RecipeSha256))throw new DocumentConflictException();
@@ -177,9 +180,9 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
         var rows=await db.CompletionSealOutputs.AsNoTracking().Where(x=>x.EnvelopeId==envelopeId).Take(3).ToArrayAsync(ct);
         if(rows.Length>2)throw Invalid(); return rows;
     }
-    private async Task RecheckLocked(CompletionCandidateData candidate,CancellationToken ct)
+    private async Task RecheckLocked(CompletionCandidateData candidate,CancellationToken ct,PublishedCompletionSource? published=null)
     {
-        await collector.RecheckLockedAsync(candidate.EnvelopeId,candidate.FrozenStateSha256,ct,candidate.AuditSequence,candidate.AuditAnchor);
+        await collector.RecheckLockedAsync(candidate.EnvelopeId,candidate.FrozenStateSha256,ct,candidate.AuditSequence,candidate.AuditAnchor,published);
         var saved=await db.CompletionCandidates.AsNoTracking().Where(x=>x.Id==candidate.Id && x.EnvelopeId==candidate.EnvelopeId)
             .Select(x=>new {x.RecipeSha256,x.RowVersion,x.PdfObjectId,x.PdfSha256,x.EvidenceSha256}).SingleOrDefaultAsync(ct);
         if(saved is null || saved.PdfObjectId!=candidate.PdfObjectId || !saved.RowVersion.AsSpan().SequenceEqual(candidate.RowVersion) ||

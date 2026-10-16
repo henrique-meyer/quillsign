@@ -307,6 +307,144 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.CompletionPublicationIntent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("BeforeEnvelopeJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("CandidateId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CertificateObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CertificateOutputId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("DevelopmentWriteOnce")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ExecutedObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ExecutedOutputId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("PreparedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("RecipeSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<int>("RetentionDays")
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<string>("StageBindingsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeId")
+                        .IsUnique();
+
+                    b.HasIndex("EnvelopeId", "CandidateId");
+
+                    b.ToTable("CompletionPublicationIntents", t =>
+                        {
+                            t.HasCheckConstraint("CK_CompletionPublicationIntent_BeforeEnvelopeJson", "[BeforeEnvelopeJson] IS NULL OR ISJSON([BeforeEnvelopeJson]) = 1");
+
+                            t.HasCheckConstraint("CK_CompletionPublicationIntent_RecipeSha256", "[RecipeSha256] IS NULL OR DATALENGTH([RecipeSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_CompletionPublicationIntent_StageBindingsJson", "[StageBindingsJson] IS NULL OR ISJSON([StageBindingsJson]) = 1");
+
+                            t.HasCheckConstraint("CK_PublicationIntent_Bounds", "[RetentionDays] BETWEEN 0 AND 36500 AND [ExecutedObjectId] <> [CertificateObjectId] AND DATALENGTH([BeforeEnvelopeJson]) BETWEEN 2 AND 524288 AND DATALENGTH([StageBindingsJson]) BETWEEN 2 AND 32768");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.CompletionPublicationResult", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("AfterEnvelopeSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<long>("AuditSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("CompletedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("FinalDocumentsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("IntentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("IntentRecipeSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<byte[]>("RecipeSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeId")
+                        .IsUnique();
+
+                    b.HasIndex("IntentId")
+                        .IsUnique();
+
+                    b.HasIndex("EnvelopeId", "IntentId");
+
+                    b.ToTable("CompletionPublicationResults", t =>
+                        {
+                            t.HasCheckConstraint("CK_CompletionPublicationResult_AfterEnvelopeSha256", "[AfterEnvelopeSha256] IS NULL OR DATALENGTH([AfterEnvelopeSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_CompletionPublicationResult_FinalDocumentsJson", "[FinalDocumentsJson] IS NULL OR ISJSON([FinalDocumentsJson]) = 1");
+
+                            t.HasCheckConstraint("CK_CompletionPublicationResult_IntentRecipeSha256", "[IntentRecipeSha256] IS NULL OR DATALENGTH([IntentRecipeSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_CompletionPublicationResult_RecipeSha256", "[RecipeSha256] IS NULL OR DATALENGTH([RecipeSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_PublicationResult_Bounds", "[AuditSequence] BETWEEN 1 AND 512 AND DATALENGTH([FinalDocumentsJson]) BETWEEN 2 AND 32768");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.CompletionSealOutput", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1485,6 +1623,38 @@ namespace QuillSign.Data.Migrations
                     b.HasOne("QuillSign.Data.SignerFinishAcceptance", null)
                         .WithMany()
                         .HasForeignKey("EnvelopeId", "FinishId")
+                        .HasPrincipalKey("EnvelopeId", "Id")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.CompletionPublicationIntent", b =>
+                {
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.CompletionCandidate", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "CandidateId")
+                        .HasPrincipalKey("EnvelopeId", "Id")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.CompletionPublicationResult", b =>
+                {
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.CompletionPublicationIntent", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "IntentId")
                         .HasPrincipalKey("EnvelopeId", "Id")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();

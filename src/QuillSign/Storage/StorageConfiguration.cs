@@ -15,6 +15,7 @@ public static class StorageConfiguration
         {
             // Bootstrap only. Document/session workflows must require configured persistent storage.
             services.AddSingleton<IBlobStore>(_ => throw new InvalidOperationException("Configure Storage__Provider before using documents."));
+            services.AddSingleton<ICompletionFinalStore>(_ => throw new InvalidOperationException("Configure Storage__Provider before final publication."));
             return services;
         }
 
@@ -46,6 +47,7 @@ public static class StorageConfiguration
         }
 
         services.AddSingleton(service);
+        services.AddSingleton<ICompletionFinalStore>(sp=>new AzureCompletionFinalStore(service,sp.GetRequiredService<TimeProvider>(),environment,local));
         services.AddSingleton<IBlobStore>(new AzureBlobStore(service, limit, local));
         var keys = service.GetBlobContainerClient("keys");
         var keyBlob = config["DataProtection:KeyRingBlobName"] ?? "data-protection.xml";

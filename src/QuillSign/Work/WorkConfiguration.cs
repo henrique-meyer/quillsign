@@ -2,6 +2,7 @@ using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
 using QuillSign.Signing;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using QuillSign.Sealing;
 
 namespace QuillSign.Work;
@@ -66,6 +67,13 @@ public static class WorkConfiguration
             services.AddScoped<QuillSign.Completion.CompletionCandidates>();
             services.AddPlatformPdfSeals(config);
             services.AddScoped<QuillSign.Completion.CompletionSealOutputs>();
+            services.AddSingleton(new QuillSign.Completion.CompletionPublicationOptions {
+                CompletedDays=config.GetValue<int?>("Retention:CompletedDays"),DemoPurgeAfterDays=config.GetValue<int?>("Demo:PurgeAfterDays"),
+                AllowDevelopmentWriteOnce=config.GetValue<bool>("Completion:AllowDevelopmentWriteOnce")});
+            // Worker-only/custom storage setups remain lazy. Real storage registration replaces
+            // this fallback; publication cannot run until its dedicated final store is configured.
+            services.TryAddSingleton<QuillSign.Storage.ICompletionFinalStore>(_=>throw new InvalidOperationException("Configure final packet storage before publication."));
+            services.AddScoped<QuillSign.Completion.CompletionPublication>();
             services.AddScoped<IWorkHandler,SignerCheckpointHandler>();
         }
         return services;
