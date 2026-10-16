@@ -828,6 +828,122 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.SignerReviewCandidate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AdoptionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("DisclosureSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<long>("PdfLength")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PdfObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("PdfSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<DateTimeOffset>("PreparedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateOnly>("ProspectiveDate")
+                        .HasColumnType("date");
+
+                    b.Property<byte[]>("RecipeSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<string>("RendererVersion")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<byte[]>("SessionSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("SignerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("SnapshotSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<string>("SnapshotVersion")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<Guid>("SourceObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("SourceSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<DateTimeOffset?>("SupersededAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("UsedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeId", "PdfObjectId")
+                        .IsUnique();
+
+                    b.HasIndex("EnvelopeId", "SignerId", "AdoptionId");
+
+                    b.HasIndex("EnvelopeId", "SignerId", "ExpiresAt");
+
+                    b.ToTable("SignerReviewCandidates", t =>
+                        {
+                            t.HasCheckConstraint("CK_SignerReviewCandidate_DisclosureSha256", "[DisclosureSha256] IS NULL OR DATALENGTH([DisclosureSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignerReviewCandidate_Expiry", "[ExpiresAt] > [PreparedAt] AND [ExpiresAt] <= DATEADD(minute,10,[PreparedAt]) AND [ProspectiveDate] = CONVERT(date,SWITCHOFFSET([PreparedAt],'+00:00')) AND [ExpiresAt] <= DATEADD(day,1,CONVERT(datetimeoffset,[ProspectiveDate]))");
+
+                            t.HasCheckConstraint("CK_SignerReviewCandidate_Pdf", "[PdfLength] BETWEEN 16 AND 67108864 AND [SourceObjectId] <> [PdfObjectId]");
+
+                            t.HasCheckConstraint("CK_SignerReviewCandidate_PdfSha256", "[PdfSha256] IS NULL OR DATALENGTH([PdfSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignerReviewCandidate_RecipeSha256", "[RecipeSha256] IS NULL OR DATALENGTH([RecipeSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignerReviewCandidate_SessionSha256", "[SessionSha256] IS NULL OR DATALENGTH([SessionSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignerReviewCandidate_SnapshotSha256", "[SnapshotSha256] IS NULL OR DATALENGTH([SnapshotSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignerReviewCandidate_SourceSha256", "[SourceSha256] IS NULL OR DATALENGTH([SourceSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignerReviewCandidate_State", "([UsedAt] IS NULL OR [UsedAt] >= [PreparedAt]) AND ([SupersededAt] IS NULL OR [SupersededAt] >= [PreparedAt]) AND ([UsedAt] IS NULL OR [SupersededAt] IS NULL)");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.Suppression", b =>
                 {
                     b.Property<string>("Email")
@@ -995,6 +1111,29 @@ namespace QuillSign.Data.Migrations
                     b.HasOne("QuillSign.Data.Envelope", null)
                         .WithMany()
                         .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.SignerReviewCandidate", b =>
+                {
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.Signer", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "SignerId")
+                        .HasPrincipalKey("EnvelopeId", "Id")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.SignaturePreview", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "SignerId", "AdoptionId")
+                        .HasPrincipalKey("EnvelopeId", "SignerId", "Id")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
                 });

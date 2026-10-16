@@ -53,6 +53,8 @@ public static class DatabasePermissions
         command.CommandText = """
             GRANT SELECT, INSERT, DELETE ON OBJECT::[dbo].[SignaturePreviews] TO [app_runtime_role];
             GRANT UPDATE ON OBJECT::[dbo].[SignaturePreviews] ([UsedAt]) TO [app_runtime_role];
+            GRANT SELECT, INSERT, DELETE ON OBJECT::[dbo].[SignerReviewCandidates] TO [app_runtime_role];
+            GRANT UPDATE ON OBJECT::[dbo].[SignerReviewCandidates] ([UsedAt], [SupersededAt]) TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[AuditEvents] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[AuditEvents] TO [app_runtime_role];
             GRANT SELECT ON OBJECT::[dbo].[__EFMigrationsHistory] TO [app_runtime_role];

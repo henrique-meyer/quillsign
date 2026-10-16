@@ -88,7 +88,7 @@ public sealed class SignerFields(QuillSignDbContext db,SignerAccess access,Signa
     private Task<Signer> Signer(VerifiedSigner identity,CancellationToken ct) => db.Signers.AsNoTracking().SingleAsync(x => x.Id == identity.SignerId && x.EnvelopeId == identity.EnvelopeId,ct);
     private Task<int?> PageCount(Guid envelopeId,CancellationToken ct) => db.Envelopes.AsNoTracking().Where(x => x.Id == envelopeId).Select(x => x.PageCount).SingleAsync(ct);
     private static bool ValidField(DocumentField field,int? pages) => pages is >= 1 and <= 200 && field.Page >= 1 && field.Page <= pages && Enum.IsDefined(field.Type) && FieldGeometry.InBounds(field.X,field.Y,field.Width,field.Height);
-    private static SignerFieldItem Item(DocumentField f,Signer signer)
+    internal static SignerFieldItem Item(DocumentField f,Signer signer)
     {
         var mark = f.Type is FieldType.Signature or FieldType.Initials;
         var expectedHash = f.Type == FieldType.Signature ? signer.SignatureImageSha256 : signer.InitialsImageSha256;

@@ -27,6 +27,7 @@ public static class EnvelopeStorageAuthorization
     public static void DemandRead(ClaimsPrincipal principal,DocumentBlob blob)
     {
         if (principal is SignatureAssetCapability capability) { capability.Demand(blob,AssetOperation.Read); return; }
+        if (principal is SignerReviewPdfCapability review) { review.Demand(blob,AssetOperation.Read); return; }
         if (principal.Identities.Any(i => i.IsAuthenticated && i.AuthenticationType == SignerAccessConfiguration.Scheme))
         {
             var signer = SignerAccessConfiguration.ReadIdentity(principal,DateTimeOffset.UtcNow);
@@ -45,6 +46,7 @@ public static class EnvelopeStorageAuthorization
     private static void DemandMutation(ClaimsPrincipal sender,DocumentBlob blob,AssetOperation operation)
     {
         if (sender is SignatureAssetCapability capability) { capability.Demand(blob,operation); return; }
+        if (sender is SignerReviewPdfCapability review) { review.Demand(blob,operation); return; }
         var identities = sender.Identities.Where(i => i.IsAuthenticated).ToArray();
         if (identities.Length != 1 || identities[0].AuthenticationType != SenderScheme)
             throw new UnauthorizedAccessException("A verified sender session for this envelope is required.");
