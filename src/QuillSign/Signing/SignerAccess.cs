@@ -36,7 +36,7 @@ public sealed class SignerInvitationFactory(SignerAccessOptions options,TimeProv
     }
 }
 public sealed record SignerReadContext(VerifiedSigner Identity,string Title,string SignerName,string? Role,
-    DocumentBlob Document,byte[] DocumentSha256,DisclosureSnapshot Disclosure,DateTimeOffset? ConsentAt = null);
+    DocumentBlob Document,byte[] DocumentSha256,DisclosureSnapshot Disclosure,DateTimeOffset? ConsentAt = null,Guid? SignatureAdoptionId = null);
 
 public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerAccessOptions options,TimeProvider time)
 {
@@ -108,6 +108,6 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         expires = DateTimeOffset.FromUnixTimeSeconds(expires.ToUnixTimeSeconds()); if (expires <= now) return null;
         var identity = new VerifiedSigner(envelope.Id,envelope.PublicId,signer.Id,signer.Email,documentId,
             Convert.ToHexStringLower(envelope.SentPdfSha256),Convert.ToHexStringLower(envelope.ErsdSha256),expires);
-        return new(identity,envelope.Title,signer.FullName,signer.Role,new(envelope.Id,DocumentBlobKind.Normalized,documentId),envelope.SentPdfSha256,disclosure,signer.ConsentAt);
+        return new(identity,envelope.Title,signer.FullName,signer.Role,new(envelope.Id,DocumentBlobKind.Normalized,documentId),envelope.SentPdfSha256,disclosure,signer.ConsentAt,signer.SignatureAdoptionId);
     }
 }

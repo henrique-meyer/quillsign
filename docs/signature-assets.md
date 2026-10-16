@@ -1,8 +1,8 @@
 # Signature PNG normalization foundation
 
-QUILS-29 adds the pure `SignaturePng.Normalize` processor for later signature/initials adoption. It grants no storage access and records no consent, adoption or signature. Public adoption, field filling and Finish remain subsequent work.
+QUILS-29 adds the pure `SignaturePng.Normalize` processor used by signature/initials adoption. It grants no storage access and records no consent, adoption or signature. The [capture UI](signature-capture.md) and adoption backend compose it with those separate permissions and actions; field filling and Finish remain subsequent work.
 
-The input contract is a browser-normalized static 8-bit RGB/RGBA PNG in sRGB. A later browser upload flow may decode supported image formats into its sRGB canvas first. It must show the **server-normalized output** before adoption and bind confirmation to that exact asset/hash; a client-generated image or reported typed name is not proof of identity or human intent.
+The input contract is a browser-normalized static 8-bit RGB/RGBA PNG in sRGB. The browser upload flow decodes supported image formats into its sRGB canvas first. It shows the **server-normalized output** before adoption and binds confirmation to that exact asset/hash; a client-generated image or reported typed name is not proof of identity or human intent.
 
 The processor owns an input copy, caps encoded input/output at 512 KiB and dimensions at 2048 × 1024, and bounds chunk count, raster allocation and decompression. It checks signature, header, lengths, CRCs, critical ordering, contiguous image data and the final trailer. It rejects palette/color-key transparency, unsupported color/depth/interlace/animation, unknown critical chunks, invalid filters, truncated/excess scanlines, checksum failures and trailing/concatenated compressed streams. Ancillary payloads are checked but never decompressed or retained. These format rules were checked against the [W3C PNG specification](https://www.w3.org/TR/png-3/).
 

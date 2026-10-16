@@ -3,10 +3,14 @@
     <BrowserAssetsRoot>$(MSBuildProjectDirectory)/obj/browser-assets</BrowserAssetsRoot>
     <InteractArchive>$(BrowserAssetsRoot)/interactjs-1.10.28.tgz</InteractArchive>
     <InteractFiles>$(BrowserAssetsRoot)/interact</InteractFiles>
+    <SignaturePadArchive>$(BrowserAssetsRoot)/signature_pad-5.1.4.tgz</SignaturePadArchive>
+    <SignaturePadFiles>$(BrowserAssetsRoot)/signature-pad</SignaturePadFiles>
   </PropertyGroup>
   <ItemGroup>
     <Content Include="$(InteractFiles)/dist/interact.min.js" Link="wwwroot/vendor/interact/interact.min.js" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(InteractFiles)/LICENSE" Link="wwwroot/vendor/interact/LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(SignaturePadFiles)/dist/signature_pad.js" Link="wwwroot/vendor/signature-pad/signature_pad.js" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(SignaturePadFiles)/LICENSE" Link="wwwroot/vendor/signature-pad/LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="RestoreBrowserAssets" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
     <!-- Restore only pinned bytes, without npm/package scripts. Cache and upstream attribution stay outside Git. -->
@@ -20,5 +24,14 @@
     <Exec Command="tar -xzf &quot;$(InteractArchive)&quot; --strip-components=1 -C &quot;$(InteractFiles)&quot; package/dist/interact.min.js package/LICENSE" />
     <VerifyFileHash File="$(InteractFiles)/dist/interact.min.js" Hash="d62316ae5ad9c507278d3d0b354ca115df87a57cc7b30c0eaeba7c03c5c384f8" />
     <VerifyFileHash File="$(InteractFiles)/LICENSE" Hash="e805e2367aed149858263a4ae0a62168146af837a9ba3095aa01d02c8559e7fe" />
+    <MakeDir Directories="$(SignaturePadFiles)" />
+    <DownloadFile SourceUrl="https://registry.npmjs.org/signature_pad/-/signature_pad-5.1.4.tgz"
+                  DestinationFolder="$(BrowserAssetsRoot)" DestinationFileName="signature_pad-5.1.4.tgz"
+                  Retries="3" RetryDelayMilliseconds="1000" Condition="!Exists('$(SignaturePadArchive)')" />
+    <VerifyFileHash File="$(SignaturePadArchive)" Algorithm="SHA512" HashEncoding="base64"
+                    Hash="q0wO5a+U+AWPVcVmiNXz7FY4Ad1QiE8wto/3Yn41WVqepoVVYMvkb1CTokaWPUUAHWDLLabH3/acODeWM9jCrg==" />
+    <Exec Command="tar -xzf &quot;$(SignaturePadArchive)&quot; --strip-components=1 -C &quot;$(SignaturePadFiles)&quot; package/dist/signature_pad.js package/LICENSE" />
+    <VerifyFileHash File="$(SignaturePadFiles)/dist/signature_pad.js" Hash="c5aba162a6b06d52cffdef5f264d1a4c658457534cafcfa158377773af67f976" />
+    <VerifyFileHash File="$(SignaturePadFiles)/LICENSE" Hash="7d461320b6c69581bd19cc9402aa9a5e33ad826ed2f977d03bcb884e0cc6ce54" />
   </Target>
 </Project>
