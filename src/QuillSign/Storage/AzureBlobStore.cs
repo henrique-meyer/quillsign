@@ -15,7 +15,7 @@ public sealed class AzureBlobStore(BlobServiceClient service, long maximumBytes,
     private BlobContainerClient Container(DocumentBlobKind kind) => service.GetBlobContainerClient(kind switch
     {
         DocumentBlobKind.Original => "originals",
-        DocumentBlobKind.Normalized => "normalized",
+        DocumentBlobKind.Normalized or DocumentBlobKind.Signature or DocumentBlobKind.Initials => "normalized",
         DocumentBlobKind.Preview => "previews",
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     });
@@ -93,7 +93,7 @@ public sealed class AzureBlobStore(BlobServiceClient service, long maximumBytes,
 
     public async Task DeleteAsync(ClaimsPrincipal sender, DocumentBlob blob, CancellationToken cancellationToken = default)
     {
-        EnvelopeStorageAuthorization.Demand(sender, blob);
+        EnvelopeStorageAuthorization.DemandDelete(sender, blob);
         await Container(blob.Kind).GetBlobClient(Path(blob)).DeleteIfExistsAsync(cancellationToken: cancellationToken);
     }
 }

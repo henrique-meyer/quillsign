@@ -19,6 +19,19 @@ namespace QuillSign.Tests;
 public sealed class SignerAccessCookieTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
     [Fact]
+    public void Each_session_has_a_nonce_preserved_by_cookie_claims_and_missing_or_duplicate_nonces_are_rejected()
+    {
+        var identity = new VerifiedSigner(Guid.NewGuid(),Guid.NewGuid().ToString("N"),Guid.NewGuid(),"signer@example.invalid",Guid.NewGuid(),new string('a',64),new string('b',64),DateTimeOffset.UtcNow.AddHours(2));
+        var other = new VerifiedSigner(identity.EnvelopeId,identity.PublicId,identity.SignerId,identity.Email,identity.DocumentId,identity.DocumentHash,identity.DisclosureHash,identity.SessionExpiresAt);
+        Assert.NotEqual(identity.SessionId,other.SessionId);
+        var principal = SignerAccessConfiguration.Principal(identity);
+        Assert.Equal(identity.SessionId,SignerAccessConfiguration.ReadIdentity(principal,DateTimeOffset.UtcNow)!.SessionId);
+        var claims = (ClaimsIdentity)principal.Identity!; var nonce = claims.FindFirst(SignerAccessConfiguration.SessionClaim)!;
+        claims.RemoveClaim(nonce); Assert.Null(SignerAccessConfiguration.ReadIdentity(principal,DateTimeOffset.UtcNow));
+        claims.AddClaim(nonce); claims.AddClaim(new Claim(SignerAccessConfiguration.SessionClaim,Guid.NewGuid().ToString("N")));
+        Assert.Null(SignerAccessConfiguration.ReadIdentity(principal,DateTimeOffset.UtcNow));
+    }
+    [Fact]
     public async Task Signer_cookie_is_http_only_non_sliding_expiring_and_isolated_from_sender_authentication()
     {
         var clock = new Clock();
