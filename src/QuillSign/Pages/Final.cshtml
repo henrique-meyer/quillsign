@@ -1,0 +1,7 @@
+@page "/{audience:regex(^(draft|sign)$)}/{publicId}/final/{kind}"
+@model QuillSign.Pages.FinalModel
+@{ ViewData["Title"]="Download unavailable"; }
+@section Styles { <link rel="stylesheet" href="~/review.css" asp-append-version="true" /> }
+<section class="draft-review"><p class="eyebrow">Private final download</p><h1>Download unavailable</h1>
+<p class="document-error" role="alert">@Model.Message</p><p>Your saved signing and completion records are unchanged.</p>
+<p><a href="@Model.ConfirmationUrl">Return to your private confirmation page</a></p></section>
