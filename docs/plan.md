@@ -503,7 +503,7 @@ Validation: All 805 .NET tests and 11 Node tests pass. Fifty-three new productio
 
 ## QUILS-42: Render appended and standalone completion certificates
 
-Status: To Do. Depends on merged QUILS-37 and QUILS-40; final publication will also use QUILS-41. Owned by this chat.
+Status: In Progress. Depends on merged QUILS-37 and QUILS-40; final publication will also use QUILS-41. Owned by this chat.
 
 Add the internal completion-certificate PDF renderer required by the agreed v1 final packet. This is a pure rendering prerequisite: accept a bounded immutable evidence snapshot supplied by the future authorized completion service, render appended certificate pages and the separately prepared standalone certificate, and preserve the exact current checkpoint's visible pages/geometry when assembling the unsealed packet. No public endpoint, database state transition, final blob publication, seal/TSA call or email in this slice.
 
