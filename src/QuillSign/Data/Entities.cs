@@ -176,6 +176,32 @@ public sealed class SignerFinishAcceptance : IVersionedRecord
     public byte[] RowVersion { get; set; } = [];
 }
 
+public sealed class CompletionCandidate : IVersionedRecord
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid EnvelopeId { get; set; }
+    public Guid FinishId { get; set; }
+    public int CopyVersion { get; set; }
+    public Guid SourceObjectId { get; set; }
+    public byte[] SourceSha256 { get; set; } = [];
+    public Guid PdfObjectId { get; set; }
+    public long PdfLength { get; set; }
+    public byte[] PdfSha256 { get; set; } = [];
+    public int DocumentPages { get; set; }
+    public int CertificatePages { get; set; }
+    public string GeometryJson { get; set; } = "";
+    public string EvidenceJson { get; set; } = "";
+    public byte[] EvidenceSha256 { get; set; } = [];
+    public byte[] FrozenStateSha256 { get; set; } = [];
+    public long AuditSequence { get; set; }
+    public byte[] AuditAnchor { get; set; } = [];
+    public byte[] RecipeSha256 { get; set; } = [];
+    public string RendererVersion { get; set; } = "";
+    public string SnapshotVersion { get; set; } = "";
+    public DateTimeOffset PreparedAt { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
 public sealed class Recipient : IVersionedRecord
 {
     public Guid Id { get; set; } = Guid.NewGuid();
