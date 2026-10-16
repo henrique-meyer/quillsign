@@ -270,8 +270,8 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         public ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e,InterceptionResult<int> result,CancellationToken ct=default) { if(FailAudit && e.Context!.ChangeTracker.Entries<AuditEvent>().Any(x=>x.State==EntityState.Added))throw new DbUpdateException("Synthetic audit failure"); return ValueTask.FromResult(result); }
     }
     internal sealed class Signals(IWorkSignals inner) : IWorkSignals
-    { public bool FailHint; public int Published;
+    { public bool FailHint,FailPublish; public int Published;
         public Task PutHintAsync(Guid id,DateTimeOffset due,CancellationToken ct) { if(FailHint)throw new IOException("Synthetic hint failure"); return inner.PutHintAsync(id,due,ct); }
-        public Task PublishAsync(Guid id,TimeSpan delay,CancellationToken ct) { Published++; return inner.PublishAsync(id,delay,ct); }
+        public Task PublishAsync(Guid id,TimeSpan delay,CancellationToken ct) { Published++; if(FailPublish)throw new IOException("Synthetic completion notification failure"); return inner.PublishAsync(id,delay,ct); }
         public Task RemoveHintAsync(Guid id,CancellationToken ct)=>inner.RemoveHintAsync(id,ct); public Task<WorkDelivery?> ReceiveAsync(CancellationToken ct)=>inner.ReceiveAsync(ct); public Task DeferAsync(WorkDelivery d,TimeSpan delay,CancellationToken ct)=>inner.DeferAsync(d,delay,ct); public Task AcknowledgeAsync(WorkDelivery d,CancellationToken ct)=>inner.AcknowledgeAsync(d,ct); public Task<int> RecoverAsync(DateTimeOffset now,CancellationToken ct)=>inner.RecoverAsync(now,ct); public Task VerifyAsync(CancellationToken ct)=>inner.VerifyAsync(ct); }
 }

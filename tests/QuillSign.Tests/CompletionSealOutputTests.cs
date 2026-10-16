@@ -232,18 +232,18 @@ public sealed class CompletionSealOutputTests(SqlDatabaseFixture fixture) : ICla
     {
         public SigningRun Signing=null!; public SealFixtures Seal=null!; public Probe Storage=null!; public CompletionCandidateData Candidate=null!;
         private SqlDatabaseFixture fixture=null!; private TimestampAuthority timestamps=null!; private PlatformPdfSeal engine=null!; private SealCms verifier=null!;
-        public static async Task<Run> Create(SqlDatabaseFixture fixture)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool prepareCandidate=true,bool publishLast=true)
         {
-            var r=new Run {fixture=fixture,Signing=await SigningRun.Create(fixture,demo:true),Seal=await SealFixtures.Create()};
+            var r=new Run {fixture=fixture,Signing=await SigningRun.Create(fixture,demo:true,publishLast:publishLast),Seal=await SealFixtures.Create()};
             var latest=new[]{r.Signing.H.Clock.GetUtcNow(),r.Seal.Time.GetUtcNow()}.Max();
             r.Signing.H.Clock.Advance(latest-r.Signing.H.Clock.GetUtcNow()+TimeSpan.FromMilliseconds(123)); r.Seal.Time.Advance(latest-r.Seal.Time.GetUtcNow()+TimeSpan.FromMilliseconds(123));
             r.timestamps=new(r.Seal.Options,r.Seal.App.Environment,r.Signing.H.Clock); r.engine=new(r.Seal.Options,r.Seal.Certificates,r.timestamps,r.Seal.App.Environment,r.Signing.H.Clock);
             r.verifier=new(r.Seal.Options,r.timestamps); r.Storage=new(r.Signing.H.Blobs.Inner,r.Signing.H.Clock);
-            await using var db=fixture.Open(); r.Candidate=(await r.Candidates(db).PrepareAsync(r.Signing.Envelope.Id))!; Assert.NotNull(r.Candidate); return r;
+            await using var db=fixture.Open(); if(prepareCandidate) {r.Candidate=(await r.Candidates(db).PrepareAsync(r.Signing.Envelope.Id))!; Assert.NotNull(r.Candidate);} return r;
         }
         public CompletionEvidenceCollector Collector(QuillSignDbContext db)=>new(db,new(db,Signing.H.Clock),new(Storage,Signing.H.Clock),Storage,Signing.H.Clock);
-        public CompletionCandidates Candidates(QuillSignDbContext db)=>new(db,Collector(db),new(),Storage,new(db,Signing.H.Clock),Signing.H.Clock);
-        public CompletionSealOutputs Service(QuillSignDbContext db)=>new(db,Candidates(db),Collector(db),new(),engine,verifier,Storage,new(db,Signing.H.Clock),Signing.H.Clock);
+        public CompletionCandidates Candidates(QuillSignDbContext db,CompletionCommitScope? scope=null)=>new(db,Collector(db),new(),Storage,new(db,Signing.H.Clock),Signing.H.Clock,scope);
+        public CompletionSealOutputs Service(QuillSignDbContext db,CompletionCommitScope? scope=null)=>new(db,Candidates(db,scope),Collector(db),new(),engine,verifier,Storage,new(db,Signing.H.Clock),Signing.H.Clock,scope);
         public async Task<CompletionSealPair?> Prepare(Faults? faults=null,CancellationToken ct=default)
         {
             await using var baseline=fixture.Open(); var options=new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer(baseline.Database.GetConnectionString());
