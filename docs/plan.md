@@ -469,7 +469,7 @@ Validation: All 724 .NET tests and 11 Node tests pass. Twenty-six new TestServer
 
 ## QUILS-39: Expose reviewed Send and private sender confirmation
 
-Status: Done on merge of PR #42. Depends on merged QUILS-28 and QUILS-38. Owned by this chat.
+Status: Done (PR #42). Depends on merged QUILS-28 and QUILS-38. Owned by this chat.
 
 Expose the agreed v1 sender Send action and a private in-session confirmation/status screen, using the merged QUILS-28 atomic send/freeze backend and QUILS-38 signer flow. This is a small public sender UI slice; final sealing/completion delivery and sender confirmation email/status magic links remain subsequent slices. Do not fabricate actual operator disclosure policies, enable live email, create/change cloud resources or incur purchases.
 
@@ -485,9 +485,25 @@ Clarification: require a deliberate confirmation to send the reviewed request to
 
 Validation: All 752 .NET tests and 11 Node tests pass. Twenty-eight new cases cover public Send through invitation redemption, consent/adoption/field application, exact review/Finish, checkpoint publication and the next invitation; CSRF/scope/current review/intent/policy/expiry gates, immutable once-only Send replay, JSON/private notices/headers, frozen preparation, status limits and storage/audit/hint/unknown-commit recovery. Rejection, bounce, complaint and uncertain submission are distinguished from queued/submitted status. Real desktop, 390-pixel and keyboard synthetic flows passed reviewed Send, once-only confirmation/manual refresh, local Mailpit invitation redemption, two-page consent and review, deliberate adoption/application/Finish, pending-to-published sender status and owned download. Reviewed and published PDFs were byte-identical. A second browser tab changed the draft: stale Send was rejected, acknowledgments were preserved and explicit reload was required. Actual empty operator policies disabled Send; an injected owned synthetic delivery rejection showed corrective status. No live email/cloud/dependency/final-completion change. See docs/sender-send.md; PR #42.
 
+## QUILS-40: Add the internal timestamped platform PDF seal engine
+
+Status: Done upon merge of this change. Depends on merged QUILS-18. Owned by this chat.
+
+Implement the internal production PDF seal engine from merged QUILS-18 feasibility, pinned to PDFsharp 6.2.4 (MIT), as a small prerequisite for final completion. This slice signs an already prepared, hash-verified PDF once and returns bounded sealed bytes plus verified seal/timestamp metadata. It does not prepare completion certificates, mutate envelope state, persist final blobs, queue unsupported jobs, expose public sealing/verification endpoints or send mail.
+
+Introduce a narrow pluggable certificate contract and a configured PFX-file adapter with private configuration only. Validate certificate/private-key capability, validity and suitable signing usage; fail closed on configured but unusable material. Persistent Data Protection-encrypted self-signed fallback and the Key Vault adapter remain explicit subsequent provider work, not an ephemeral production fallback. Do not contact Azure/AWS or provision resources.
+
+Require an explicitly configured timestamp service and never fall back to an untimestamped seal. Use bounded, cancellable RFC 3161 transport, HTTPS without redirects in production and loopback HTTP only for synthetic Development tests. Send only a SHA-256 signature imprint with a fresh unpredictable nonce. Reject bad HTTP/content type/length/status, malformed responses, wrong imprint/algorithm/nonce, stale/future time, invalid token signature/EKU/certificate binding and untrusted TSA certificate chains. Trust uses OS roots or explicitly configured private root material; tests use a generated synthetic TSA. Document revocation/LTV limitations without claiming PAdES, AdES/QES, qualified timestamps or Adobe trust.
+
+Use a per-operation PDFsharp custom signer with bounded signature reservation so sizing does not contact a live TSA. Produce one detached CMS platform signature with SHA-256 and an RFC 3161 signature timestamp. Validate the resulting complete PDF ByteRange, detached CMS signature/digest, certificate binding and embedded timestamp before returning it; reject malformed, already signed, hash-mismatched, encrypted or oversized input and incomplete/trailing-uncovered output. Keep source bytes unchanged and record the actual output hash separately. Do not turn signer marks into signer-held cryptographic signatures.
+
+Test meaningful production sealing and independent validation using generated local certificates/TSA only: correct exact source and page preservation, detached signature/timestamp, tampering/ByteRange/trailing data, invalid PFX/key/usage/validity, nonce/imprint/EKU/chain/time failures, network limits/cancellation/redirects and missing configuration. Render synthetic output to verify its existing contents/geometry remain correct. Reuse existing permissive dependencies where available; add only a pinned permissive dependency if necessary. Keep secrets, certificates/private keys, TSA/operator values and test artifacts ignored. Run relevant full tests/model/vendor/license/secret checks, commit/push/create/attach/pass checks/merge a small QUILS-numbered PR and native Jira Done. No live TSA use, real mail, cloud changes, purchases, fabricated operator policies or scope expansion.
+
+Validation: All 805 .NET tests and 11 Node tests pass. Fifty-three new production cases cover exact source hashes, complete PDF ByteRange/Contents and detached CMS verification, signed certificate/time binding, nonce/imprint/algorithm/EKU/key/chain/time checks, RSA/ECDSA and concurrent isolated operations, bounded PFX/transport/output/capacity, redirects/cookie isolation, cancellation/recovery, unprepared/already-signed input and tampered/truncated/trailing/padding output. OpenSSL independently verifies production CMS and timestamp output and rejects changed content/imprints. Poppler renders both source/sealed pages pixel-identically; all four rotations preserve crop/media boxes, UserUnit and text. Model, browser-asset/license and dependency vulnerability checks pass. Actual PFX/TSA values remain empty; no public endpoint, envelope completion, final persistence, mail, live TSA or cloud resource change. See docs/platform-pdf-seals.md.
+
 ## QUILS-41: Add persistent demo and Key Vault seal certificate providers
 
-Status: To Do. Depends on QUILS-40 (PR #43 pending checks/merge). Owned by this chat.
+Status: In Progress. Depends on merged QUILS-40 (PR #43). Owned by this chat.
 
 Complete the agreed pluggable seal-certificate providers on top of QUILS-40. Add explicit/automatic selection of configured PFX, Key Vault certificate backing secret or persistent self-signed demo material. Automatic selection must reject ambiguous/partial configuration; a configured unusable provider must never silently fall back to a fresh identity. Preserve operation-owned private-key handles and the existing certificate validity/usage/key checks. No public endpoint, envelope completion, final packet publication or email.
 
