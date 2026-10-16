@@ -62,9 +62,13 @@ public sealed partial class ElectronicRecordDisclosure(ElectronicRecordOptions o
     {
         if (snapshot is null || snapshot.Sha256 is not { Length: 32 } || string.IsNullOrEmpty(snapshot.Text) ||
             snapshot.Text.Length > MaximumTextCharacters || string.IsNullOrEmpty(snapshot.Version) || snapshot.Version.Length > 128 ||
-            snapshot.Version.Any(char.IsControl) || snapshot.PublicId is not { Length: 32 } || !snapshot.PublicId.All(char.IsAsciiHexDigit) ||
-            string.IsNullOrEmpty(snapshot.Title) || snapshot.Title.Length > 512 || snapshot.Title.Any(char.IsControl) ||
+            snapshot.Version.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('.' or '_' or '-')) ||
+            snapshot.PublicId is not { Length: 32 } || !snapshot.PublicId.All(char.IsAsciiHexDigit) ||
+            string.IsNullOrWhiteSpace(snapshot.Title) || snapshot.Title.Length > 512 || snapshot.Title.Any(char.IsControl) ||
             string.IsNullOrEmpty(snapshot.SenderContact) || snapshot.SenderContact.Length > 320 || snapshot.SenderContact.Any(char.IsControl)) return false;
+        if (snapshot.Text.Any(c => (char.IsControl(c) && c != '\n') || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format)) return false;
+        try { if (EmailAddress.Normalize(snapshot.SenderContact) != snapshot.SenderContact) return false; }
+        catch (ArgumentException) { return false; }
         var prefix = $"Electronic Record and Signature Disclosure\nVersion: {snapshot.Version}\nEnvelope: {snapshot.PublicId}\nDocument: {snapshot.Title}\nSender contact: {snapshot.SenderContact}\n";
         if (!snapshot.Text.StartsWith(prefix,StringComparison.Ordinal)) return false;
         try { return CryptographicOperations.FixedTimeEquals(SHA256.HashData(Utf8.GetBytes(snapshot.Text)),snapshot.Sha256); }

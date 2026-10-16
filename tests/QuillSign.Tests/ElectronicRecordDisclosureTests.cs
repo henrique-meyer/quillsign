@@ -39,6 +39,11 @@ public sealed class ElectronicRecordDisclosureTests
         var older = snapshot with { Version = "earlier-version",Text = olderText,Sha256 = SHA256.HashData(Encoding.UTF8.GetBytes(olderText)) };
         Assert.True(ElectronicRecordDisclosure.Verify(older));
         Assert.False(ElectronicRecordDisclosure.Verify(null));
+        foreach (var suffix in new[] { "\0", "\u202e" })
+        {
+            var unsafeText = snapshot.Text + suffix;
+            Assert.False(ElectronicRecordDisclosure.Verify(snapshot with { Text = unsafeText,Sha256 = SHA256.HashData(Encoding.UTF8.GetBytes(unsafeText)) }));
+        }
     }
 
     [Fact]
