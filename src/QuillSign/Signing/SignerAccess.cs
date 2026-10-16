@@ -75,12 +75,12 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         await transaction.CommitAsync(ct); return context;
     }
     // The caller owns the transaction, so scope validation and mutation share the same lock.
-    internal async Task<SignerReadContext?> GetLockedContextAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct,bool declinedConfirmation = false)
+    internal async Task<SignerReadContext?> GetLockedContextAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct,bool declinedConfirmation = false,bool finishConfirmation = false)
     {
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("A transaction is required.");
         var identity = SignerAccessConfiguration.ReadIdentity(principal,time.GetUtcNow()); if (identity is null || identity.PublicId != publicId) return null;
         var envelope = await Locked(identity.EnvelopeId).AsNoTracking().SingleOrDefaultAsync(ct);
-        var context = await EligibleAsync(envelope,identity.SignerId,ct,declinedConfirmation);
+        var context = await EligibleAsync(envelope,identity.SignerId,ct,declinedConfirmation,finishConfirmation);
         if (context is null || identity.SessionExpiresAt <= time.GetUtcNow() || context.Identity.PublicId != identity.PublicId || context.Identity.Email != identity.Email ||
             context.Identity.DocumentId != identity.DocumentId || context.Identity.DocumentHash != identity.DocumentHash ||
             context.Identity.DisclosureHash != identity.DisclosureHash) return null;
@@ -92,7 +92,7 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("A transaction is required.");
         return await EligibleAsync(await Locked(envelopeId).AsNoTracking().SingleOrDefaultAsync(ct),signerId,ct);
     }
-    private async Task<SignerReadContext?> EligibleAsync(Envelope? envelope,Guid signerId,CancellationToken ct,bool declinedConfirmation = false)
+    private async Task<SignerReadContext?> EligibleAsync(Envelope? envelope,Guid signerId,CancellationToken ct,bool declinedConfirmation = false,bool finishConfirmation = false)
     {
         if (options.SessionHours is < 1 or > 24) throw new InvalidOperationException("Invalid signer session lifetime.");
         var now = time.GetUtcNow();
@@ -104,6 +104,7 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         var signer = await db.Signers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == signerId && x.EnvelopeId == envelope.Id,ct);
         if (signer is null || (declinedConfirmation ? signer.Status != SignerStatus.Declined : signer.Status is SignerStatus.Signed or SignerStatus.Declined) ||
             await db.Signers.AnyAsync(x => x.EnvelopeId == envelope.Id && x.Order < signer.Order && x.Status != SignerStatus.Signed,ct)) return null;
+        if (!finishConfirmation && await db.SignerFinishAcceptances.AnyAsync(x=>x.EnvelopeId==envelope.Id && x.SignerId==signer.Id,ct)) return null;
         var expires = now.AddHours(options.SessionHours); if (envelope.ExpiresAt is DateTimeOffset end && end < expires) expires = end;
         expires = DateTimeOffset.FromUnixTimeSeconds(expires.ToUnixTimeSeconds()); if (expires <= now) return null;
         var identity = new VerifiedSigner(envelope.Id,envelope.PublicId,signer.Id,signer.Email,documentId,

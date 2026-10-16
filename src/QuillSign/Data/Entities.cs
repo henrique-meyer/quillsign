@@ -141,6 +141,38 @@ public sealed class SignerReviewCandidate : IVersionedRecord
     public byte[] RowVersion { get; set; } = [];
 }
 
+public sealed class SignerFinishAcceptance : IVersionedRecord
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid EnvelopeId { get; set; }
+    public Guid SignerId { get; set; }
+    public Guid ReviewCandidateId { get; set; }
+    public Guid AdoptionId { get; set; }
+    public Guid SourceObjectId { get; set; }
+    public Guid PdfObjectId { get; set; }
+    public long PdfLength { get; set; }
+    public byte[] SourceSha256 { get; set; } = [];
+    public byte[] DisclosureSha256 { get; set; } = [];
+    public byte[] SessionSha256 { get; set; } = [];
+    public byte[] SnapshotSha256 { get; set; } = [];
+    public byte[] PdfSha256 { get; set; } = [];
+    public byte[] RecipeSha256 { get; set; } = [];
+    public byte[] FieldsSha256 { get; set; } = [];
+    public byte[] StatementSha256 { get; set; } = [];
+    public string FieldsJson { get; set; } = "";
+    public string SnapshotVersion { get; set; } = "";
+    public string StatementVersion { get; set; } = "";
+    public string Statement { get; set; } = "";
+    public DateOnly ProspectiveDate { get; set; }
+    public DateTimeOffset ReviewPreparedAt { get; set; }
+    public DateTimeOffset ReviewExpiresAt { get; set; }
+    public DateTimeOffset FinishedAt { get; set; }
+    public string? Ip { get; set; }
+    public string? UserAgent { get; set; }
+    public DateTimeOffset? ProcessedAt { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
 public sealed class Recipient : IVersionedRecord
 {
     public Guid Id { get; set; } = Guid.NewGuid();

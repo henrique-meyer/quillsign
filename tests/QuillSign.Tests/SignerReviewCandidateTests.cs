@@ -200,7 +200,7 @@ public sealed class SignerReviewCandidateTests(SqlDatabaseFixture fixture) : ICl
         r.H.Clock.Advance(TimeSpan.FromMinutes(2)); Assert.Throws<UnauthorizedAccessException>(()=>EnvelopeStorageAuthorization.DemandRead(cap,blob));
     }
 
-    private sealed class Run : IAsyncDisposable
+    internal sealed class Run : IAsyncDisposable
     {
         public SignerFieldTests.Harness H=null!; private SqlDatabaseFixture fixture=null!;
         public static async Task<Run> Create(SqlDatabaseFixture fixture,bool midnight=false)
@@ -224,6 +224,8 @@ public sealed class SignerReviewCandidateTests(SqlDatabaseFixture fixture) : ICl
             return r;
         }
         private SignerReviewCandidates Service(QuillSignDbContext db)=>new(db,H.Access(db),H.Adoption(db),new(H.Blobs,new()),new(25*1024*1024,20,200),H.Blobs,new(H.Protection,H.Clock),new(db,H.Clock),H.Clock);
+        public async Task<SignerFinishResult> Finish(string? receipt,bool affirm=true,string? version=SignerFinishStatement.Version,ClaimsPrincipal? p=null,string? id=null)
+        { await using var db=H.Open(); return await new SignerFinish(db,H.Access(db),Service(db),new(H.Protection,H.Clock),new(db,H.Clock),H.Clock).AcceptAsync(p??H.Principal,id??H.Envelope.PublicId,receipt,affirm,version,"127.0.0.1","Synthetic Finish test"); }
         public async Task<SignerReviewPrepared?> Prepare(ClaimsPrincipal? p=null,string? id=null) { await using var db=H.Open(); return await Service(db).PrepareAsync(p??H.Principal,id??H.Envelope.PublicId,"127.0.0.1","Synthetic review test"); }
         public async Task<SignerReviewData?> Read(string? receipt,ClaimsPrincipal? p=null,string? id=null) { await using var db=H.Open(); return await Service(db).ReadAsync(p??H.Principal,id??H.Envelope.PublicId,receipt); }
         public async Task Clear(Guid id) { await using var db=fixture.Open(); var f=await db.Fields.AsNoTracking().SingleAsync(x=>x.Id==id); Assert.Equal(SignerFieldOutcome.Applied,(await H.Change(new(id,Convert.ToBase64String(f.RowVersion),SignerFieldAction.Clear))).Outcome); }
