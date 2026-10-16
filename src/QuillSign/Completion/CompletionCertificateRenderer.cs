@@ -114,7 +114,7 @@ public sealed class CompletionCertificateRenderer
         Heading(section,"Sequential signers");
         var table=section.AddTable(); table.Borders.Width=.3; table.Borders.Color=Color.FromRgb(205,191,168); table.AddColumn(Unit.FromCentimeter(1.2)); table.AddColumn(Unit.FromCentimeter(7.1)); table.AddColumn(Unit.FromCentimeter(9.1));
         var head=table.AddRow(); head.HeadingFormat=true; head.Shading.Color=Color.FromRgb(244,240,230); head.Cells[0].AddParagraph("Order"); head.Cells[1].AddParagraph("Signer / role"); head.Cells[2].AddParagraph("Email");
-        foreach(var signer in evidence.Signers) {var row=table.AddRow(); row.Cells[0].AddParagraph(signer.Order.ToString(CultureInfo.InvariantCulture)); row.Cells[1].AddParagraph(TableText(signer.Name+"\nRole: "+Optional(signer.Role))); row.Cells[2].AddParagraph(TableText(signer.Email,28));}
+        foreach(var signer in evidence.Signers) {var row=table.AddRow(); row.Cells[0].AddParagraph(signer.Order.ToString(CultureInfo.InvariantCulture)); row.Cells[1].AddParagraph(TableText(signer.Name+"\nRole: "+Optional(signer.Role),20,"See signer "+signer.Order+" details below")); row.Cells[2].AddParagraph(TableText(signer.Email,28));}
         foreach(var signer in evidence.Signers) {
             ct.ThrowIfCancellationRequested(); Heading(section,"Signer "+signer.Order);
             Value(section,"Name",signer.Name); Value(section,"Email",signer.Email); Value(section,"Role",Optional(signer.Role));
@@ -128,7 +128,7 @@ public sealed class CompletionCertificateRenderer
         Heading(section,"Completion recipients");
         if(evidence.Recipients.Count==0)Paragraph(section,"No additional completion recipients.");
         foreach(var recipient in evidence.Recipients)Value(section,Optional(recipient.Name),recipient.Email);
-        Heading(section,"Complete audit chronology"); Paragraph(section,"Events are listed in recorded sequence order. Times are the recorded server UTC values. Hashes identify the underlying canonical audit records. Unsupported glyphs/control characters are displayed as U+ escapes; line wrapping does not change the stored values.");
+        Heading(section,"Audit chronology through snapshot"); Paragraph(section,"Every event through the evidence snapshot is listed in recorded sequence order with server UTC times and hashes of the canonical records. Later seal, publication and delivery events are recorded externally. Unsupported glyphs/control characters are displayed as U+ escapes; line wrapping does not change the stored values.");
         foreach(var entry in evidence.Events) {
             ct.ThrowIfCancellationRequested(); var first=section.Elements.Count; Heading(section,"Event "+entry.Sequence+" - "+entry.Event,10);
             Value(section,"Recorded UTC",At(entry.At)+" | Actor: "+entry.ActorType+": "+Optional(entry.Actor)); Value(section,"IP",Optional(entry.Ip)+" | User agent: "+Optional(entry.UserAgent));
@@ -163,7 +163,7 @@ public sealed class CompletionCertificateRenderer
         var image=paragraph.AddImage("base64:"+Convert.ToBase64String(mark.Png)); image.Width=Unit.FromCentimeter(Math.Min(4,1.5*width/height)); image.LockAspectRatio=true;
         var hash=Convert.ToHexStringLower(mark.Sha256); paragraph.AddText("\n"+label+" SHA-256:\n"+hash[..32]+"\n"+hash[32..]);
     }
-    private static string TableText(string value,int tokenLimit=20) {var text=Plain(value,tokenLimit); if(text.Count(c=>c=='\n')>40)throw Rejected(); return text;}
+    private static string TableText(string value,int tokenLimit=20,string? details=null) {var text=Plain(value,tokenLimit); if(text.Count(c=>c=='\n')>40)return details is not null ? Plain(details) : throw Rejected(); return text;}
     private static string Plain(string value,int tokenLimit=32)
     {
         var result=new StringBuilder(); var run=0;

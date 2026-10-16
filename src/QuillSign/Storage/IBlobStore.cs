@@ -29,6 +29,7 @@ public static class EnvelopeStorageAuthorization
         if (principal is SignatureAssetCapability capability) { capability.Demand(blob,AssetOperation.Read); return; }
         if (principal is SignerReviewPdfCapability review) { review.Demand(blob,AssetOperation.Read); return; }
         if (principal is SignerCheckpointReadCapability checkpoint) { checkpoint.Demand(blob); return; }
+        if (principal is CompletionReadCapability completion) { completion.Demand(blob); return; }
         if (principal.Identities.Any(i => i.IsAuthenticated && i.AuthenticationType == SignerAccessConfiguration.Scheme))
         {
             var signer = SignerAccessConfiguration.ReadIdentity(principal,DateTimeOffset.UtcNow);
@@ -46,6 +47,8 @@ public static class EnvelopeStorageAuthorization
 
     private static void DemandMutation(ClaimsPrincipal sender,DocumentBlob blob,AssetOperation operation)
     {
+        if(sender is CompletionReadCapability or SignerCheckpointReadCapability)
+            throw new UnauthorizedAccessException("This internal read capability cannot mutate documents.");
         if (sender is SignatureAssetCapability capability) { capability.Demand(blob,operation); return; }
         if (sender is SignerReviewPdfCapability review) { review.Demand(blob,operation); return; }
         var identities = sender.Identities.Where(i => i.IsAuthenticated).ToArray();

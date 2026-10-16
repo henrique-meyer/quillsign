@@ -26,7 +26,7 @@ internal static class CompletionEvidenceValidation
             try {if((remaining-=new UTF8Encoding(false,true).GetByteCount(text))<0)throw Rejected(); return text.Replace("\r\n","\n").Replace('\r','\n').Normalize(NormalizationForm.FormC);}
             catch(ArgumentException) {throw Rejected();}
         }
-        string Email(string value) {var email=Text(value,254); if(!MailAddress.TryCreate(email,out var parsed) || parsed.Address!=email)throw Rejected(); return email;}
+        string Email(string value) {var email=Text(value,320); if(!MailAddress.TryCreate(email,out var parsed) || parsed.Address!=email)throw Rejected(); return email;}
         byte[] Hash(byte[]? hash,bool genesis=false) {if(hash is not {Length:32} || !genesis && hash.All(x=>x==0))throw Rejected(); return hash.ToArray();}
         DateTimeOffset At(DateTimeOffset at) {if(at==default || at>input.PreparedAt)throw Rejected(); return at.ToUniversalTime();}
         CompletionMark? Mark(CompletionMark? mark)
@@ -39,8 +39,8 @@ internal static class CompletionEvidenceValidation
             return new(png,hash,SignaturePng.Version);
         }
         var doc=input.Document; if(doc.Id==Guid.Empty || doc.Pages is <1 or >200)throw Rejected();
-        doc=doc with {Name=Text(doc.Name,400),OriginalSha256=Hash(doc.OriginalSha256),ConvertedSha256=Hash(doc.ConvertedSha256),SentSha256=Hash(doc.SentSha256),CurrentSha256=Hash(doc.CurrentSha256)};
-        var sender=input.Sender with {Name=Text(input.Sender.Name,256,true),Email=Email(input.Sender.Email),VerifiedAt=At(input.Sender.VerifiedAt)};
+        doc=doc with {Name=Text(doc.Name,512),OriginalSha256=Hash(doc.OriginalSha256),ConvertedSha256=Hash(doc.ConvertedSha256),SentSha256=Hash(doc.SentSha256),CurrentSha256=Hash(doc.CurrentSha256)};
+        var sender=input.Sender with {Name=Text(input.Sender.Name,512,true),Email=Email(input.Sender.Email),VerifiedAt=At(input.Sender.VerifiedAt)};
         var disclosureVersion=Text(input.DisclosureVersion,100); var disclosureHash=Hash(input.DisclosureSha256);
         var signers=new List<CompletionSigner>(); var ids=new HashSet<Guid>(); var previous=sender.VerifiedAt;
         foreach(var signer in input.Signers)
@@ -51,22 +51,22 @@ internal static class CompletionEvidenceValidation
                 signer.FinishedAt<signer.ConsentedAt || signer.CheckpointAt<signer.FinishedAt || signer.DisclosureVersion!=disclosureVersion ||
                 !Same(signer.DisclosureSha256,disclosureHash) || signer.AdoptionId==Guid.Empty ||
                 (signer.Signature is not null || signer.Initials is not null) && signer.AdoptionId is null)throw Rejected();
-            signers.Add(signer with {Name=Text(signer.Name,256),Email=Email(signer.Email),Role=Text(signer.Role,100,true),
+            signers.Add(signer with {Name=Text(signer.Name,512),Email=Email(signer.Email),Role=Text(signer.Role,512,true),
                 EmailVerifiedAt=At(signer.EmailVerifiedAt),ViewedAt=At(signer.ViewedAt),ConsentedAt=At(signer.ConsentedAt),FinishedAt=At(signer.FinishedAt),CheckpointAt=At(signer.CheckpointAt),
                 DisclosureVersion=disclosureVersion,DisclosureSha256=Hash(signer.DisclosureSha256),CheckpointSha256=Hash(signer.CheckpointSha256),
-                Ip=Text(signer.Ip,64,true),UserAgent=Text(signer.UserAgent,1024,true),Signature=Mark(signer.Signature),Initials=Mark(signer.Initials)});
+                Ip=Text(signer.Ip,64,true),UserAgent=Text(signer.UserAgent,2048,true),Signature=Mark(signer.Signature),Initials=Mark(signer.Initials)});
             previous=signer.CheckpointAt;
         }
         if(!Same(signers[^1].CheckpointSha256,doc.CurrentSha256))throw Rejected();
-        var recipients=input.Recipients.Select(r=>r is not null ? r with {Name=Text(r.Name,256,true),Email=Email(r.Email)} : throw Rejected()).ToArray();
+        var recipients=input.Recipients.Select(r=>r is not null ? r with {Name=Text(r.Name,512,true),Email=Email(r.Email)} : throw Rejected()).ToArray();
         var events=new List<CompletionEvent>(); var previousHash=new byte[32];
         foreach(var entry in input.Events)
         {
             ct.ThrowIfCancellationRequested();
             if(entry is null || entry.Sequence!=events.Count+1 || !Same(entry.PreviousHash,previousHash) ||
                 entry.ActorType is not ("Sender" or "Signer" or "Recipient" or "System"))throw Rejected();
-            var hash=Hash(entry.Hash); events.Add(entry with {At=At(entry.At),Event=Text(entry.Event,100),Actor=Text(entry.Actor,256,true),
-                Ip=Text(entry.Ip,64,true),UserAgent=Text(entry.UserAgent,1024,true),PreviousHash=Hash(entry.PreviousHash,true),Hash=hash}); previousHash=hash;
+            var hash=Hash(entry.Hash); events.Add(entry with {At=At(entry.At),Event=Text(entry.Event,100),Actor=Text(entry.Actor,512,true),
+                Ip=Text(entry.Ip,64,true),UserAgent=Text(entry.UserAgent,2048,true),PreviousHash=Hash(entry.PreviousHash,true),Hash=hash}); previousHash=hash;
         }
         var anchor=Hash(input.AuditAnchor); if(!Same(anchor,previousHash))throw Rejected();
         return input with {PreparedAt=input.PreparedAt.ToUniversalTime(),Document=doc,Sender=sender,DisclosureVersion=disclosureVersion,DisclosureSha256=disclosureHash,

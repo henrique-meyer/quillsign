@@ -11,7 +11,10 @@ public sealed class SignerCheckpointBlobs(IBlobStore blobs,TimeProvider time)
         new(f.EnvelopeId,DocumentBlobKind.Normalized,source ? f.SourceObjectId : f.PdfObjectId),source ? f.SourceSha256 : f.PdfSha256,
         source ? null : f.PdfLength,64*1024*1024,null,ct);
     internal async Task AssetsAsync(SignerFinishAcceptance f,SignaturePreview p,CancellationToken ct)
+        =>_=await MarksAsync(f,p,ct);
+    internal async Task<SignerPdfMarks> MarksAsync(SignerFinishAcceptance f,SignaturePreview p,CancellationToken ct)
     {
+        var images=new List<byte[]>();
         foreach(var signature in new[]{true,false})
         {
             var bytes=await ReadAsync(f,new(f.EnvelopeId,signature ? DocumentBlobKind.Signature : DocumentBlobKind.Initials,signature ? p.SignatureObjectId : p.InitialsObjectId),
@@ -19,7 +22,9 @@ public sealed class SignerCheckpointBlobs(IBlobStore blobs,TimeProvider time)
             var image=SignaturePng.Normalize(bytes);
             if(!image.Bytes.AsSpan().SequenceEqual(bytes) || image.Width!=(signature ? p.SignatureWidth : p.InitialsWidth) || image.Height!=(signature ? p.SignatureHeight : p.InitialsHeight))
                 throw new InvalidDataException("The accepted signature asset could not be verified.");
+            images.Add(bytes);
         }
+        return new(p.Id,p.SignatureObjectId,p.InitialsObjectId,images[0],images[1],p.SignatureSha256.ToArray(),p.InitialsSha256.ToArray(),p.NormalizationVersion);
     }
     private async Task<byte[]> ReadAsync(SignerFinishAcceptance f,DocumentBlob blob,byte[] hash,long? expected,long maximum,SignaturePreview? assets,CancellationToken ct)
     {
