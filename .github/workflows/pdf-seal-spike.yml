@@ -10,6 +10,7 @@ on:
       - 'src/QuillSign/QuillSign.csproj'
       - 'tests/QuillSign.Tests/PlatformPdfSealTests.cs'
       - 'tests/QuillSign.Tests/SealFixtures.cs'
+      - 'tests/QuillSign.Tests/*Seal*ProviderTests.cs'
       - 'scripts/dev/Test-PlatformPdfSeal.ps1'
       - 'docs/platform-pdf-seals.md'
       - '.github/workflows/pdf-seal-spike.yml'
@@ -22,6 +23,7 @@ on:
       - 'src/QuillSign/QuillSign.csproj'
       - 'tests/QuillSign.Tests/PlatformPdfSealTests.cs'
       - 'tests/QuillSign.Tests/SealFixtures.cs'
+      - 'tests/QuillSign.Tests/*Seal*ProviderTests.cs'
       - 'scripts/dev/Test-PlatformPdfSeal.ps1'
       - 'docs/platform-pdf-seals.md'
       - '.github/workflows/pdf-seal-spike.yml'
@@ -54,3 +56,5 @@ jobs:
       - name: Verify production seals independently with generated local certificates
         shell: pwsh
         run: ./scripts/dev/Test-PlatformPdfSeal.ps1
+      - name: Verify certificate providers through local cryptography and fake SDK transports
+        run: dotnet test tests/QuillSign.Tests/QuillSign.Tests.csproj -c Release --no-build --filter "FullyQualifiedName~SealCertificateProviderTests|FullyQualifiedName~KeyVaultSealProviderTests"

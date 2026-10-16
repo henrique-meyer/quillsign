@@ -14,6 +14,22 @@ public sealed class SealCertificateMaterial(string provider,X509Certificate2 cer
     public X509Certificate2 Certificate { get; }=certificate;
     public IReadOnlyList<X509Certificate2> Chain { get; }=chain ?? [];
     public void Dispose() { Certificate.Dispose(); foreach(var item in Chain)item.Dispose(); }
+    internal static SealCertificateMaterial Load(byte[] bytes,string? password,string provider,DateTimeOffset now)
+    {
+        X509Certificate2Collection? certificates=null;
+        try {
+            if(bytes.Length is <1 or >2*1024*1024)throw new SealUnavailableException("Certificate material exceeds its limits.");
+            certificates=X509CertificateLoader.LoadPkcs12Collection(bytes,password,X509KeyStorageFlags.EphemeralKeySet,
+                new Pkcs12LoaderLimits { MaxKeys=1,MaxCertificates=8 });
+            var keys=certificates.Cast<X509Certificate2>().Where(x=>x.HasPrivateKey).ToArray();
+            if(keys.Length!=1)throw new SealUnavailableException("The provider must contain one signing identity.");
+            var result=new SealCertificateMaterial(provider,keys[0],certificates.Cast<X509Certificate2>().Where(x=>!ReferenceEquals(x,keys[0])).ToArray());
+            result.Validate(now); certificates=null; return result;
+        }
+        catch(Exception e) when(e is CryptographicException or ArgumentException)
+        { throw new SealUnavailableException("The private signing material could not be loaded."); }
+        finally { if(certificates is not null)foreach(var certificate in certificates)certificate.Dispose(); }
+    }
     internal void Validate(DateTimeOffset now)
     {
         if(string.IsNullOrWhiteSpace(Provider) || Provider.Length>100 || !Certificate.HasPrivateKey || Chain.Count>8 ||
@@ -37,18 +53,13 @@ public sealed class PfxSealCertificateProvider(SealOptions options,TimeProvider 
     {
         if(options.Pfx is null || options.Pfx.Password is null || options.Pfx.Password.Length>4096)
             throw new SealUnavailableException("Configure the private PFX signing material.");
-        byte[]? bytes=null; X509Certificate2Collection? certificates=null;
+        byte[]? bytes=null;
         try {
             bytes=await SealFiles.ReadAsync(options.Pfx.Path,2*1024*1024,ct);
-            certificates=X509CertificateLoader.LoadPkcs12Collection(bytes,options.Pfx.Password,X509KeyStorageFlags.EphemeralKeySet,
-                new Pkcs12LoaderLimits { MaxKeys=1,MaxCertificates=8 });
-            var keys=certificates.Cast<X509Certificate2>().Where(x=>x.HasPrivateKey).ToArray();
-            if(keys.Length!=1)throw new SealUnavailableException("The PFX must contain one signing identity.");
-            var result=new SealCertificateMaterial("Pfx",keys[0],certificates.Cast<X509Certificate2>().Where(x=>!ReferenceEquals(x,keys[0])).ToArray());
-            result.Validate(time.GetUtcNow()); certificates=null; return result;
+            return SealCertificateMaterial.Load(bytes,options.Pfx.Password,"Pfx",time.GetUtcNow());
         }
         catch(Exception e) when(e is CryptographicException or IOException or UnauthorizedAccessException or ArgumentException)
         { throw new SealUnavailableException("The configured PFX signing material could not be loaded."); }
-        finally { if(bytes is not null)CryptographicOperations.ZeroMemory(bytes); if(certificates is not null)foreach(var certificate in certificates)certificate.Dispose(); }
+        finally { if(bytes is not null)CryptographicOperations.ZeroMemory(bytes); }
     }
 }
