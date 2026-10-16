@@ -4,6 +4,7 @@ using QuillSign.Work;
 using QuillSign.Storage;
 using QuillSign.Sender;
 using QuillSign.Documents;
+using QuillSign.Signing;
 
 if (args.Length > 0 && args[0] == "database")
 {
@@ -29,6 +30,7 @@ builder.Services.AddQuillSignStorage(builder.Configuration, builder.Environment)
 builder.Services.AddQuillSignEmail(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignSender(builder.Configuration, builder.Environment);
+builder.Services.AddQuillSignSignerSetup(builder.Configuration);
 builder.Services.AddQuillSignDocuments(builder.Configuration);
 var app = builder.Build();
 app.UseForwardedHeaders();

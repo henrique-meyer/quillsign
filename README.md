@@ -4,7 +4,7 @@ An open-source e-signature app being built around sequential signing, no account
 
 ## Current status
 
-QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app supports sender email verification, a session scoped to one draft, PDF upload/replacement, and preview confirmation. The `/health` endpoint returns `{"status":"ok"}` without querying the database. Field editing and signing follow in later milestones.
+QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app supports sender email verification, a session scoped to one draft, PDF upload/replacement, preview confirmation, and signer setup with sequential ordering. The `/health` endpoint returns `{"status":"ok"}` without querying the database. Field editing and signing follow in later milestones.
 
 The demo's cloud resources are provisioned: Azure hosts the app, data, and background work; Amazon SES provides email. Hosted SQL, storage, application keys, and worker execution are verified. Public email delivery remains disabled pending SES readiness. The full sender verification flow runs locally with Mailpit. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
 
@@ -114,6 +114,8 @@ Compose configures Azurite automatically. The `IBlobStore` adapter checks a veri
 
 After verifying through Mailpit, upload an unsigned, unencrypted PDF to the draft. The default limits are 10 MiB and 20 pages, configurable with `Documents:MaximumBytes` and `Documents:MaximumPages` within the storage limit. Malformed, encrypted, XFA, and already-signed PDFs are rejected. The app retains the original and a rewritten PDF with hashes and page geometry; PDF.js renders the stored preview with page navigation, zoom, selectable text, and a download fallback. Confirming the preview keeps the document as a draft. Replacing it clears prior confirmation, fields, and document suggestions. Stale tabs must reload before changing a newer version.
 
+After confirming the PDF, choose **Set up signers**. Add each person's full name, email, and optional role; add yourself using the verified sender email; then edit, remove, or move signers earlier/later with keyboard-accessible controls. The default maximum is 10, configured through `Signing:MaximumSigners` (environment variable `Signing__MaximumSigners`). Duplicate email addresses and stale changes are rejected. A signer with assigned fields cannot be removed or given a different email until those fields are removed. Setup keeps the document in draft and sends no invitations; field placement follows in a later milestone.
+
 PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.js 6.4.299 is vendored locally, including its font/decoder assets and license notices. CI verifies the committed asset hashes with `python scripts/dev/vendor_pdfjs.py --verify`; maintainers regenerate the pinned distribution with the same script without `--verify`. See [third-party notices](THIRD-PARTY-NOTICES.txt) for attribution.
 
 For host-side development, configure `Storage:Provider` as `Azurite` and `Storage:ConnectionString` in ignored local settings, pointing to the published emulator endpoint. Hosted configuration uses `Azure`, `Storage:BlobServiceUri`, and optionally `Storage:ManagedIdentityClientId`; credentials come from managed identity. `Storage:MaximumBlobBytes` defaults to 25 MiB. See `appsettings.example.json` for the configuration keys; environment variables replace `:` with `__`.
@@ -128,7 +130,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- Field editing, signer setup, and sequential signing.
+- Field editing and sequential signing.
 - Office conversion and document-processing workers.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - PDF stamping, audit evidence, completion certificates, sealing, and verification.
