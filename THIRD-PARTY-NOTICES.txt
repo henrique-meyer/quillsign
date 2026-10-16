@@ -27,6 +27,14 @@ the complete, unmodified upstream copyright and MIT license notice at
 wwwroot/vendor/interact/LICENSE beside the browser script in distributed builds.
 Integrity metadata: src/QuillSign/Build/interact.manifest.json.
 
+signature_pad 5.1.4 — MIT
+Copyright (c) 2018 Szymon Nowak (license); (c) 2026 Szymon Nowak (module).
+Source: https://github.com/szimek/signature_pad
+The build restores pinned npm bytes into an ignored cache without package scripts.
+The unmodified module and full upstream MIT notice are distributed at
+wwwroot/vendor/signature-pad/signature_pad.js and wwwroot/vendor/signature-pad/LICENSE.
+Integrity metadata: src/QuillSign/Build/signature-pad.manifest.json.
+
 These notices describe the bundled browser/PDF components. Other .NET dependencies
 retain the licenses recorded in their NuGet packages; QuillSign's own license is in LICENSE.
 

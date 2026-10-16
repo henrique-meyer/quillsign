@@ -11,7 +11,11 @@
 <p>For @Model.Context.SignerName · From <span class="contact">@Model.Context.Disclosure.SenderContact</span></p>
 <div asp-validation-summary="All" class="validation" role="alert"></div>
 @if (Model.Context.ConsentAt is not null) {
-    <p class="notice" role="status">Electronic-record consent was recorded at @Model.Context.ConsentAt.Value.ToString("u"). Review your document below. No signature has been recorded. Signature fields will be available in a later release.</p>
+    <p class="notice" role="status">Electronic-record consent was recorded at @Model.Context.ConsentAt.Value.ToString("u").
+    @if (Model.Context.SignatureAdoptionId is null) { <span>No signature has been recorded.</span> }
+    else { <span>Your signature and initials have been adopted. No document fields have been applied, and signing is not complete.</span> }
+    </p>
+    <p><a class="button-link" asp-page="/Sign/Signature" asp-route-publicId="@Model.Context.Identity.PublicId">@(Model.Context.SignatureAdoptionId is null ? "Adopt your signature" : "Review or replace your adopted marks")</a></p>
 }
 <h2>Electronic Record &amp; Signature Disclosure</h2>
 <p>Read the disclosure for this request. You may save it and the PDF before deciding.</p>

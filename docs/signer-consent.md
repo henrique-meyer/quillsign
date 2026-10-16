@@ -1,6 +1,6 @@
 # Signer disclosure, PDF review and decline
 
-QUILS-27 adds the public signer flow on the QUILS-26 invitation/session foundation. Sender send/freeze and invitation dispatch, signature adoption, field filling and Finish remain subsequent work. No public token-issuance endpoint exists.
+QUILS-27 adds the public signer consent flow on the QUILS-26 invitation/session foundation. Internal send/freeze and invitation dispatch are described in the send/freeze guide. After consent, the [capture UI](signature-capture.md) supports explicit signature/initials adoption; field filling and Finish remain subsequent work. No public token-issuance endpoint exists.
 
 ## Entry and private reads
 

@@ -27,6 +27,10 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/browser/signature-images.test.mjs
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
@@ -72,6 +76,8 @@ jobs:
         run: ./scripts/dev/Use-LocalDatabase.ps1 -Action Test
       - name: Verify restored interact.js and license
         run: python scripts/dev/verify_interact.py src/QuillSign/bin/Release/net10.0/wwwroot/vendor/interact
+      - name: Verify restored signature_pad and license
+        run: python scripts/dev/verify_signature_pad.py src/QuillSign/bin/Release/net10.0/wwwroot/vendor/signature-pad
       - name: Exercise finite work commands
         shell: pwsh
         run: |

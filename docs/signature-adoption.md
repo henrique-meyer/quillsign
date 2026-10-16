@@ -1,6 +1,6 @@
 # Signature preview and adoption backend
 
-QUILS-30 adds `SignatureAdoption.PrepareAsync`, `ReadAsync` and `AdoptAsync` as internal workflow services. There is no public adoption endpoint, browser capture UI, field application, PDF mutation or Finish action in this slice. A future UI must display the returned server-normalized signature and initials plus the exact statement before collecting an explicit adoption action. Preparing or fetching a preview records no adoption.
+QUILS-30 adds `SignatureAdoption.PrepareAsync`, `ReadAsync` and `AdoptAsync` as internal workflow services. QUILS-31 connects them to the [public capture/adoption UI](signature-capture.md), which displays returned server-normalized signature and initials plus the exact statement before collecting an explicit adoption action. Preparing or fetching a preview records no adoption. Field application, PDF mutation and Finish remain subsequent work.
 
 Every operation requires a current sequential signer, a live isolated signer session, the unchanged frozen PDF/disclosure and recorded consent. Each newly redeemed invitation gets a random session nonce preserved in its protected cookie; another session with the same signer, document and expiry cannot reuse a preview receipt. Older cookies without this nonce are rejected and require a fresh invitation. Receipts and signature pixels must not be logged.
 
@@ -20,4 +20,4 @@ Replacing a mark requires a fresh preview of the current signer revision. Replac
 
 Apply the migration before use and rerun the existing `database grant-runtime` provisioning step with the authorized administrator connection. Runtime grants allow preview SELECT/INSERT/DELETE and only the `UsedAt` column to be updated; preview contents cannot be updated through runtime permissions. Cloud deployment/provisioning was not performed by this change.
 
-SQL Server/Azurite tests cover normalization/receipt/session binding, context changes, count/lifetime limits, capability isolation, storage verification/loss/tampering/size bounds, rollback cleanup, uncertain commit recovery, concurrent/idempotent adoption, replacement, immutable preview contents and audit rollback/retry. UI validation remains part of the later UI story.
+SQL Server/Azurite tests cover normalization/receipt/session binding, context changes, count/lifetime limits, capability isolation, storage verification/loss/tampering/size bounds, rollback cleanup, uncertain commit recovery, concurrent/idempotent adoption, replacement, immutable preview contents and audit rollback/retry. Capture-page/browser validation is described in the UI guide.

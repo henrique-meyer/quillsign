@@ -1,0 +1,59 @@
+@page "/sign/{publicId}/signature"
+@model QuillSign.Pages.Sign.SignatureModel
+@{ ViewData["Title"]="Adopt your signature"; }
+@section Styles { <link rel="stylesheet" href="~/signer.css" asp-append-version="true" /> }
+<section class="signer-flow signature-flow">
+<p class="eyebrow">Your signature and initials</p>
+<h1>@Model.Context.Title</h1>
+<p>For @Model.Context.SignerName · <a asp-page="/Sign/Index" asp-route-publicId="@Model.Context.Identity.PublicId">Review the document and disclosure</a></p>
+@if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
+<div asp-validation-summary="All" class="validation" role="alert"></div>
+@if(Model.Context.SignatureAdoptionId is not null) {
+    <section class="start-card"><h2>Your marks are adopted</h2><p>No document fields have been applied, and signing is not complete. Deliberate field application and Finish will be available in a later release.</p>
+    <p>To replace your adopted marks, prepare and review a new pair below. Earlier adoption evidence is retained.</p></section>
+}
+else { <p>Prepare both marks, review the saved preview, then choose Adopt and Sign. This adopts your marks; it does not fill document fields or complete signing.</p> }
+<noscript><p class="document-error">Enable JavaScript to prepare and review signature images. You may still download the document and disclosure from the review page.</p></noscript>
+<form method="post" asp-page-handler="Preview" enctype="multipart/form-data" id="mark-capture">
+<fieldset><legend>How would you like to create both marks?</legend>
+<label class="check-label"><input type="radio" name="Method" value="Typed" checked /> Type (keyboard accessible)</label>
+<label class="check-label"><input type="radio" name="Method" value="Drawn" /> Draw</label>
+<label class="check-label"><input type="radio" name="Method" value="Uploaded" /> Upload images</label>
+</fieldset>
+<div id="typed-marks">
+<label for="typed-name">Name for your signature</label><input id="typed-name" name="TypedName" value="@Model.TypedName" maxlength="200" autocomplete="name" />
+<label for="typed-initials">Initials</label><input id="typed-initials" name="TypedInitials" maxlength="20" autocomplete="off" />
+<p class="hint">The preview uses the name and initials you enter. Check the exact saved appearance before adopting.</p>
+</div>
+<div id="drawn-marks" hidden>
+<p id="draw-instructions">Draw each mark with a mouse, pen or touch. Use Type for a keyboard-accessible alternative.</p>
+<label id="signature-canvas-label">Draw your signature</label><canvas id="signature-canvas" class="signature-pad" aria-labelledby="signature-canvas-label" aria-describedby="draw-instructions"></canvas>
+<button type="button" class="quiet-button" id="clear-signature">Clear signature</button>
+<label id="initials-canvas-label">Draw your initials</label><canvas id="initials-canvas" class="signature-pad" aria-labelledby="initials-canvas-label" aria-describedby="draw-instructions"></canvas>
+<button type="button" class="quiet-button" id="clear-initials">Clear initials</button>
+</div>
+<div id="uploaded-marks" hidden>
+<p>Choose one static PNG or JPEG for each mark. Each file must be at most 5 MiB and 2048 × 1024 pixels. Animated images and other formats are unsupported. Use a clear, tightly framed mark.</p>
+<label for="signature-upload">Signature image</label><input id="signature-upload" type="file" accept="image/png,image/jpeg" />
+<label for="initials-upload">Initials image</label><input id="initials-upload" type="file" accept="image/png,image/jpeg" />
+</div>
+<p id="capture-status" role="status" aria-live="polite">No preview prepared.</p>
+<p id="capture-error" class="document-error" role="alert" hidden></p>
+<button type="submit" id="prepare-preview" disabled>Prepare saved preview</button>
+</form>
+<section id="adoption-preview" class="start-card" hidden>
+<h2 tabindex="-1" id="preview-heading">Review your saved marks</h2>
+<p>These are the exact images saved by the server. Check both before adopting. Changing any input requires a new preview.</p>
+<figure><img id="signature-image" alt="Saved signature preview" /><figcaption>Signature</figcaption></figure>
+<figure><img id="initials-image" alt="Saved initials preview" /><figcaption>Initials</figcaption></figure>
+<p id="preview-expiry"></p>
+<form method="post" asp-page-handler="Adopt" id="adopt-marks">
+<input type="hidden" name="Receipt" id="preview-receipt" /><input type="hidden" name="StatementVersion" id="statement-version" />
+<p id="adoption-statement"></p>
+<label class="check-label"><input type="checkbox" name="Acknowledged" value="true" id="adoption-ack" required /> I agree to the adoption statement above for these exact signature and initials.</label>
+<button type="submit" id="adopt-button" disabled>Adopt and Sign</button>
+<p class="hint">Document fields require deliberate application. Signing is completed only with Finish, which is not available in this release.</p>
+</form>
+</section>
+</section>
+@section Scripts { <script type="module" src="~/js/signature-capture.mjs" asp-append-version="true"></script> }
