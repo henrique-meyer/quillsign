@@ -218,7 +218,7 @@ public sealed class SignerConsentTests(SqlDatabaseFixture fixture) : IClassFixtu
         var disclosure = new ElectronicRecordDisclosure(ElectronicRecordDisclosureTests.Policy()).Build(envelope.PublicId,envelope.Title,envelope.SenderEmail);
         envelope.ErsdVersion = disclosure.Version; envelope.ErsdText = disclosure.Text; envelope.ErsdSha256 = disclosure.Sha256;
         var signer = new Signer { EnvelopeId = envelope.Id,FullName = "Synthetic signer",Email = "signer@example.invalid" };
-        var invite = new SignerInvitationFactory(new(),clock).Create(envelope.Id,signer.Id,signer.Email,envelope.ExpiresAt);
+        var invite = new SignerInvitationFactory(new(),clock).Create(envelope.Id,signer.Id,signer.Email,envelope.ExpiresAt,Guid.Parse(envelope.SentPdfBlob),envelope.SentPdfSha256,disclosure.Sha256);
         await using var db = fixture.Open(); db.AddRange(envelope,signer,invite.Record,new DocumentField { EnvelopeId = envelope.Id,Type = FieldType.Text,X = .1m,Y = .1m,Width = .2m,Height = .1m,Value = "unchanged" }); await db.SaveChangesAsync();
         var identity = new VerifiedSigner(envelope.Id,envelope.PublicId,signer.Id,signer.Email,Guid.Parse(envelope.SentPdfBlob),Convert.ToHexStringLower(envelope.SentPdfSha256),Convert.ToHexStringLower(disclosure.Sha256),clock.GetUtcNow().AddHours(2));
         return new(envelope,signer,invite,identity,SignerAccessConfiguration.Principal(identity),pdf);

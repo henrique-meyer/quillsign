@@ -39,6 +39,7 @@ builder.Services.AddScoped<SignerFieldView>();
 builder.Services.AddScoped<SignerReviewProtection>();
 builder.Services.AddScoped<SignerReviewCandidates>();
 builder.Services.AddScoped<SignerFinish>();
+builder.Services.AddScoped<SignerCheckpointReads>();
 builder.Services.AddQuillSignSignerSetup(builder.Configuration);
 builder.Services.AddQuillSignFieldEditor(builder.Configuration);
 builder.Services.AddQuillSignDocuments(builder.Configuration);

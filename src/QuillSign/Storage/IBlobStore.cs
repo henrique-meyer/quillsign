@@ -28,6 +28,7 @@ public static class EnvelopeStorageAuthorization
     {
         if (principal is SignatureAssetCapability capability) { capability.Demand(blob,AssetOperation.Read); return; }
         if (principal is SignerReviewPdfCapability review) { review.Demand(blob,AssetOperation.Read); return; }
+        if (principal is SignerCheckpointReadCapability checkpoint) { checkpoint.Demand(blob); return; }
         if (principal.Identities.Any(i => i.IsAuthenticated && i.AuthenticationType == SignerAccessConfiguration.Scheme))
         {
             var signer = SignerAccessConfiguration.ReadIdentity(principal,DateTimeOffset.UtcNow);

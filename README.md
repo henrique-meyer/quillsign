@@ -134,7 +134,7 @@ The internal [signer PDF renderer](docs/signer-pdf-rendering.md) turns a verifie
 
 The internal [review-candidate backend](docs/signer-review-candidates.md) stages immutable exact PDFs bound to current saved fields, adoption, consent and session. Review receipts expire within ten minutes and before the next UTC date; a later explicit Finish must consume the reviewed copy and match its prospective server date.
 
-The internal [Finish acceptance backend](docs/signer-finish.md) consumes that exact review on explicit intent, records actual server Date Signed and freezes signer entries atomically. Checkpoint publication, Signed state, sequential progression and the public Finish screen remain subsequent work.
+The internal [Finish acceptance backend](docs/signer-finish.md) consumes that exact review on explicit intent, records actual server Date Signed and freezes signer entries atomically. Its durable [checkpoint worker](docs/signer-checkpoints.md) verifies/publishes the exact accepted PDF, records Signed state and advances the next signer against the verified current copy. Public review/Finish/confirmation and final completion remain subsequent work.
 
 PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.js 6.4.299 is vendored locally, including its font/decoder assets and license notices. Its four Liberation Sans fonts are replaced with unmodified upstream 2.1.5 under OFL-1.1. CI verifies the committed asset hashes with `python scripts/dev/vendor_pdfjs.py --verify`; maintainers regenerate the pinned distribution with the same script without `--verify`. See [third-party notices](THIRD-PARTY-NOTICES.txt) for attribution.
 

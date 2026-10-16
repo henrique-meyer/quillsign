@@ -232,10 +232,11 @@ public sealed class SignerFieldTests(SqlDatabaseFixture fixture) : IClassFixture
     internal sealed class Clock : TimeProvider { private DateTimeOffset now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public bool TickOnRead; public override DateTimeOffset GetUtcNow() { var result=now; if(TickOnRead)now=now.AddMilliseconds(1); return result; } public void Advance(TimeSpan span)=>now+=span; public void Set(DateTimeOffset value)=>now=value; }
     internal sealed class Blobs(IBlobStore inner) : IBlobStore
     { public List<DocumentBlob> Created=[]; public Action? AfterRead; public Action<DocumentBlob>? ReadCompleted;
-        public Guid SourceId; public bool FailReviewWrite,TamperReviewRead,WrongReviewLength,FailReviewDelete; public ClaimsPrincipal? LastReviewRead; public IBlobStore Inner=>inner;
+        public Guid SourceId; public bool FailReviewWrite,TamperReviewRead,WrongReviewLength,FailReviewDelete,OversizeReviewRead; public ClaimsPrincipal? LastReviewRead; public IBlobStore Inner=>inner;
         public Task WriteAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,long length,CancellationToken ct=default) { Created.Add(b); if(FailReviewWrite && b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId)throw new IOException("Synthetic review write failure"); return inner.WriteAsync(p,b,s,length,ct); }
         public async Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct=default) { long length;
             if(b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId)LastReviewRead=p;
+            if(OversizeReviewRead && b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId)s.SetLength(64*1024*1024+1);
             if(TamperReviewRead && b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId) { using var m=new MemoryStream(); length=await inner.CopyToAsync(p,b,m,ct); var bytes=m.ToArray(); bytes[0]^=1; await s.WriteAsync(bytes,ct); }
             else length=await inner.CopyToAsync(p,b,s,ct); AfterRead?.Invoke(); ReadCompleted?.Invoke(b); return WrongReviewLength && b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId ? long.MaxValue : length; }
         public Task DeleteAsync(ClaimsPrincipal p,DocumentBlob b,CancellationToken ct=default) { if(FailReviewDelete && b.Kind==DocumentBlobKind.Normalized && b.ObjectId!=SourceId)throw new IOException("Synthetic review cleanup failure"); return inner.DeleteAsync(p,b,ct); } }

@@ -103,6 +103,17 @@ namespace QuillSign.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<byte[]>("DisclosureSha256")
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid?>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("DocumentSha256")
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasMaxLength(320)
@@ -156,11 +167,17 @@ namespace QuillSign.Data.Migrations
 
                     b.ToTable("AuthTokens", t =>
                         {
+                            t.HasCheckConstraint("CK_AuthToken_DisclosureSha256", "[DisclosureSha256] IS NULL OR DATALENGTH([DisclosureSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_AuthToken_DocumentSha256", "[DocumentSha256] IS NULL OR DATALENGTH([DocumentSha256]) = 32");
+
                             t.HasCheckConstraint("CK_AuthToken_PartyType", "[PartyType] IS NULL OR [PartyType] IN ('Sender','Signer','Recipient','System')");
 
                             t.HasCheckConstraint("CK_AuthToken_Purpose", "[Purpose] IS NULL OR [Purpose] IN ('SenderVerify','SenderStatus','SignerAccess','Lookup')");
 
                             t.HasCheckConstraint("CK_AuthToken_TokenSha256", "[TokenSha256] IS NULL OR DATALENGTH([TokenSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_Token_DocumentBinding", "([DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL) OR ([DocumentId] IS NOT NULL AND [DocumentSha256] IS NOT NULL AND [DisclosureSha256] IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_Token_Scope", "[Purpose] = 'Lookup' OR [EnvelopeId] IS NOT NULL");
                         });
@@ -360,7 +377,6 @@ namespace QuillSign.Data.Migrations
             modelBuilder.Entity("QuillSign.Data.Envelope", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("AiModel")
@@ -383,6 +399,12 @@ namespace QuillSign.Data.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("CurrentCopyVersion")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("CurrentFinishId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<byte[]>("ErsdSha256")
                         .HasMaxLength(32)
@@ -515,11 +537,15 @@ namespace QuillSign.Data.Migrations
 
                     b.HasIndex("PurgeAfter");
 
+                    b.HasIndex("Id", "CurrentFinishId");
+
                     b.ToTable("Envelopes", t =>
                         {
                             t.HasCheckConstraint("CK_Envelope_AiRolesJson", "[AiRolesJson] IS NULL OR ISJSON([AiRolesJson]) = 1");
 
                             t.HasCheckConstraint("CK_Envelope_CertificateSha256", "[CertificateSha256] IS NULL OR DATALENGTH([CertificateSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_Envelope_CurrentCopy", "([CurrentFinishId] IS NULL AND [CurrentCopyVersion] = 0) OR ([CurrentFinishId] IS NOT NULL AND [CurrentCopyVersion] BETWEEN 1 AND 100)");
 
                             t.HasCheckConstraint("CK_Envelope_ErsdSha256", "[ErsdSha256] IS NULL OR DATALENGTH([ErsdSha256]) = 32");
 
@@ -861,6 +887,9 @@ namespace QuillSign.Data.Migrations
                         .HasMaxLength(45)
                         .HasColumnType("nvarchar(45)");
 
+                    b.Property<Guid?>("NextInvitationId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<long>("PdfLength")
                         .HasColumnType("bigint");
 
@@ -945,6 +974,10 @@ namespace QuillSign.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("NextInvitationId")
+                        .IsUnique()
+                        .HasFilter("[NextInvitationId] IS NOT NULL");
+
                     b.HasIndex("ReviewCandidateId")
                         .IsUnique();
 
@@ -964,6 +997,8 @@ namespace QuillSign.Data.Migrations
                             t.HasCheckConstraint("CK_SignerFinishAcceptance_FieldsJson", "[FieldsJson] IS NULL OR ISJSON([FieldsJson]) = 1");
 
                             t.HasCheckConstraint("CK_SignerFinishAcceptance_FieldsSha256", "[FieldsSha256] IS NULL OR DATALENGTH([FieldsSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_SignerFinishAcceptance_Invitation", "[NextInvitationId] IS NULL OR [ProcessedAt] IS NOT NULL");
 
                             t.HasCheckConstraint("CK_SignerFinishAcceptance_Pdf", "[PdfLength] BETWEEN 16 AND 67108864 AND [SourceObjectId] <> [PdfObjectId]");
 
@@ -1233,6 +1268,15 @@ namespace QuillSign.Data.Migrations
                     b.HasOne("QuillSign.Data.Envelope", null)
                         .WithMany()
                         .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("QuillSign.Data.Envelope", b =>
+                {
+                    b.HasOne("QuillSign.Data.SignerFinishAcceptance", null)
+                        .WithMany()
+                        .HasForeignKey("Id", "CurrentFinishId")
+                        .HasPrincipalKey("EnvelopeId", "Id")
                         .OnDelete(DeleteBehavior.NoAction);
                 });
 

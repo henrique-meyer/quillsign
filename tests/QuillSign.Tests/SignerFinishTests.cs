@@ -26,7 +26,7 @@ public sealed class SignerFinishTests(SqlDatabaseFixture fixture) : IClassFixtur
         var date=Assert.Single(after,x=>x.Type==FieldType.DateSigned); Assert.Equal(actual.UtcDateTime.ToString("yyyy-MM-dd"),date.Value); Assert.Equal(actual,date.FilledAt); Assert.Equal(PartyType.Signer,date.FilledBy);
         Assert.Equal(JsonSerializer.Serialize(after.Where(x=>x.SignerId==r.H.Signer.Id)),record.FieldsJson); Assert.Equal(SHA256.HashData(Encoding.UTF8.GetBytes(record.FieldsJson)),record.FieldsSha256);
         var evidence=Assert.Single(await db.AuditEvents.Where(x=>x.EnvelopeId==r.H.Envelope.Id && x.Event=="signer_finish_accepted").ToArrayAsync()); Assert.Equal(AuditHash.Compute(evidence),evidence.Hash); Assert.Equal(r.H.Signer.Id,evidence.ActorId); Assert.Contains("publication_pending",evidence.DataJson); Assert.Contains(SignerFinishStatement.Text,evidence.DataJson);
-        Assert.False(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==r.H.Envelope.Id && x.Event=="signer_completed")); Assert.False(await db.WorkItems.AnyAsync(x=>x.EnvelopeId==r.H.Envelope.Id)); Assert.False(await db.EmailOutbox.AnyAsync(x=>x.EnvelopeId==r.H.Envelope.Id));
+        Assert.False(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==r.H.Envelope.Id && x.Event=="signer_completed")); Assert.Equal(WorkKind.Rendering,Assert.Single(await db.WorkItems.Where(x=>x.EnvelopeId==r.H.Envelope.Id).ToArrayAsync()).Kind); Assert.False(await db.EmailOutbox.AnyAsync(x=>x.EnvelopeId==r.H.Envelope.Id));
         var signer=await db.Signers.SingleAsync(x=>x.Id==r.H.Signer.Id); Assert.Equal(SignerStatus.Viewed,signer.Status); Assert.Null(signer.SignedAt); Assert.Equal(EnvelopeStatus.Sent,(await db.Envelopes.SingleAsync(x=>x.Id==r.H.Envelope.Id)).Status);
         Assert.Equal(source,(await r.H.Raw(new(r.H.Identity.EnvelopeId,DocumentBlobKind.Normalized,r.H.Identity.DocumentId)).DownloadContentAsync()).Value.Content.ToArray()); Assert.Null(await r.Read(review.Receipt)); Assert.Null(await r.Prepare());
     }
@@ -75,7 +75,7 @@ public sealed class SignerFinishTests(SqlDatabaseFixture fixture) : IClassFixtur
         await using var check=r.H.Open(); Assert.Null(await r.H.Access(check).GetContextAsync(r.H.Principal,r.H.Envelope.PublicId));
         Assert.Null(await r.H.Adoption(check).PrepareAsync(r.H.Principal,r.H.Envelope.PublicId,new(SignatureAdoptionTests.Mark(),SignatureAdoptionTests.Mark(),SignatureMethod.Drawn)));
         Assert.Equal(SignatureAdoptionResult.InvalidContext,await r.H.Adoption(check).AdoptAsync(r.H.Principal,r.H.Envelope.PublicId,preview.Receipt,true,SignatureAdoptionStatement.Version,null,null));
-        var invitation=new SignerInvitationFactory(new(),r.H.Clock).Create(r.H.Envelope.Id,r.H.Signer.Id,r.H.Signer.Email,r.H.Envelope.ExpiresAt); check.Add(invitation.Record); await check.SaveChangesAsync();
+        var invitation=new SignerInvitationFactory(new(),r.H.Clock).Create(r.H.Envelope.Id,r.H.Signer.Id,r.H.Signer.Email,r.H.Envelope.ExpiresAt,r.H.Identity.DocumentId,Convert.FromHexString(r.H.Identity.DocumentHash),Convert.FromHexString(r.H.Identity.DisclosureHash)); check.Add(invitation.Record); await check.SaveChangesAsync();
         Assert.Null(await r.H.Access(check).RedeemAsync(invitation.RawToken,null,null)); Assert.Null((await check.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==invitation.Record.Id)).UsedAt);
     }
     [Theory]
@@ -85,7 +85,7 @@ public sealed class SignerFinishTests(SqlDatabaseFixture fixture) : IClassFixtur
         await using var r=await Run.Create(fixture,midnight); var review=(await r.Prepare())!; var first=await r.Finish(review.Receipt); Assert.Equal(SignerFinishOutcome.Accepted,first.Outcome);
         r.H.Clock.Advance(midnight ? TimeSpan.FromSeconds(11) : TimeSpan.FromMinutes(11)); var retry=await r.Finish(review.Receipt); Assert.Equal(SignerFinishOutcome.AlreadyAccepted,retry.Outcome); Assert.Equal(first.Acceptance,retry.Acceptance);
         await using var db=fixture.Open(); Assert.Single(await db.AuditEvents.Where(x=>x.EnvelopeId==r.H.Envelope.Id && x.Event=="signer_finish_accepted").ToArrayAsync()); Assert.Equal(review.ProspectiveDate.ToString("yyyy-MM-dd"),(await db.Fields.SingleAsync(x=>x.Id==r.H.Field(FieldType.DateSigned).Id)).Value);
-        r.H.Identity=r.H.Identity with { SessionId=Guid.NewGuid() }; Assert.Equal(SignerFinishOutcome.InvalidReview,(await r.Finish(review.Receipt)).Outcome);
+        r.H.Identity=r.H.Identity with { SessionId=Guid.NewGuid() }; Assert.Equal(SignerFinishOutcome.InvalidContext,(await r.Finish(review.Receipt)).Outcome);
     }
     [Theory]
     [InlineData("candidate")][InlineData("source")][InlineData("asset")]

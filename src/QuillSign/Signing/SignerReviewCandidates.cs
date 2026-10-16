@@ -181,9 +181,11 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
         return memory.ToArray();
     }
     internal async Task<bool> Evidence(SignerReviewCandidate p,VerifiedSigner identity,CancellationToken ct)
+        =>await PreparationEvidence(db,p,identity.Email,ct);
+    internal static async Task<bool> PreparationEvidence(QuillSignDbContext db,SignerReviewCandidate p,string email,CancellationToken ct)
     {
         var events=await db.AuditEvents.FromSqlInterpolated($"SELECT * FROM [AuditEvents] WHERE JSON_VALUE([DataJson], '$.candidateId') = {p.Id.ToString("D")}")
-            .AsNoTracking().Where(e=>e.EnvelopeId==identity.EnvelopeId && e.Event=="signer_review_prepared" && e.ActorType==PartyType.Signer && e.ActorId==identity.SignerId && e.ActorEmail==identity.Email).ToArrayAsync(ct);
+            .AsNoTracking().Where(e=>e.EnvelopeId==p.EnvelopeId && e.Event=="signer_review_prepared" && e.ActorType==PartyType.Signer && e.ActorId==p.SignerId && e.ActorEmail==email).ToArrayAsync(ct);
         if(events.Length!=1 || !Same(events[0].Hash,AuditHash.Compute(events[0])))return false;
         try
         {
