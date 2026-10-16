@@ -1,9 +1,13 @@
 @page "/draft/{publicId}/review"
 @model QuillSign.Pages.Draft.ReviewModel
+@using QuillSign.Sender
 @{ ViewData["Title"] = "Review document preparation"; }
 <div class="draft-review">
 <p class="eyebrow">ONE LAST LOOK</p>
 <h1>Review your draft.</h1>
+@if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p><p><a href="">Reload and review saved state</a></p> }
+@if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
+@if(Model.Draft is not null) {
 <p class="intro">Check the document, signing order, and everyone who receives the completed packet.</p>
 <section class="notice" aria-labelledby="checks-title">
     <h2 id="checks-title">@(Model.Draft.ChecksPassed ? "Preparation checks passed" : "Preparation needs attention")</h2>
@@ -58,5 +62,19 @@
     <p><a href="@Model.StepUrl("details")">Edit completion recipients</a></p>
 </section>
 <p class="hint">Your document stays a draft. Reviewing it sends no invitations.</p>
+<section class="start-card">
+<h2>Send for signing</h2>
+@if(Model.Draft.ExpiresAt is { } expiry) { <p>Request expiry: @expiry.ToString("u").</p> }
+@if(Model.Readiness?.Error is { } error) { <p class="document-error" role="status">@error</p> }
+@if(Model.Readiness?.Disclosure is { } disclosure) { <h3>Electronic-record disclosure for this request</h3><pre class="send-disclosure" tabindex="0" aria-label="Electronic-record disclosure for this request">@disclosure.Text</pre> }
+<p>Sending freezes this preparation and queues the first signing invitation. Later signers are invited in order after each signing copy is processed.</p>
+<form method="post" asp-page-handler="Send">
+<input type="hidden" asp-for="Version" /><input type="hidden" name="StatementVersion" value="@SenderSendStatement.Version" />
+<label class="send-check"><input type="checkbox" asp-for="ExclusionsAcknowledged" required /> I confirm this is not a will, court or family-law document, foreclosure/eviction/utility notice, or another excluded record, and this transaction is suitable for electronic signing.</label>
+<label class="send-check"><input type="checkbox" asp-for="SendAcknowledged" required /> @SenderSendStatement.Text</label>
+<button type="submit" disabled="@(!Model.Draft.ChecksPassed || Model.Readiness?.Available!=true || Model.ReloadRequired)">Send for signing</button>
+</form>
+</section>
+}
 </div>
 @section Styles { <link rel="stylesheet" href="~/review.css" asp-append-version="true" /> }

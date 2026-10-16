@@ -124,7 +124,7 @@ Choose **Review document preparation** to see the PDF, ordered signers, sender-f
 
 The [versioned electronic-record disclosure foundation](docs/electronic-record-disclosure.md) builds exact envelope-bound text and hashes for a later send/consent transaction. Operators must supply actual paper-copy, withdrawal, contact-update, access and retention policies through private `ElectronicRecords__...` settings; empty examples fail snapshot construction. This foundation exposes no consent or signing UI.
 
-The backend [signer-access foundation](docs/signer-access.md) provides single-use invitation redemption, isolated two-hour signer sessions and access scoped to the frozen PDF/disclosure. Invitation tokens are created at actual dispatch with a default 24-hour life, bounded by envelope expiry. The [signer consent flow](docs/signer-consent.md) adds a safe invitation landing, stored disclosure/PDF downloads, read-only preview, explicit access/consent confirmations and decline with durable sender notification. The internal [send/freeze foundation](docs/send-freeze.md) atomically freezes reviewed drafts and queues the first signer invitation, with tokens activated at dispatch. Consented signers can [type, draw or upload their signature and initials](docs/signature-capture.md), review exact saved server previews and explicitly adopt them through the [adoption backend](docs/signature-adoption.md). The field screen supports deliberate per-field application and a saved-entry review. Public sender Send/confirmation and Finish remain pending.
+The backend [signer-access foundation](docs/signer-access.md) provides single-use invitation redemption, isolated two-hour signer sessions and access scoped to the frozen PDF/disclosure. Invitation tokens are created at actual dispatch with a default 24-hour life, bounded by envelope expiry. The [signer consent flow](docs/signer-consent.md) adds a safe invitation landing, stored disclosure/PDF downloads, read-only preview, explicit access/consent confirmations and decline with durable sender notification. [Reviewed Send and private sender status](docs/sender-send.md) use the [atomic freeze backend](docs/send-freeze.md) to queue the first signer invitation, with tokens activated at dispatch. Actual operator disclosure policies and approved delivery configuration are required. Consented signers can [type, draw or upload their signature and initials](docs/signature-capture.md), review exact saved server previews and explicitly adopt them through the [adoption backend](docs/signature-adoption.md). The field screen supports deliberate per-field application and a saved-entry review, followed by exact PDF review and explicit Finish.
 
 The [signature asset processor](docs/signature-assets.md) validates and normalizes bounded PNG marks for adoption previews. It provides image processing only; the separate adoption workflow authorizes storage and records explicit adoption.
 
@@ -134,7 +134,7 @@ The internal [signer PDF renderer](docs/signer-pdf-rendering.md) turns a verifie
 
 The internal [review-candidate backend](docs/signer-review-candidates.md) stages immutable exact PDFs bound to current saved fields, adoption, consent and session. Review receipts expire within ten minutes and before the next UTC date; a later explicit Finish must consume the reviewed copy and match its prospective server date.
 
-The internal [Finish acceptance backend](docs/signer-finish.md) consumes that exact review on explicit intent, records actual server Date Signed and freezes signer entries atomically. Its durable [checkpoint worker](docs/signer-checkpoints.md) verifies/publishes the exact accepted PDF, records Signed state and advances the next signer against the verified current copy. Public review/Finish/confirmation and final completion remain subsequent work.
+The internal [Finish acceptance backend](docs/signer-finish.md) consumes that exact review on explicit intent, records actual server Date Signed and freezes signer entries atomically. Its durable [checkpoint worker](docs/signer-checkpoints.md) verifies/publishes the exact accepted PDF, records Signed state and advances the next signer against the verified current copy. Public review/Finish/confirmation is available; final completion remains subsequent work.
 
 PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.js 6.4.299 is vendored locally, including its font/decoder assets and license notices. Its four Liberation Sans fonts are replaced with unmodified upstream 2.1.5 under OFL-1.1. CI verifies the committed asset hashes with `python scripts/dev/vendor_pdfjs.py --verify`; maintainers regenerate the pinned distribution with the same script without `--verify`. See [third-party notices](THIRD-PARTY-NOTICES.txt) for attribution.
 
@@ -156,7 +156,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- Deliberate signer field application, review and Finish.
+- Final sealing, completion certificates/delivery and sender status-link email.
 - Office conversion and document-processing workers.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - PDF stamping, audit evidence, completion certificates, sealing, and verification.

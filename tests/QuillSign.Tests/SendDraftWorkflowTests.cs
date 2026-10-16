@@ -6,6 +6,9 @@ using System.Text.RegularExpressions;
 using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
@@ -50,7 +53,7 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
     {
         await using var run = await Harness.Create(fixture);
         var results = await Task.WhenAll(Enumerable.Range(0,4).Select(async _ => { try { return await run.Send(); } catch (DocumentConflictException) { return null; } }));
-        Assert.Single(results,x => x is not null); Assert.Single(run.Blobs.Created);
+        Assert.All(results,x=>Assert.NotNull(x)); Assert.Single(results.Select(x=>x!.InvitationWorkId).Distinct()); Assert.Single(run.Blobs.Created);
         await using var db = fixture.Open(); Assert.Single(await db.EmailOutbox.Where(x => x.EnvelopeId == run.Envelope.Id).ToArrayAsync());
     }
     [Theory]
@@ -86,7 +89,7 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         if (kind == "foreign") principal = SenderConfiguration.Principal(new(Guid.NewGuid(),run.Envelope.PublicId,run.Envelope.SenderEmail));
         if (kind == "mixed") principal.AddIdentity(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier,"other")],"another-scheme"));
         if (kind == "duplicate") ((ClaimsIdentity)principal.Identity!).AddClaim(new Claim(ClaimTypes.Email,run.Envelope.SenderEmail));
-        using var scope = run.App.Services.CreateScope(); Assert.Null(await scope.ServiceProvider.GetRequiredService<SendDraftWorkflow>().SendAsync(principal,run.Envelope.PublicId,run.Version,true,null,null));
+        using var scope = run.App.Services.CreateScope(); Assert.Null(await scope.ServiceProvider.GetRequiredService<SendDraftWorkflow>().SendAsync(principal,run.Envelope.PublicId,run.Version,true,true,SenderSendStatement.Version,null,null));
         Assert.Empty(run.Blobs.Created); await run.AssertUnsent(fixture);
     }
     [Theory]
@@ -190,13 +193,13 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         using var http = new HttpClient(); var json = await http.GetStringAsync("http://127.0.0.1:" + Environment.GetEnvironmentVariable("QUILLSIGN_TEST_MAIL_PORT") + "/api/v1/search?query=to:" + run.First.Email);
         Assert.Contains("Review your signing request",json); await using var db = fixture.Open(); Assert.Equal(EmailStatus.Sent,(await db.EmailOutbox.SingleAsync(x => x.Id == sent.InvitationWorkId)).Status);
     }
-    private sealed class Harness : IAsyncDisposable
+    internal sealed class Harness : IAsyncDisposable
     {
         public WebApplication App = null!; public Envelope Envelope = null!; public Signer First = null!,Second = null!; public byte[] Source = [],Version = [];
         public Clock Clock = new(); public Faults Faults = new(); public FakeSender Sender = new(); public FaultBlobs Blobs = null!; public Signals Signals = null!;
         private QueueClient queue = null!; private BlobContainerClient hints = null!; private BlobClient keyBlob = null!;
         public ClaimsPrincipal Principal => SenderConfiguration.Principal(new(Envelope.Id,Envelope.PublicId,Envelope.SenderEmail));
-        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false)
+        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false)
         {
             var run = new Harness(); var name = "sendtest-" + Guid.NewGuid().ToString("N"); var storage = Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
             using var source = fixture.Open(); var connection = source.Database.GetConnectionString();
@@ -212,16 +215,32 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
             run.queue = new QueueClient(storage,name,new QueueClientOptions(QueueClientOptions.ServiceVersion.V2023_11_03));
             var service = new BlobServiceClient(storage,new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03)); run.hints = service.GetBlobContainerClient(name); run.keyBlob = service.GetBlobContainerClient("keys").GetBlobClient(name+".xml");
             run.Signals = new(new AzureWorkSignals(run.queue,run.hints,new() { Enabled=true,QueueName=name,HintContainer=name },true)); builder.Services.AddSingleton<IWorkSignals>(run.Signals);
-            run.Blobs = new(new AzureBlobStore(service,25*1024*1024,true)); builder.Services.AddSingleton<IBlobStore>(run.Blobs); run.App = builder.Build();
+            run.Blobs = new(new AzureBlobStore(service,25*1024*1024,true)); builder.Services.AddSingleton<IBlobStore>(run.Blobs);
+            if(browser) {
+                builder.WebHost.UseTestServer(); builder.Configuration.AddInMemoryCollection(new Dictionary<string,string?> { ["ConnectionStrings:Database"]=connection });
+                builder.Services.AddScoped<SenderSentStatus>(); builder.Services.AddScoped<Func<SenderSentStatus>>(sp=>()=>sp.GetRequiredService<SenderSentStatus>());
+                builder.Services.AddScoped<Func<SendDraftWorkflow>>(sp=>()=>sp.GetRequiredService<SendDraftWorkflow>()); builder.Services.AddScoped<SenderSendReadiness>();
+                builder.Services.AddQuillSignSignerAccess(builder.Configuration,builder.Environment); builder.Services.AddQuillSignSignerConsent();
+                builder.Services.AddScoped<SignaturePreviewProtection>(); builder.Services.AddScoped<SignatureAdoption>(); builder.Services.AddScoped<SignerFields>(); builder.Services.AddScoped<SignerFieldView>();
+                builder.Services.AddScoped<SignerReviewProtection>(); builder.Services.AddScoped<SignerReviewCandidates>(); builder.Services.AddScoped<SignerFinish>(); builder.Services.AddScoped<SignerCheckpointReads>(); builder.Services.AddSignerReviewBrowser();
+            }
+            run.App=builder.Build();
             using var normalized = new MemoryStream(); var pages = new PdfValidation(new()).Rewrite(new MemoryStream(PdfFixtures.Create(text:"Synthetic NO AGREEMENT")),normalized); run.Source = normalized.ToArray();
             run.Envelope = new Envelope { SenderEmail="sender-"+name+"@example.invalid",Title="<b>Synthetic NO AGREEMENT</b>",Message="<b>Synthetic message</b>",SenderVerifiedAt=run.Clock.GetUtcNow(),PreviewConfirmedAt=run.Clock.GetUtcNow(),PdfBlob=Guid.NewGuid().ToString("N"),PdfSha256=SHA256.HashData(run.Source),PageCount=pages.Count,PageSizesJson=JsonSerializer.Serialize(pages),ExpiresAt=run.Clock.GetUtcNow().AddDays(30) };
             run.First = new Signer { EnvelopeId=run.Envelope.Id,FullName="Synthetic first signer",Email="first-"+name+"@example.invalid",Order=1 }; run.Second = new Signer { EnvelopeId=run.Envelope.Id,FullName="Synthetic second signer",Email="second-"+name+"@example.invalid",Order=2 };
             await using (var scope = run.App.Services.CreateAsyncScope()) { var db = scope.ServiceProvider.GetRequiredService<QuillSignDbContext>(); db.AddRange(run.Envelope,run.First,run.Second,
                 new DocumentField { EnvelopeId=run.Envelope.Id,Type=FieldType.Text,Page=1,X=.1m,Y=.3m,Width=.7m,Height=.1m,Value="Synthetic sender prefill" },
                 new DocumentField { EnvelopeId=run.Envelope.Id,SignerId=run.First.Id,Type=FieldType.Signature,Page=1,X=.1m,Y=.5m,Width=.4m,Height=.1m }); await db.SaveChangesAsync(); run.Version=run.Envelope.RowVersion; }
-            await run.Blobs.Inner.WriteAsync(run.Principal,new(run.Envelope.Id,DocumentBlobKind.Normalized,Guid.Parse(run.Envelope.PdfBlob)),new MemoryStream(run.Source),run.Source.Length); return run;
+            await run.Blobs.Inner.WriteAsync(run.Principal,new(run.Envelope.Id,DocumentBlobKind.Normalized,Guid.Parse(run.Envelope.PdfBlob)),new MemoryStream(run.Source),run.Source.Length);
+            if(browser) {
+                run.App.UseRouting(); run.App.UseRateLimiter(); run.App.UseAuthentication(); run.App.UseAuthorization(); run.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
+                run.App.MapGet("/test-session",async (Microsoft.AspNetCore.Http.HttpContext context)=> {
+                    await context.SignInAsync(EnvelopeStorageAuthorization.SenderScheme,run.Principal,new AuthenticationProperties { ExpiresUtc=run.Clock.GetUtcNow().AddHours(2),AllowRefresh=false }); return "ok";
+                }); await run.App.StartAsync();
+            }
+            return run;
         }
-        public async Task<SentDraft?> Send(bool acknowledged = true) { using var scope = App.Services.CreateScope(); return await scope.ServiceProvider.GetRequiredService<SendDraftWorkflow>().SendAsync(Principal,Envelope.PublicId,Version,acknowledged,"127.0.0.1","synthetic-send-test"); }
+        public async Task<SentDraft?> Send(bool acknowledged = true) { using var scope = App.Services.CreateScope(); return await scope.ServiceProvider.GetRequiredService<SendDraftWorkflow>().SendAsync(Principal,Envelope.PublicId,Version,acknowledged,true,SenderSendStatement.Version,"127.0.0.1","synthetic-send-test"); }
         public async Task<bool> Once() { using var scope = App.Services.CreateScope(); return await scope.ServiceProvider.GetRequiredService<WorkProcessor>().RunOnceAsync(default); }
         public async Task<byte[]> Read(Guid id) { using var result = new MemoryStream(); await Blobs.Inner.CopyToAsync(Principal,new(Envelope.Id,DocumentBlobKind.Normalized,id),result); return result.ToArray(); }
         public async Task AssertUnsent(SqlDatabaseFixture fixture) { await using var db = fixture.Open(); var e = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == Envelope.Id); Assert.Equal(EnvelopeStatus.Draft,e.Status); Assert.Null(e.SentPdfBlob); Assert.Null(e.ErsdText); Assert.False(await db.EmailOutbox.AnyAsync(x => x.EnvelopeId == e.Id)); Assert.False(await db.AuditEvents.AnyAsync(x => x.EnvelopeId == e.Id)); Assert.False(await db.AuthTokens.AnyAsync(x => x.EnvelopeId == e.Id)); }
@@ -233,24 +252,24 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
             await queue.DeleteIfExistsAsync(); await hints.DeleteIfExistsAsync(); await keyBlob.DeleteIfExistsAsync();
         }
     }
-    private sealed class Clock : TimeProvider { private DateTimeOffset now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public override DateTimeOffset GetUtcNow()=>now; public void Advance(TimeSpan value)=>now+=value; }
-    private sealed class FakeSender : IEmailSender
+    internal sealed class Clock : TimeProvider { private DateTimeOffset now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public override DateTimeOffset GetUtcNow()=>now; public void Advance(TimeSpan value)=>now+=value; }
+    internal sealed class FakeSender : IEmailSender
     {
         public int Calls; public OutgoingEmail? Last; public Exception? Failure; public Func<Task>? BeforeReturn;
         public async Task<EmailDelivery> SendAsync(OutgoingEmail email,CancellationToken ct)
         { Calls++; Last=email; if(Failure is not null)throw Failure; if (BeforeReturn is not null) await BeforeReturn(); return new("Smtp","synthetic-receipt"); }
     }
-    private sealed class FaultBlobs(IBlobStore inner) : IBlobStore { public IBlobStore Inner=>inner; public List<DocumentBlob> Created=[],Deleted=[]; public bool FailWrite; public Action? AfterWrite;
+    internal sealed class FaultBlobs(IBlobStore inner) : IBlobStore { public IBlobStore Inner=>inner; public List<DocumentBlob> Created=[],Deleted=[]; public bool FailWrite; public Action? AfterWrite;
         public async Task WriteAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,long length,CancellationToken ct) { Created.Add(b); await inner.WriteAsync(p,b,s,length,ct); AfterWrite?.Invoke(); if(FailWrite)throw new IOException("Synthetic lost write response"); }
         public Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct)=>inner.CopyToAsync(p,b,s,ct);
         public Task DeleteAsync(ClaimsPrincipal p,DocumentBlob b,CancellationToken ct) { Deleted.Add(b); return inner.DeleteAsync(p,b,ct); } }
-    private sealed class Faults : DbTransactionInterceptor, ISaveChangesInterceptor
+    internal sealed class Faults : DbTransactionInterceptor, ISaveChangesInterceptor
     {
         public bool FailCommit,FailAudit;
         public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData e,CancellationToken ct=default) { if(FailCommit)throw new IOException("Synthetic lost commit acknowledgement"); return Task.CompletedTask; }
         public ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e,InterceptionResult<int> result,CancellationToken ct=default) { if(FailAudit && e.Context!.ChangeTracker.Entries<AuditEvent>().Any(x=>x.State==EntityState.Added))throw new DbUpdateException("Synthetic audit failure"); return ValueTask.FromResult(result); }
     }
-    private sealed class Signals(IWorkSignals inner) : IWorkSignals
+    internal sealed class Signals(IWorkSignals inner) : IWorkSignals
     { public bool FailHint; public int Published;
         public Task PutHintAsync(Guid id,DateTimeOffset due,CancellationToken ct) { if(FailHint)throw new IOException("Synthetic hint failure"); return inner.PutHintAsync(id,due,ct); }
         public Task PublishAsync(Guid id,TimeSpan delay,CancellationToken ct) { Published++; return inner.PublishAsync(id,delay,ct); }

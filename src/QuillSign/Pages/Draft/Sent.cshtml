@@ -1,0 +1,26 @@
+@page "/draft/{publicId}/sent"
+@model QuillSign.Pages.Draft.SentModel
+@{ ViewData["Title"]="Request status"; }
+@section Styles { <link rel="stylesheet" href="~/review.css" asp-append-version="true" /> }
+<section class="draft-review">
+<p class="eyebrow">Private request status</p><h1>@(Model.Data?.Title ?? "Check your request")</h1>
+@if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p> }
+@if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
+@if(Model.Data is { } data) {
+<h2>@data.State</h2><p>Sent at @data.SentAt.ToString("u"). The sent document and preparation are frozen.</p>
+<p>The first signing invitation was queued. Submission to an email provider does not confirm inbox delivery.</p>
+@if(data.ExpiresAt is { } expires) { <p>Request expiry: @expires.ToString("u").</p> }
+@if(!string.IsNullOrEmpty(data.Message)) { <p class="document-message">@data.Message</p> }
+<h2>Sequential signing progress</h2>
+<ol class="signer-cards">@foreach(var signer in data.Signers) {
+<li class="signer-card" value="@signer.Order"><strong>@signer.Name</strong><span class="signer-email">@signer.Email</span>
+@if(!string.IsNullOrEmpty(signer.Role)) { <p>@signer.Role</p> }<p>@signer.State</p>
+@if(signer.SignedAt is { } signed) { <p>Signed at @signed.ToString("u").</p> }
+</li> }</ol>
+<h2>Completion recipients</h2><p>The sender and signers are included in the completed packet distribution.</p>
+@if(data.Recipients.Count==0) { <p>No additional completion recipients.</p> }
+<ul class="recipient-cards">@foreach(var recipient in data.Recipients) { <li class="signer-card"><strong>@recipient.Name</strong><span class="signer-email">@recipient.Email</span></li> }</ul>
+<p>This private page uses your verified sender session. Keep this tab to check progress during that session.</p>
+}
+<p><a href="">Refresh status</a></p>
+</section>

@@ -16,6 +16,7 @@ public sealed record DraftReviewSnapshot(string PublicId, string Version, string
     IReadOnlyList<PreparationIssue> Errors, IReadOnlyList<PreparationIssue> Warnings)
 {
     public bool ChecksPassed => Errors.Count == 0;
+    public DateTimeOffset? ExpiresAt { get; init; }
 }
 
 public sealed class DraftReview(QuillSignDbContext db)
@@ -75,7 +76,7 @@ public sealed class DraftReview(QuillSignDbContext db)
         return new DraftReviewSnapshot(envelope.PublicId, Convert.ToBase64String(envelope.RowVersion), envelope.Title, envelope.Message,
             hasPdf, envelope.PreviewConfirmedAt is not null, envelope.PageCount, signers,
             fields.Select(f => new FieldInput(f.Id, f.SignerId, f.Type.ToString(), f.Page, f.X, f.Y, f.Width, f.Height, f.Required, f.Label, f.Value)).ToList(),
-            recipients, errors, warnings);
+            recipients, errors, warnings) { ExpiresAt=envelope.ExpiresAt };
     }
 
     private static bool ValidSenderValue(DocumentField field)

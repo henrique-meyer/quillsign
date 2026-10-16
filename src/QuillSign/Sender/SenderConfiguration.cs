@@ -56,6 +56,14 @@ public static class SenderConfiguration
             limiter.OnRejected = async (rejected,ct) =>
             {
                 var context=rejected.HttpContext;
+                if(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value is { } draftPath &&
+                    (draftPath.EndsWith("/review",StringComparison.Ordinal) || draftPath.EndsWith("/sent",StringComparison.Ordinal))) {
+                    const string message="Too many request actions. Wait before retrying and check private status before repeating Send.";
+                    context.Response.Headers.CacheControl="no-store"; context.Response.Headers["Referrer-Policy"]="no-referrer";
+                    if(WantsJson(context))await context.Response.WriteAsJsonAsync(new { message },ct);
+                    else { context.Response.ContentType="text/html; charset=utf-8"; await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\""+System.Net.WebUtility.HtmlEncode(draftPath)+"\">Check saved request state</a></p></main></body></html>",ct); }
+                    return;
+                }
                 if(context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value is { } path &&
                     (path.EndsWith("/signature",StringComparison.Ordinal) || path.EndsWith("/fields",StringComparison.Ordinal) || path.EndsWith("/review",StringComparison.Ordinal) || path.EndsWith("/confirmed",StringComparison.Ordinal)))
                 {
@@ -73,8 +81,12 @@ public static class SenderConfiguration
             limiter.AddPolicy(RatePolicy, context =>
             {
                 var limited = (context.Request.Path == "/" && HttpMethods.IsPost(context.Request.Method)) || context.Request.Path == "/sender/verify" || context.Request.Path == "/sign/invitation" ||
+                    (context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/review",StringComparison.Ordinal)==true && HttpMethods.IsPost(context.Request.Method)) ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/sent",StringComparison.Ordinal)==true)
+                    return RateLimitPartition.GetFixedWindowLimiter("sender-status:"+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=120,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });
                 if(context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value is { } fieldPath &&
                     (fieldPath.EndsWith("/fields",StringComparison.Ordinal) || fieldPath.EndsWith("/review",StringComparison.Ordinal) || fieldPath.EndsWith("/confirmed",StringComparison.Ordinal)))
                     return RateLimitPartition.GetFixedWindowLimiter("signer-fields:"+address,_=>new FixedWindowRateLimiterOptions {
