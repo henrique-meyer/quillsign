@@ -1,0 +1,29 @@
+# Authoritative completion evidence collection
+
+QUILS-43 adds `CompletionEvidenceCollector.CollectAsync` as an internal read-only prerequisite for final packet preparation. It returns an owned typed completion snapshot, the exact last signer checkpoint, verified geometry and a transient database-state binding. There is no public collection endpoint, completion job, state transition, final blob publication, seal/TSA request or mail operation in this service.
+
+## Eligibility and recorded facts
+
+Collection requires a frozen sent request with every sequential signer genuinely published as Signed. The existing checkpoint verifier checks accepted Finish/review/field/adoption/source/disclosure bindings and progression. Collection additionally verifies the complete canonical audit prefix, affirmative Send evidence, sender verification, the latest pre-Send signer/recipient preparation snapshots and uploaded-document hashes. It reconstructs the finalized field binding with assigned fields in their original unfilled state, and checks every accepted field snapshot against the frozen current rows.
+
+The collector verifies matching one-time-link and consent events for the exact document/disclosure, true access/retention acknowledgments, accepted normalized marks and actual Finish evidence. It never trusts a Signed flag alone, uses a later adoption, rerenders a checkpoint or infers unrecorded identity facts. Sender names are not collected by the current producer; an unbacked stored name is rejected rather than attested.
+
+Authentication/view time comes from the matching recorded `link_opened` event. That is a recorded link-open event, not an assertion that the user read or understood a PDF. Consent and sender-verification display times come from their recorded audit events; those may differ slightly from the earlier decision-row timestamps. Signing time is the explicitly bound accepted `FinishedAt`. Checkpoint publication time comes from `signer_completed`, and remains distinct from signing time. Historical evidence needs no revived cookie/session or bearer token. Already timely accepted and published work remains collectable after sessions and the envelope deadline pass; pending, voided, declined or late work is ineligible.
+
+The snapshot includes every audit event through its captured anchor. Later preparation, seal/publication and delivery events necessarily remain external to this pre-seal snapshot. Rendering projects event/time/actor/IP/user agent/hash fields, never arbitrary audit JSON, token/review/session proofs or mail transport internals. The renderer preserves existing 512-character names/roles/titles, 320-character addresses and 2048-character user agents. A long party-table summary points to the complete details rather than dropping the value.
+
+## Exact storage and concurrency boundaries
+
+Collection first locks and verifies a database frame, then releases that transaction before storage I/O. Narrow internal read capabilities target only the exact original, converted and sent objects. Existing accepted-work capabilities target exact predecessor/checkpoint and adopted mark objects. They expire, reject identity/target changes and cannot mutate documents. No sender/signer impersonation, keys-container permission or broad listing/read authority is created.
+
+Bounded reads hash the actual original/converted/sent bytes, every earlier source/checkpoint and accepted mark. Missing or corrupt objects fail closed without falling back to an older copy. The final checkpoint is returned byte-for-byte; parsing only derives/verifies geometry and its rewritten output is discarded. Before returning, a second locked read revalidates the complete frame and audit anchor. Concurrent changes require a fresh collection; no mixed snapshot or partial result is exposed.
+
+The state binding is for the collector's optimistic recheck and the future candidate-preparation boundary. It includes row versions and the audit anchor, so it is not a permanent final-file hash or a replacement for the snapshot/audit hashes. A future durable preparation commit must recheck its source state before freezing a candidate. Later publication must account explicitly for its own operational writes and appended audit tail.
+
+The service checks aggregate stored canonical audit/acceptance payload size in SQL before materializing those payloads (16 MiB of stored text bytes), then bounds audit parsing to 512 events and 8 MiB UTF-8 JSON. Existing field/party and renderer limits still apply; document reads are at most 64 MiB and PNG reads follow the existing 512 KiB normalization contract. Excess data is rejected without truncation. Cancellation and read-capability expiry return no material. Registration performs no collection or network/storage/database I/O.
+
+## Validation
+
+`CompletionEvidenceCollectorTests` create a genuine synthetic sender verification/upload/preparation/Send and two-signer consent/adoption/apply/review/Finish/checkpoint chain. Tests collect and render its exact source, parties, marks, consent and audit evidence without writes, jobs or mail, including after session/deadline passage. They reject forged Signed flags, changed party/document/acceptance metadata, a rehashed false consent record, missing actions, bad stored payloads, missing/corrupt/oversized source/checkpoint/assets and cross-scope/mutation attempts. Concurrent voiding or a valid audit tail is rechecked; a fresh retry includes the new tail. The broader suite also covers bootstrap and existing signing/worker behavior.
+
+Set `QUILLSIGN_COMPLETION_EVIDENCE_ARTIFACTS` to an ignored QA directory in the positive collector test to generate two production-sealed synthetic outputs with a generated loopback TSA. Those are test evidence, not final publication or legally significant documents. No live service, public email, real documents or private keys are exported to Git.

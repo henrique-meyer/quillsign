@@ -10,6 +10,20 @@ namespace QuillSign.Tests;
 public sealed class CompletionCertificateRendererTests
 {
     [Fact]
+    public void Existing_preparation_field_bounds_preserve_full_details_instead_of_rejecting_or_truncating_long_party_rows()
+    {
+        var f=Fixture(); var name=new string('W',512); var role=new string('R',512); var agent=new string('A',2048);
+        var evidence=f.Evidence with {Document=f.Evidence.Document with {Name=new string('D',512)},
+            Signers=f.Evidence.Signers.Select(s=>s.Order==1 ? s with {Name=name,Role=role,UserAgent=agent} : s).ToArray(),
+            Recipients=new[]{new CompletionRecipient(new string('N',512),"recipient@example.invalid")}};
+        var packet=new CompletionCertificateRenderer().PreparePacket(f.Source,f.Pages,evidence);
+        using var pdf=UglyToad.PdfPig.PdfDocument.Open(packet.AppendixBytes); var text=Compact(Text(pdf));
+        // Page headers/footers can interrupt extraction of one long value; count its distinct glyph runs across pages.
+        foreach(var (glyph,count) in new[]{('W',512),('R',512),('A',2048),('D',512),('N',512)})
+            Assert.Equal(count,System.Text.RegularExpressions.Regex.Matches(text,glyph+"{2,}").Sum(m=>m.Length));
+        Assert.Contains("Seesigner1detailsbelow",text); Assert.Contains("Auditchronologythroughsnapshot",text);
+    }
+    [Fact]
     public void Long_party_rows_repeat_table_headers_and_preserve_all_twenty_signers_without_page_overflow()
     {
         var f=Fixture(); var start=f.Evidence.PreparedAt.AddHours(-2); var template=f.Evidence.Signers[0];
@@ -98,7 +112,7 @@ public sealed class CompletionCertificateRendererTests
             "checkpoint"=>signer with {CheckpointSha256=Hash("other checkpoint")},"disclosure"=>signer with {DisclosureSha256=Hash("other disclosure")},
             "adoption"=>signer with {AdoptionId=null},"image-hash"=>signer with {Signature=mark with {Sha256=Hash("other mark")}},
             "image-canonical"=>signer with {Signature=new(SignatureAdoptionTests.Mark(),SHA256.HashData(SignatureAdoptionTests.Mark()),SignaturePng.Version)},
-            "image-size"=>signer with {Signature=mark with {Png=new byte[SignaturePng.MaximumBytes+1]}},"agent-size"=>signer with {UserAgent=new string('x',1025)},
+            "image-size"=>signer with {Signature=mark with {Png=new byte[SignaturePng.MaximumBytes+1]}},"agent-size"=>signer with {UserAgent=new string('x',2049)},
             "missing-name"=>signer with {Name=""},_=>signer};
         e=e with {Signers=new[]{signer}.Concat(e.Signers.Skip(1)).ToArray()};
         if(mode=="checkpoint")e=e with {Signers=e.Signers.Select(s=>s.Order==2 ? s with {CheckpointSha256=Hash("other checkpoint")} : s).ToArray()};
@@ -107,7 +121,7 @@ public sealed class CompletionCertificateRendererTests
         if(mode=="anchor")e=e with {AuditAnchor=Hash("wrong anchor")};
         if(mode=="current-hash")e=e with {Document=e.Document with {CurrentSha256=Hash("wrong source")}};
         if(mode=="email")e=e with {Sender=e.Sender with {Email="Display Name <sender@example.invalid>"}};
-        if(mode=="title")e=e with {Document=e.Document with {Name=new string('x',401)}};
+        if(mode=="title")e=e with {Document=e.Document with {Name=new string('x',513)}};
         if(mode=="unicode")e=e with {Document=e.Document with {Name="invalid\uD800"}};
         if(mode=="event-count")e=e with {Events=Enumerable.Repeat(e.Events[0],513).ToArray()};
         if(mode=="aggregate") {

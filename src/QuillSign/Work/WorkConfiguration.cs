@@ -60,6 +60,7 @@ public static class WorkConfiguration
             services.AddScoped<EmailOutboxWriter>();
             services.AddScoped<IWorkHandler, EmailWorkHandler>();
             services.AddScoped<SignerCheckpointJobs>(); services.AddScoped<SignerCheckpointState>(); services.AddScoped<SignerCheckpointBlobs>();
+            services.AddScoped<QuillSign.Completion.CompletionEvidenceCollector>();
             services.AddScoped<IWorkHandler,SignerCheckpointHandler>();
         }
         return services;
