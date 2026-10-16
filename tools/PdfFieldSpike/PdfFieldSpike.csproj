@@ -16,6 +16,7 @@
   <ItemGroup>
     <Compile Include="../../src/QuillSign/Documents/PdfValidation.cs" Link="Shared/PdfValidation.cs" />
     <Compile Include="../../src/QuillSign/Signing/FieldGeometry.cs" Link="Shared/FieldGeometry.cs" />
+    <Compile Include="../../src/QuillSign/Signing/SignaturePng.cs" Link="Shared/SignaturePng.cs" />
     <Compile Include="../../src/QuillSign/Documents/EmbeddedPdfFont.cs" Link="Shared/EmbeddedPdfFont.cs" />
     <Compile Include="../../src/QuillSign/Documents/SenderPdfRenderer.cs" Link="Shared/SenderPdfRenderer.cs" />
     <EmbeddedResource Include="../../src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf" LogicalName="QuillSign.Fonts.LiberationSans-Regular.ttf" />

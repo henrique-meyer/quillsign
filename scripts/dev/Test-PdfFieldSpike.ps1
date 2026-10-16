@@ -25,5 +25,9 @@ try {
     if ($taskReport.cases.Count -ne 9 -or $taskReport.productionCases.Count -ne 9 -or $taskReport.rejected.Count -ne 25 -or !$taskReport.naiveTransformDetected -or !$taskReport.canonicalAccent) {
         throw 'The feasibility report is incomplete.'
     }
+    if ($taskReport.signatureNormalization.Version -ne 'png-rgba-crop-v1' -or $taskReport.signatureNormalization.Width -lt 1 -or
+        $taskReport.signatureNormalization.Height -lt 1 -or $taskReport.signatureNormalization.sha256.Length -ne 64) {
+        throw 'Production signature PNG normalization was not verified.'
+    }
 } finally { Pop-Location }
 exit 0

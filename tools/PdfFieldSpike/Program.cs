@@ -6,6 +6,7 @@ using System.Runtime.Versioning;
 using PDFtoImage;
 using PdfFieldSpike;
 using QuillSign.Documents;
+using QuillSign.Signing;
 using SkiaSharp;
 using PigDocument = UglyToad.PdfPig.PdfDocument;
 
@@ -17,7 +18,9 @@ var output = Path.GetFullPath(args.FirstOrDefault() ?? Path.Combine("artifacts",
 Directory.CreateDirectory(output);
 var fontBytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "fonts", "LiberationSans-Regular.ttf"));
 var stamper = new FieldStamper(fontBytes);
-var signature = Fixtures.Mark(320, 80); var initials = Fixtures.Mark(160, 80);
+var signatureAsset = SignaturePng.Normalize(Fixtures.Mark(320,80)); var initialsAsset = SignaturePng.Normalize(Fixtures.Mark(160,80));
+var signature = signatureAsset.Bytes; var initials = initialsAsset.Bytes;
+File.WriteAllBytes(Path.Combine(output,"normalized-signature.png"),signature); File.WriteAllBytes(Path.Combine(output,"normalized-initials.png"),initials);
 var fields = Fixtures.Fields(signature, initials);
 PageCase[] cases =
 [
@@ -137,7 +140,9 @@ using (var image = Conversion.ToImage(naive, page: 0, options: new RenderOptions
         "The regression check failed to detect a deliberately naive transform.");
 
 var report = new { pdfsharp = "6.2.4", pdftoimage = "5.4.0", pdfpig = "0.1.16", font = "Liberation Sans 2.1.5 / OFL-1.1",
-    cases = results, productionCases = productionResults, rejected, canonicalAccent = true, fittedFontSize, naiveTransformDetected = true };
+    cases = results, productionCases = productionResults, rejected, canonicalAccent = true, fittedFontSize, naiveTransformDetected = true,
+    signatureNormalization = new { signatureAsset.Version,signatureAsset.Width,signatureAsset.Height,
+        sha256 = Convert.ToHexStringLower(signatureAsset.Sha256),initialsWidth = initialsAsset.Width,initialsHeight = initialsAsset.Height } };
 File.WriteAllText(Path.Combine(output, "report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
 Console.WriteLine($"PASS {cases.Length} prototype and {productionResults.Count} production geometry cases, {rejected.Count} negative cases, NFC and naive-transform detection. Outputs: {output}");
 
