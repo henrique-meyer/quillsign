@@ -1,6 +1,7 @@
 @page "/draft/{publicId}/review"
 @model QuillSign.Pages.Draft.ReviewModel
 @{ ViewData["Title"] = "Review document preparation"; }
+<div class="draft-review">
 <p class="eyebrow">ONE LAST LOOK</p>
 <h1>Review your draft.</h1>
 <p class="intro">Check the document, signing order, and everyone who receives the completed packet.</p>
@@ -43,7 +44,7 @@
     <ul class="recipient-cards">@foreach (var field in Model.Draft.Fields.Where(f => f.SignerId is null))
     {
         <li class="signer-card"><strong>@(field.Label ?? field.Type) · Page @field.Page</strong>
-            <span class="document-message">@(field.Type == "Checkbox" && field.Value is "true" or "false" ? (field.Value == "true" ? "Checked" : "Unchecked") : string.IsNullOrWhiteSpace(field.Value) ? "Not filled" : field.Value)</span>
+            <p class="document-message">@(field.Type == "Checkbox" && field.Value is "true" or "false" ? (field.Value == "true" ? "Checked" : "Unchecked") : string.IsNullOrWhiteSpace(field.Value) ? "Not filled" : field.Value)</p>
         </li>
     }</ul>
     <p><a href="@Model.StepUrl("fields")">Edit sender values</a></p>
@@ -57,3 +58,5 @@
     <p><a href="@Model.StepUrl("details")">Edit completion recipients</a></p>
 </section>
 <p class="hint">Your document stays a draft. Reviewing it sends no invitations.</p>
+</div>
+@section Styles { <link rel="stylesheet" href="~/review.css" asp-append-version="true" /> }
