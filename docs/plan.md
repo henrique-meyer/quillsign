@@ -229,6 +229,18 @@ Font prerequisite: replace PDF.js's four GPL-with-font-exception Liberation Sans
 
 Validation: Nine geometry cases, 25 negative cases, independent text extraction/NFC/adaptive sizing, and detection of a deliberately incorrect transform pass on Windows and offline in the minimal Linux app runtime. PDF.js browser checks cover Letter, rotated crops/UserUnit 2, and unembedded Helvetica with system fonts disabled. The vendor check verifies all 200 files and pinned OFL fonts; app publish retains exact font/license hashes and interact.js notice. All 179 application tests pass. Findings, reproducible commands and production integration limits are documented in docs/pdf-field-feasibility.md.
 
+## QUILS-23: Review draft preparation and surface send-readiness checks
+
+Status: Implementation complete. Builds on merged QUILS-19/20/21; independent of the QUILS-22 renderer prototype. Owned by the overnight-development chat.
+
+Add a read-only preparation review for the verified sender's own draft, with a coherent snapshot and shared revision of PDF, sequential signers, fields, title/message and completion recipients. Block preparation on missing/unconfirmed current PDF, blank title, no signers, malformed/missing page metadata, invalid field type/page/bounds, foreign signer assignments and invalid/unfilled sender values. Every unassigned Text/Checkbox/Date field must be filled; false is a valid checkbox, dates must be real ISO dates. Full Name and Date Signed remain assigned automatic fields. A signer without a Signature field is a visible warning only, as agreed. Do not claim stamping readability or legal validity.
+
+Show accessible summaries and actionable links to the relevant preparation steps and protected preview. Add navigation from existing preparation pages; encode user text and prevent caching. Review does not change revisions, audit, work, PDFs or envelope state, send mail, accept signatures/consent or change cloud configuration. A future send transaction must revalidate rather than trusting a GET result.
+
+Test ownership/verification/state, coherent stale/current snapshots, absent PDF/confirmation, each validation category and warning-only signer, false checkboxes/ISO dates, no mutation, HTTP privacy/encoding and actual desktop/phone browser flow using synthetic data. Pass required checks/secret scans, commit/push/open/attach/merge a small QUILS-23 PR, then move Done.
+
+Validation: All 192 application tests pass. Review coverage verifies access/verification/state, missing preparation data, malformed metadata, invalid fields and sender values, false checkboxes/leap dates, warning-only signers, no mutations, refreshed tracked snapshots, actual SQL writer contention, HTTP encoding and private no-store responses. Desktop and 390-pixel browser checks cover summaries, corrective keyboard navigation, missing-value errors and repair, false-checkbox acceptance, recipient/detail/editor links, and a 512-character unbroken title without horizontal overflow. Review-specific styles are versioned. No mail or cloud changes.
+
 ## QUILS-24: Implement bounded sender-prefill PDF rendering for the send foundation
 
 Status: In Progress. Builds on merged QUILS-22; QUILS-23 review is independent. Owned by the overnight-development chat.
