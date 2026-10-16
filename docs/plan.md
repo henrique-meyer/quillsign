@@ -375,7 +375,7 @@ Validation: All 482 .NET tests and 11 Node tests pass. Forty new SQL/Azurite fie
 
 ## QUILS-33: Apply signer fields deliberately and review saved entries
 
-Status: To Do. Depends on merged QUILS-32. Owned by the overnight-development chat.
+Status: In Progress. Depends on merged QUILS-32. Owned by the overnight-development chat.
 
 Connect QUILS-32 to the signer field UI and a read-only review of saved entries. Require current sequential signer scope, recorded consent and the bound PDF/disclosure on every operation. This slice does not Finish, set Signed, mutate PDF bytes, progress signers, send completion mail or expose public sender Send.
 
@@ -388,3 +388,5 @@ Add a read-only saved-entry review page showing values, required/missing/stale s
 Use isolated signer authorization, antiforgery-protected mutations, bounded per-IP signer interaction rate limiting, no-store/no-referrer responses, current-asset reads through narrow internal capabilities and exact hash verification, and clean one-time notices for HTML/JSON bodies for JSON clients. Keep receipts/action notices out of URLs and pixels/values out of logs. Update existing consent/adoption links and status text so it remains truthful after fields have already been saved or become stale.
 
 Test scoped/CSRF handlers, exact verified PDF/mark responses, ownership/current context, stale revision/adoption, manual/server-derived values, explicit apply/clear, read-only review, required/stale reporting, unsaved/error handling and no GET mutation. Exercise real desktop/mobile and keyboard-only flows from synthetic invitation/consent/adoption through multiple deliberate field actions, replacement/reapplication, text/checkbox/date values, zoom/page navigation, review correction and injected save/storage errors. Verify model/vendor/licenses/secret scans, commit/push/open/attach/check/merge a small QUILS-numbered PR and move Done. No cloud changes, live email, purchases, fabricated policies or new nonpermissive/native dependencies.
+
+Checkpoint: 504 .NET tests and 11 Node tests pass; model/vendor checks pass. The synthetic browser exercised invitation, PDF/disclosure consent, keyboard mark adoption, one-at-a-time signature/initials/name application and rejected-text preservation. Browser validation is still in progress: a native dialog in the original test tab blocked automated input. The editor now uses an inline unsaved-entry choice for in-app navigation. Replacement/conflict recovery, remaining manual fields and responsive verification must complete before merge.
