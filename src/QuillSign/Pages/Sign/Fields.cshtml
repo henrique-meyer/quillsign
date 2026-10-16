@@ -1,0 +1,56 @@
+@page "/sign/{publicId}/fields"
+@model QuillSign.Pages.Sign.FieldsModel
+@{ ViewData["Title"]="Apply your fields"; }
+@section Styles {
+<link rel="stylesheet" href="~/vendor/pdfjs/web/pdf_viewer.css" />
+<link rel="stylesheet" href="~/signer.css" asp-append-version="true" />
+}
+<section class="signer-flow signer-fields">
+<p class="eyebrow">Apply your fields</p>
+<h1>Complete your entries</h1>
+@if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p><p><a href="">Reload this page</a></p> }
+@if(Model.Data is { } data) {
+<p>@data.Context.Title · For @data.Context.SignerName</p>
+<p>Choose a field, then use its Apply or Save button. Selecting a field never applies a mark. Signing is not complete.</p>
+@if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
+<nav class="field-navigation" aria-label="Signing steps">
+<a data-leave asp-page="/Sign/Signature" asp-route-publicId="@data.Snapshot.PublicId">Adopt or replace marks</a>
+<a data-leave asp-page="/Sign/Review" asp-route-publicId="@data.Snapshot.PublicId">Review saved entries</a>
+<a data-leave asp-page="/Sign/Index" asp-route-publicId="@data.Snapshot.PublicId">Document and disclosure</a>
+</nav>
+<section id="leave-warning" class="document-error" hidden aria-labelledby="leave-heading">
+<h2 id="leave-heading" tabindex="-1">You have unsaved entries</h2><p>Save them before continuing, or explicitly discard them.</p>
+<button type="button" id="stay-fields">Stay and save</button> <button type="button" id="discard-fields" class="quiet-button">Discard unsaved entries and continue</button>
+</section>
+<input id="field-data" type="hidden" value="@data.ToJson()" />
+<form method="post" asp-page="/Sign/Fields" asp-route-publicId="@data.Snapshot.PublicId" id="field-form">
+<p id="field-progress" role="status"></p>
+<label for="field-list">Your assigned fields</label><select id="field-list"></select>
+<button type="button" id="next-field" class="quiet-button">Next incomplete field</button>
+<section class="start-card" aria-labelledby="field-heading">
+<h2 id="field-heading" tabindex="-1">Select a field</h2>
+<p id="saved-value"></p>
+<div id="field-input"></div>
+<div class="field-actions"><button type="submit" id="save-field" disabled>Save field</button>
+<button type="button" id="clear-field" class="quiet-button" disabled>Clear saved field</button>
+<button type="button" id="refresh-fields" class="quiet-button">Refresh saved state</button></div>
+<p id="save-status" role="status" aria-live="polite">No changes made.</p>
+<p id="save-error" class="document-error" role="alert" hidden></p>
+</section>
+</form>
+<noscript><p class="document-error">Enable JavaScript for deliberate field entry. You can still download the PDF and review saved entries.</p></noscript>
+<h2>Document with your saved entries</h2>
+<p class="hint">The overlay shows placement and saved entries. This is not a final stamped or sealed PDF. Date Signed is reserved for the server at Finish.</p>
+<div class="pdf-toolbar" aria-label="PDF controls">
+<button type="button" id="previous-page" disabled aria-label="Previous page">Previous</button><span id="page-number" aria-live="polite">Loading…</span>
+<button type="button" id="next-page" disabled aria-label="Next page">Next</button>
+<label for="pdf-zoom">Zoom</label><select id="pdf-zoom"><option value="fit">Fit width</option><option value="1">100%</option><option value="2">200%</option></select>
+</div>
+<p id="preview-status" role="status">Loading PDF preview…</p>
+<div id="pdf-preview" class="pdf-preview" data-url="/sign/@data.Snapshot.PublicId?handler=Pdf" aria-label="Document with saved-entry overlays">
+<div class="pdf-page"><canvas aria-label="Document page"></canvas><div class="textLayer"></div><div id="signer-overlays"></div></div>
+</div>
+<p><a asp-page="/Sign/Index" asp-page-handler="Pdf" asp-route-publicId="@data.Snapshot.PublicId" asp-route-download="true">Download the unchanged document</a></p>
+}
+</section>
+@section Scripts { <script type="module" src="~/js/signer-fields.mjs" asp-append-version="true"></script> }

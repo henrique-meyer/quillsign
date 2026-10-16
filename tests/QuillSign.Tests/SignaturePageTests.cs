@@ -42,7 +42,7 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
             Assert.Equal(HttpStatusCode.Redirect,adopted.StatusCode); Assert.Equal(run.Path,adopted.Headers.Location!.OriginalString);
             var notice=Assert.Single(adopted.Headers.GetValues("Set-Cookie")); Assert.Contains("httponly",notice,StringComparison.OrdinalIgnoreCase); run.Cookies(adopted);
         }
-        var confirmed=await run.Get(); Assert.Contains("Your signature and initials were adopted",confirmed); Assert.Contains("No document fields have been applied",confirmed);
+        var confirmed=await run.Get(); Assert.Contains("Your signature and initials were adopted",confirmed); Assert.Contains("Apply each field deliberately",confirmed); Assert.DoesNotContain("No document fields have been applied",confirmed);
         Assert.DoesNotContain("Your signature and initials were adopted",await run.Get()); Assert.Contains("Your marks are adopted",await run.Get());
         using(var replay=await run.Adopt(page,receipt))Assert.Equal(HttpStatusCode.Redirect,replay.StatusCode);
         using(var replaced=await run.Preview(confirmed))Assert.Equal(HttpStatusCode.OK,replaced.StatusCode);
@@ -102,7 +102,7 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
         await using var run=await Browser.Create(fixture); await run.Session("signer"); var page=await run.Get(); using var prepared=await run.Preview(page);
         using var data=JsonDocument.Parse(await prepared.Content.ReadAsStringAsync()); var receipt=data.RootElement.GetProperty("receipt").GetString()!;
         run.Client.DefaultRequestHeaders.Accept.ParseAdd("application/json"); using(var result=await run.Adopt(page,receipt))
-        { Assert.Equal(HttpStatusCode.OK,result.StatusCode); Assert.Null(result.Headers.Location); Assert.False(result.Headers.Contains("Set-Cookie")); Assert.Contains("signing is not complete",await result.Content.ReadAsStringAsync()); }
+        { Assert.Equal(HttpStatusCode.OK,result.StatusCode); Assert.Null(result.Headers.Location); Assert.False(result.Headers.Contains("Set-Cookie")); Assert.Contains("signing is not complete",await result.Content.ReadAsStringAsync(),StringComparison.OrdinalIgnoreCase); }
         await using(var db=fixture.Open())await db.Signers.Where(x=>x.Id==run.Signer.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.ConsentAt,(DateTimeOffset?)null));
         using(var unavailable=await run.Client.GetAsync(run.Path))Assert.Equal(HttpStatusCode.NotFound,unavailable.StatusCode);
         using(var denied=await run.Preview(page))Assert.Equal(HttpStatusCode.NotFound,denied.StatusCode);
@@ -118,7 +118,7 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
         using var json=await run.Preview(page,kind:"method"); Assert.Equal(HttpStatusCode.TooManyRequests,json.StatusCode); Assert.Contains("adoption has not been confirmed",await json.Content.ReadAsStringAsync());
     }
 
-    private sealed class Browser : IAsyncDisposable
+    internal sealed class Browser : IAsyncDisposable
     {
         public WebApplication App=null!; public HttpClient Client=null!; public Envelope Envelope=null!; public Signer Signer=null!; public VerifiedSigner Identity=null!;
         public string Path=""; public Clock Clock=new(); public TestStorage Storage=null!; private readonly Dictionary<string,string> cookies=[];
@@ -133,6 +133,8 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
             var builder=WebApplication.CreateBuilder(new WebApplicationOptions { ApplicationName=typeof(SignatureAdoption).Assembly.FullName,EnvironmentName="Development",ContentRootPath=AppContext.BaseDirectory }); builder.Logging.ClearProviders(); builder.WebHost.UseTestServer(); builder.Services.AddRazorPages();
             builder.Services.AddScoped(_=>fixture.Open()); builder.Services.AddSingleton<TimeProvider>(run.Clock); builder.Services.AddQuillSignSender(new ConfigurationBuilder().Build(),builder.Environment); builder.Services.AddQuillSignSignerAccess(new ConfigurationBuilder().Build(),builder.Environment);
             builder.Services.AddScoped<SignatureAdoption>(); builder.Services.AddScoped<SignaturePreviewProtection>();
+            builder.Services.AddScoped<SignerFields>(); builder.Services.AddScoped<SignerFieldView>(); builder.Services.AddScoped<SignerPdfAccess>();
+            builder.Services.AddSingleton(new QuillSign.Documents.DocumentOptions());
             builder.Services.AddSingleton(new QuillSign.Email.EmailOptions());
             builder.Services.AddSingleton(new QuillSign.Work.WorkOptions());
             run.Storage=new(new AzureBlobStore(new BlobServiceClient(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE"),new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03)),1024*1024,true)); builder.Services.AddSingleton<IBlobStore>(run.Storage);
@@ -153,11 +155,11 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
         }
         public Task<HttpResponseMessage> Adopt(string page,string receipt,bool ack=true,bool csrf=true,string version=SignatureAdoptionStatement.Version)
         { var form=new Dictionary<string,string> { ["Receipt"]=receipt,["Acknowledged"]=ack.ToString(),["StatementVersion"]=version }; if(csrf)form["__RequestVerificationToken"]=Token(page); return Client.PostAsync(Path+"?handler=Adopt",new FormUrlEncodedContent(form)); }
-        private static string Token(string page)=>WebUtility.HtmlDecode(Regex.Match(page,"name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value);
+        internal static string Token(string page)=>WebUtility.HtmlDecode(Regex.Match(page,"name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value);
         public async ValueTask DisposeAsync() { Client.Dispose(); await App.DisposeAsync(); foreach(var blob in Storage.Created)await Storage.Inner.DeleteAsync(BlobStorageTests.Sender(blob.EnvelopeId),blob); }
     }
-    private sealed class Clock : TimeProvider { private DateTimeOffset now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public override DateTimeOffset GetUtcNow()=>now; public void Advance(TimeSpan value)=>now+=value; }
-    private sealed class TestStorage(IBlobStore inner) : IBlobStore
+    internal sealed class Clock : TimeProvider { private DateTimeOffset now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public override DateTimeOffset GetUtcNow()=>now; public void Advance(TimeSpan value)=>now+=value; }
+    internal sealed class TestStorage(IBlobStore inner) : IBlobStore
     { public IBlobStore Inner=>inner; public List<DocumentBlob> Created=[]; public bool FailRead,TamperRead;
         public Task WriteAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,long length,CancellationToken ct=default) { Created.Add(b); return inner.WriteAsync(p,b,s,length,ct); }
         public async Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct=default) { if(FailRead)throw new IOException("Synthetic storage unavailable"); if(TamperRead) { EnvelopeStorageAuthorization.DemandRead(p,b); var bytes=SignatureAdoptionTests.Mark(100); await s.WriteAsync(bytes,ct); return bytes.Length; } return await inner.CopyToAsync(p,b,s,ct); }

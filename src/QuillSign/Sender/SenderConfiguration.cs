@@ -56,12 +56,15 @@ public static class SenderConfiguration
             limiter.OnRejected = async (rejected,ct) =>
             {
                 var context=rejected.HttpContext;
-                if(context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal)==true)
+                if(context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value is { } path &&
+                    (path.EndsWith("/signature",StringComparison.Ordinal) || path.EndsWith("/fields",StringComparison.Ordinal) || path.EndsWith("/review",StringComparison.Ordinal)))
                 {
-                    const string message="Too many signature requests. Wait before trying again; adoption has not been confirmed.";
+                    var isSignature=path.EndsWith("/signature",StringComparison.Ordinal);
+                    var message=isSignature ? "Too many signature requests. Wait before trying again; adoption has not been confirmed." : "Too many field requests. Wait before retrying and refresh saved state; saving has not been confirmed.";
                     context.Response.Headers.CacheControl="no-store";
+                    context.Response.Headers["Referrer-Policy"]="no-referrer";
                     if(WantsJson(context))await context.Response.WriteAsJsonAsync(new { message },ct);
-                    else { context.Response.ContentType="text/html; charset=utf-8"; await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\""+System.Net.WebUtility.HtmlEncode(context.Request.Path.Value)+"\">Return to your signature page</a></p></main></body></html>",ct); }
+                    else { context.Response.ContentType="text/html; charset=utf-8"; await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\""+System.Net.WebUtility.HtmlEncode(path)+"\">"+(isSignature ? "Return to your signature page" : "Return to saved fields")+"</a></p></main></body></html>",ct); }
                 }
             };
             limiter.AddPolicy(RatePolicy, context =>
@@ -69,6 +72,10 @@ public static class SenderConfiguration
                 var limited = (context.Request.Path == "/" && HttpMethods.IsPost(context.Request.Method)) || context.Request.Path == "/sender/verify" || context.Request.Path == "/sign/invitation" ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value is { } fieldPath &&
+                    (fieldPath.EndsWith("/fields",StringComparison.Ordinal) || fieldPath.EndsWith("/review",StringComparison.Ordinal)))
+                    return RateLimitPartition.GetFixedWindowLimiter("signer-fields:"+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=120,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });
                 return limited ? RateLimitPartition.GetFixedWindowLimiter(address, _ => new FixedWindowRateLimiterOptions
                 {
                     PermitLimit = options.RequestsPerWindow, Window = TimeSpan.FromMinutes(options.WindowMinutes),

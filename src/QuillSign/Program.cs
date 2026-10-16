@@ -35,6 +35,7 @@ builder.Services.AddQuillSignSignerConsent();
 builder.Services.AddScoped<SignaturePreviewProtection>();
 builder.Services.AddScoped<SignatureAdoption>();
 builder.Services.AddScoped<SignerFields>();
+builder.Services.AddScoped<SignerFieldView>();
 builder.Services.AddScoped<SignerReviewProtection>();
 builder.Services.AddScoped<SignerReviewCandidates>();
 builder.Services.AddScoped<SignerFinish>();

@@ -1,0 +1,31 @@
+@page "/sign/{publicId}/review"
+@model QuillSign.Pages.Sign.ReviewModel
+@using QuillSign.Data
+@using QuillSign.Signing
+@{ ViewData["Title"]="Review saved entries"; }
+@section Styles { <link rel="stylesheet" href="~/signer.css" asp-append-version="true" /> }
+<section class="signer-flow">
+<p class="eyebrow">Saved-entry review</p><h1>Review your saved entries</h1>
+@if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p><p><a href="">Reload this page</a></p> }
+@if(Model.Data is { } data) {
+<p>@data.Context.Title · For @data.Context.SignerName</p>
+<p class="notice">Signing is not complete. Finish is not available in this release. This page shows saved entries, not a final stamped or sealed PDF.</p>
+<p>@data.Missing required entries missing · @data.Stale entries need reapplication or clearing.</p>
+@if(data.Marks is null) { <p>No marks have been adopted. <a asp-page="/Sign/Signature" asp-route-publicId="@data.Snapshot.PublicId">Adopt your signature and initials</a>.</p> }
+else { <p>Your current adopted marks were verified.</p> }
+<p><a class="button-link" asp-page="/Sign/Fields" asp-route-publicId="@data.Snapshot.PublicId">Return to fields</a> · <a asp-page="/Sign/Signature" asp-route-publicId="@data.Snapshot.PublicId">Review or replace adopted marks</a></p>
+@foreach(var field in data.Snapshot.Fields) {
+<section class="start-card">
+<h2>@SignerFieldViewData.Label(field)</h2>
+<p>Page @field.Page · @(field.Required ? "Required" : "Optional") · @SignerFieldViewData.Status(field)</p>
+@if(field.Type is FieldType.Signature or FieldType.Initials) {
+    @if(field.Filled && data.Marks is { } marks) { <img class="saved-mark" alt="Saved @field.Type" src="data:image/png;base64,@Convert.ToBase64String(field.Type==FieldType.Signature ? marks.Signature : marks.Initials)" /> }
+    else { <p>No current mark applied to this field.</p> }
+} else if(field.Type==FieldType.DateSigned) { <p>The server will supply the signing date at Finish.</p> }
+else { <p class="saved-entry">@(field.Type==FieldType.Checkbox && field.Filled ? field.Value=="true" ? "Checked" : "Unchecked" : field.Value ?? "No saved value")</p> }
+@if(field.Type!=FieldType.DateSigned) { <a asp-page="/Sign/Fields" asp-route-publicId="@data.Snapshot.PublicId" asp-fragment="@field.Id">Edit this field</a> }
+</section>
+}
+<p><a asp-page="/Sign/Index" asp-route-publicId="@data.Snapshot.PublicId">Review the document and disclosure</a></p>
+}
+</section>

@@ -9,7 +9,8 @@
 @if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
 <div asp-validation-summary="All" class="validation" role="alert"></div>
 @if(Model.Context.SignatureAdoptionId is not null) {
-    <section class="start-card"><h2>Your marks are adopted</h2><p>No document fields have been applied, and signing is not complete. Deliberate field application and Finish will be available in a later release.</p>
+    <section class="start-card"><h2>Your marks are adopted</h2><p>Apply each field deliberately and review your saved entries. Signing is not complete. Replacing these marks makes earlier field applications stale until you reapply or clear each one.</p>
+    <p><a class="button-link" asp-page="/Sign/Fields" asp-route-publicId="@Model.Context.Identity.PublicId">Continue to your fields</a></p>
     <p>To replace your adopted marks, prepare and review a new pair below. Earlier adoption evidence is retained.</p></section>
 }
 else { <p>Prepare both marks, review the saved preview, then choose Adopt and Sign. This adopts your marks; it does not fill document fields or complete signing.</p> }
