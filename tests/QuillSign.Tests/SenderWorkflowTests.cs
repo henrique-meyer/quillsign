@@ -14,6 +14,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QuillSign.Data;
+using QuillSign.Documents;
 using QuillSign.Email;
 using QuillSign.Sender;
 using QuillSign.Storage;
@@ -220,6 +221,62 @@ public sealed class SenderWorkflowTests(SqlDatabaseFixture fixture) : IClassFixt
     }
 
     [Fact]
+    public async Task Verified_browser_can_upload_read_and_confirm_only_its_current_document_with_antiforgery()
+    {
+        await using var run = await Harness.CreateAsync(fixture);
+        var browser = new Browser(run.App); var email = Address();
+        using (await browser.SubmitAsync(email)) { }
+        var token = await run.DispatchAsync();
+        using var verified = await browser.GetAsync("/sender/verify?token=" + token);
+        var draft = verified.Headers.Location!.OriginalString;
+        await using var db = fixture.Open();
+        var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.SenderEmail == email);
+        try
+        {
+            Assert.Contains("Upload your PDF", await browser.GetTextAsync(draft));
+            var fields = new Dictionary<string, string> { ["Version"] = Convert.ToBase64String(envelope.RowVersion) };
+            using (var noCsrf = await browser.PostDraftAsync(draft, "Upload", fields, PdfFixtures.Create(), csrf: false))
+                Assert.Equal(HttpStatusCode.BadRequest, noCsrf.StatusCode);
+            using (var upload = await browser.PostDraftAsync(draft, "Upload", fields, PdfFixtures.Create()))
+            { Assert.Equal(HttpStatusCode.Redirect, upload.StatusCode); Assert.Equal(draft, upload.Headers.Location!.OriginalString); }
+            Assert.Contains("PDF uploaded", await browser.GetTextAsync(draft));
+            envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.SenderEmail == email);
+            var document = draft + "/document/" + envelope.PdfBlob;
+            using (var download = await browser.GetAsync(document))
+            {
+                Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+                Assert.Equal("application/pdf", download.Content.Headers.ContentType!.MediaType);
+                Assert.True(download.Headers.CacheControl!.NoStore);
+                Assert.Equal(envelope.PdfSha256, SHA256.HashData(await download.Content.ReadAsByteArrayAsync()));
+            }
+            using (var anonymous = await new Browser(run.App).GetAsync(document, json: true)) Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+            var stranger = new Envelope { SenderEmail = Address(), SenderVerifiedAt = run.Clock.GetUtcNow() };
+            db.Envelopes.Add(stranger); await db.SaveChangesAsync();
+            using (var other = await browser.GetAsync("/draft/" + stranger.PublicId)) Assert.Equal(HttpStatusCode.NotFound, other.StatusCode);
+            fields = new() { ["Version"] = Convert.ToBase64String(envelope.RowVersion), ["DocumentId"] = envelope.PdfBlob! };
+            using (var noConsent = await browser.PostDraftAsync(draft, "Confirm", fields, json: true)) Assert.Equal(HttpStatusCode.BadRequest, noConsent.StatusCode);
+            fields["PreviewMatches"] = "true";
+            using (var confirm = await browser.PostDraftAsync(draft, "Confirm", fields, json: true))
+            {
+                Assert.Equal(HttpStatusCode.OK, confirm.StatusCode);
+                using var body = System.Text.Json.JsonDocument.Parse(await confirm.Content.ReadAsStringAsync());
+                Assert.Contains("hasn't been sent", body.RootElement.GetProperty("message").GetString());
+            }
+            Assert.Contains("Preview confirmed", await browser.GetTextAsync(draft));
+            using (var stale = await browser.PostDraftAsync(draft, "Confirm", fields, json: true)) Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+            Assert.Equal(1, await db.EmailOutbox.CountAsync(x => x.EnvelopeId == envelope.Id));
+        }
+        finally
+        {
+            envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.SenderEmail == email);
+            using var scope = run.App.Services.CreateScope(); var storage = scope.ServiceProvider.GetRequiredService<IBlobStore>();
+            var sender = SenderConfiguration.Principal(new(envelope.Id, envelope.PublicId, email));
+            foreach (var pair in new[] { (DocumentBlobKind.Original, envelope.OriginalBlob), (DocumentBlobKind.Normalized, envelope.PdfBlob) })
+                if (Guid.TryParseExact(pair.Item2, "N", out var id)) await storage.DeleteAsync(sender, new(envelope.Id, pair.Item1, id));
+        }
+    }
+
+    [Fact]
     public async Task Json_responses_are_neutral_invalid_input_is_rejected_and_no_notice_is_written()
     {
         await using var run = await Harness.CreateAsync(fixture);
@@ -310,6 +367,7 @@ public sealed class SenderWorkflowTests(SqlDatabaseFixture fixture) : IClassFixt
             builder.Services.AddQuillSignEmail(builder.Configuration, builder.Environment);
             builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment);
             builder.Services.AddQuillSignSender(builder.Configuration, builder.Environment);
+            builder.Services.AddQuillSignDocuments(builder.Configuration);
             builder.Services.AddSingleton<TimeProvider>(run.Clock);
             builder.Services.AddSingleton<IWorkSignals>(run.Signals);
             builder.Services.AddSingleton<IEmailSender>(run.sender);
@@ -378,6 +436,20 @@ public sealed class SenderWorkflowTests(SqlDatabaseFixture fixture) : IClassFixt
             Assert.NotEmpty(antiforgery);
             return await SendAsync(new(HttpMethod.Post, "/") { Content = new FormUrlEncodedContent(new Dictionary<string, string>
             { ["Email"] = email, ["__RequestVerificationToken"] = antiforgery }) }, json);
+        }
+        public async Task<HttpResponseMessage> PostDraftAsync(string draft, string handler, Dictionary<string, string> fields,
+            byte[]? pdf = null, bool csrf = true, bool json = false)
+        {
+            var values = new Dictionary<string, string>(fields);
+            if (csrf)
+            {
+                var html = await GetTextAsync(draft);
+                values["__RequestVerificationToken"] = WebUtility.HtmlDecode(Regex.Match(html, "name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value);
+            }
+            var content = new MultipartFormDataContent();
+            foreach (var pair in values) content.Add(new StringContent(pair.Value), pair.Key);
+            if (pdf is not null) content.Add(new ByteArrayContent(pdf), "Upload", "synthetic.pdf");
+            return await SendAsync(new(HttpMethod.Post, draft + "?handler=" + handler) { Content = content }, json);
         }
     }
     private sealed class Clock : TimeProvider

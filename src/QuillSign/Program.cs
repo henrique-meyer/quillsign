@@ -3,6 +3,7 @@ using QuillSign.Email;
 using QuillSign.Work;
 using QuillSign.Storage;
 using QuillSign.Sender;
+using QuillSign.Documents;
 
 if (args.Length > 0 && args[0] == "database")
 {
@@ -28,6 +29,7 @@ builder.Services.AddQuillSignStorage(builder.Configuration, builder.Environment)
 builder.Services.AddQuillSignEmail(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment);
 builder.Services.AddQuillSignSender(builder.Configuration, builder.Environment);
+builder.Services.AddQuillSignDocuments(builder.Configuration);
 var app = builder.Build();
 app.UseForwardedHeaders();
 
@@ -35,7 +37,12 @@ app.Use(async (context, next) =>
 {
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
-    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+    if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/draft"))
+    {
+        var body = context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+        if (body is { IsReadOnly: false }) body.MaxRequestBodySize = app.Services.GetRequiredService<DocumentOptions>().MaximumBytes + 65536;
+    }
     await next();
 });
 app.UseStaticFiles();
