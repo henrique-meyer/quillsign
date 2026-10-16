@@ -1,0 +1,62 @@
+@page "/draft/{publicId}/review"
+@model QuillSign.Pages.Draft.ReviewModel
+@{ ViewData["Title"] = "Review document preparation"; }
+<div class="draft-review">
+<p class="eyebrow">ONE LAST LOOK</p>
+<h1>Review your draft.</h1>
+<p class="intro">Check the document, signing order, and everyone who receives the completed packet.</p>
+<section class="notice" aria-labelledby="checks-title">
+    <h2 id="checks-title">@(Model.Draft.ChecksPassed ? "Preparation checks passed" : "Preparation needs attention")</h2>
+    @if (Model.Draft.Errors.Count > 0)
+    {
+        <ul>@foreach (var issue in Model.Draft.Errors) { <li><a href="@Model.StepUrl(issue.Step)">@issue.Message</a></li> }</ul>
+    }
+    else { <p>The PDF is confirmed, signers are set up, fields are within page bounds, and sender values are filled.</p> }
+    @if (Model.Draft.Warnings.Count > 0)
+    {
+        <h3>Review these warnings</h3>
+        <ul>@foreach (var issue in Model.Draft.Warnings) { <li><a href="@Model.StepUrl(issue.Step)">@issue.Message</a></li> }</ul>
+        <p class="hint">Warnings do not block preparation.</p>
+    }
+</section>
+<section class="start-card" aria-labelledby="document-title">
+    <h2 id="document-title">Document</h2><p><strong>@(Model.Draft.Title ?? "Untitled document")</strong></p>
+    @if (!string.IsNullOrEmpty(Model.Draft.Message)) { <p class="document-message">@Model.Draft.Message</p> }
+    <p>@(Model.Draft.HasPdf ? $"{Model.Draft.PageCount} PDF page(s)" : "No PDF uploaded") · @(Model.Draft.PreviewConfirmed ? "Preview confirmed" : "Preview not confirmed")</p>
+    <p><a href="@Model.StepUrl("")">Review PDF preview</a> · <a href="@Model.StepUrl("details")">Edit title and message</a></p>
+</section>
+<section class="signer-list" aria-labelledby="signers-title">
+    <h2 id="signers-title">Sequential signing order</h2>
+    @if (Model.Draft.Signers.Count == 0) { <p>No signers added.</p> }
+    <ol class="signer-cards">@foreach (var signer in Model.Draft.Signers)
+    {
+        <li class="signer-card" value="@signer.Order"><strong>@signer.FullName</strong><span class="signer-email">@signer.Email</span>
+            @if (!string.IsNullOrEmpty(signer.Role)) { <p>@signer.Role</p> }
+            <p>@Model.Draft.Fields.Count(f => f.SignerId == signer.Id) assigned field(s)</p>
+        </li>
+    }</ol>
+    <p><a href="@Model.StepUrl("signers")">Edit signers and order</a> · <a href="@Model.StepUrl("fields")">Edit document fields</a></p>
+</section>
+<section class="signer-list" aria-labelledby="sender-fields-title">
+    <h2 id="sender-fields-title">Sender-filled fields</h2>
+    <p>These values become fixed content before signing begins.</p>
+    @if (!Model.Draft.Fields.Any(f => f.SignerId is null)) { <p>No sender-filled fields.</p> }
+    <ul class="recipient-cards">@foreach (var field in Model.Draft.Fields.Where(f => f.SignerId is null))
+    {
+        <li class="signer-card"><strong>@(field.Label ?? field.Type) · Page @field.Page</strong>
+            <p class="document-message">@(field.Type == "Checkbox" && field.Value is "true" or "false" ? (field.Value == "true" ? "Checked" : "Unchecked") : string.IsNullOrWhiteSpace(field.Value) ? "Not filled" : field.Value)</p>
+        </li>
+    }</ul>
+    <p><a href="@Model.StepUrl("fields")">Edit sender values</a></p>
+</section>
+<section class="signer-list" aria-labelledby="recipients-title">
+    <h2 id="recipients-title">Completion recipients (CC)</h2>
+    <p>The sender and all signers receive the completed packet. These additional recipients receive it without signing.</p>
+    @if (Model.Draft.Recipients.Count == 0) { <p>No additional completion recipients.</p> }
+    <ul class="recipient-cards">@foreach (var recipient in Model.Draft.Recipients)
+    { <li class="signer-card"><strong>@recipient.Name</strong><span class="signer-email">@recipient.Email</span></li> }</ul>
+    <p><a href="@Model.StepUrl("details")">Edit completion recipients</a></p>
+</section>
+<p class="hint">Your document stays a draft. Reviewing it sends no invitations.</p>
+</div>
+@section Styles { <link rel="stylesheet" href="~/review.css" asp-append-version="true" /> }

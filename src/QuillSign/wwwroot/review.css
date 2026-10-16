@@ -1,0 +1,3 @@
+.draft-review { overflow-wrap: anywhere; }
+.draft-review .signer-list { max-width: 590px; }
+.draft-review .notice li a { display: block; }
