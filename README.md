@@ -124,6 +124,8 @@ Choose **Review document preparation** to see the PDF, ordered signers, sender-f
 
 The [versioned electronic-record disclosure foundation](docs/electronic-record-disclosure.md) builds exact envelope-bound text and hashes for a later send/consent transaction. Operators must supply actual paper-copy, withdrawal, contact-update, access and retention policies through private `ElectronicRecords__...` settings; empty examples fail snapshot construction. This foundation exposes no consent or signing UI.
 
+The backend [signer-access foundation](docs/signer-access.md) provides single-use invitation redemption, isolated two-hour signer sessions and access scoped to the frozen PDF/disclosure. Invitation tokens are created at actual dispatch with a default 24-hour life, bounded by envelope expiry. Public invitation, consent and signing screens are still pending.
+
 PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.js 6.4.299 is vendored locally, including its font/decoder assets and license notices. Its four Liberation Sans fonts are replaced with unmodified upstream 2.1.5 under OFL-1.1. CI verifies the committed asset hashes with `python scripts/dev/vendor_pdfjs.py --verify`; maintainers regenerate the pinned distribution with the same script without `--verify`. See [third-party notices](THIRD-PARTY-NOTICES.txt) for attribution.
 
 The standalone [PDF field feasibility harness](docs/pdf-field-feasibility.md) checks stamping geometry, embedded text, checkboxes and image marks with independent rendering and text extraction. Run `pwsh -File scripts/dev/Test-PdfFieldSpike.ps1`; generated fixtures stay ignored. The harness does not enable production stamping or signing.

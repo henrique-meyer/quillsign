@@ -66,7 +66,7 @@ public sealed class AzureBlobStore(BlobServiceClient service, long maximumBytes,
     public async Task<long> CopyToAsync(ClaimsPrincipal sender, DocumentBlob blob, Stream destination,
         CancellationToken cancellationToken = default)
     {
-        EnvelopeStorageAuthorization.Demand(sender, blob);
+        EnvelopeStorageAuthorization.DemandRead(sender, blob);
         var response = await Container(blob.Kind).GetBlobClient(Path(blob)).DownloadStreamingAsync(cancellationToken: cancellationToken);
         await using var source = response.Value.Content;
         var length = response.Value.Details.ContentLength;
