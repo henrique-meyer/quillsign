@@ -377,6 +377,10 @@ namespace QuillSign.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("varbinary(32)");
 
+                    b.Property<string>("ErsdText")
+                        .HasMaxLength(32768)
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("ErsdVersion")
                         .HasMaxLength(512)
                         .HasColumnType("nvarchar(512)");
@@ -507,6 +511,8 @@ namespace QuillSign.Data.Migrations
                             t.HasCheckConstraint("CK_Envelope_CertificateSha256", "[CertificateSha256] IS NULL OR DATALENGTH([CertificateSha256]) = 32");
 
                             t.HasCheckConstraint("CK_Envelope_ErsdSha256", "[ErsdSha256] IS NULL OR DATALENGTH([ErsdSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_Envelope_ErsdText", "[ErsdText] IS NULL OR DATALENGTH([ErsdText]) <= 65536");
 
                             t.HasCheckConstraint("CK_Envelope_FinalSha256", "[FinalSha256] IS NULL OR DATALENGTH([FinalSha256]) = 32");
 
