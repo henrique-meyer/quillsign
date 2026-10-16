@@ -357,7 +357,7 @@ Validation: All 440 .NET tests and 11 Node image-header tests pass. Fifteen new 
 
 ## QUILS-32: Record deliberate signer field application bound to current adopted marks
 
-Status: To Do. Depends on merged QUILS-30 and QUILS-31. Owned by the overnight-development chat.
+Status: Done. Depends on merged QUILS-30 and QUILS-31. Owned by the overnight-development chat.
 
 Build the backend for deliberate signer-owned field application on QUILS-30/31 adoption. No public field UI, Finish, Signed status, PDF mutation or mail in this slice. Reuse current sequential signer authorization, recorded consent, frozen PDF/disclosure and common envelope lock. Return an authorized coherent field snapshot with current field revisions, required flags, saved values and stale adoption bindings, without exposing another signer's fields or broadening signer-cookie storage access.
 
@@ -368,3 +368,7 @@ A signature or initials field changes only after an explicit application call na
 Under the envelope lock, validate field ownership/type/bounds/current revision and current consent/session/request scope, save the canonical value/FilledAt/FilledBy and mark binding where applicable, and append signer-attributed field_filled/field_cleared evidence atomically. Include field/type, frozen PDF/disclosure hashes and current adoption/image hash for mark fields. Concurrent/repeated exact applications record once; stale different values or stale/replaced adoption IDs are rejected. An audit/storage failure must leave the field unchanged and retryable. Current state remains editable before Finish; required-field/completion enforcement follows in the review/Finish story.
 
 Test SQL Server/Azurite consent/session/current sequential scope, foreign/unassigned fields, forged blob/adoption refs, revision conflicts/concurrency/idempotence, exact mark hashes, current asset reads after preview expiry, replacement/stale application and explicit reapplication, typed/manual/server-derived values, clearing and rollback/audit retry. Add migrations and documentation with matching Jira/plan, verify model/vendor/secret checks, commit/push/open/attach/check/merge a small QUILS-numbered PR and move Done. No cloud changes, live email, purchases, fabricated policies or new nonpermissive/native dependencies.
+
+Also align the existing capture/adoption page's recoverable storage-error handling with InvalidDataException from saved-asset hash/length verification. Add a regression for tampered preview/adoption assets and exercise that error path in a synthetic local browser flow. This adds no public field UI or new signing action.
+
+Validation: All 482 .NET tests and 11 Node tests pass. Forty new SQL/Azurite field cases cover owned coherent reads, current adopted assets beyond preview expiry, advancing clocks, exact binding, concurrency/idempotence, replacement/staleness/clear, manual/server-derived values, input/page boundaries, composite database constraints, asset/evidence corruption, audit rollback and lost commit recovery. Two TestServer regressions cover recoverable hash errors during preview/adoption; a real synthetic browser fault/recovery flow passed. Model/vendor checks pass. No public field endpoint/UI, Finish, Signed state, PDF mutation, mail, cloud change or dependency was added. See docs/signer-fields.md.

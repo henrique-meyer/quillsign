@@ -145,6 +145,8 @@ public sealed class DocumentField : IVersionedRecord
     public string? Value { get; set; }
     public DateTimeOffset? FilledAt { get; set; }
     public PartyType? FilledBy { get; set; }
+    public Guid? SignatureAdoptionId { get; set; }
+    public byte[]? ImageSha256 { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }
 

@@ -32,6 +32,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<SignaturePreview>().HasOne<Signer>().WithMany()
             .HasForeignKey(x => new { x.EnvelopeId,x.SignerId }).HasPrincipalKey(x => new { x.EnvelopeId,x.Id }).OnDelete(DeleteBehavior.NoAction);
         model.Entity<SignaturePreview>().HasIndex(x => new { x.EnvelopeId,x.SignerId,x.ExpiresAt });
+        model.Entity<SignaturePreview>().HasAlternateKey(x => new { x.EnvelopeId,x.SignerId,x.Id });
         model.Entity<SignaturePreview>().ToTable(t =>
         {
             t.HasCheckConstraint("CK_SignaturePreview_Expiry", "[ExpiresAt] > [CreatedAt] AND ([UsedAt] IS NULL OR [UsedAt] >= [CreatedAt])");
@@ -42,11 +43,15 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<DocumentField>().HasOne<Signer>().WithMany()
             .HasForeignKey(x => new { x.EnvelopeId, x.SignerId })
             .HasPrincipalKey(x => new { x.EnvelopeId, x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<DocumentField>().HasOne<SignaturePreview>().WithMany()
+            .HasForeignKey(x => new { x.EnvelopeId,x.SignerId,x.SignatureAdoptionId })
+            .HasPrincipalKey(x => new { x.EnvelopeId,x.SignerId,x.Id }).OnDelete(DeleteBehavior.NoAction);
         model.Entity<DocumentField>().ToTable(t =>
         {
             t.HasCheckConstraint("CK_Field_Bounds", "[Page] >= 1 AND [X] >= 0 AND [Y] >= 0 AND [Width] > 0 AND [Height] > 0 AND [X] + [Width] <= 1 AND [Y] + [Height] <= 1");
             t.HasCheckConstraint("CK_Field_Assignment", "[SignerId] IS NOT NULL OR [Type] IN ('Text','Checkbox','Date')");
             t.HasCheckConstraint("CK_Field_Confidence", "[AiConfidence] IS NULL OR ([AiConfidence] >= 0 AND [AiConfidence] <= 1)");
+            t.HasCheckConstraint("CK_Field_MarkBinding", "([SignatureAdoptionId] IS NULL AND [ImageSha256] IS NULL) OR ([SignatureAdoptionId] IS NOT NULL AND [ImageSha256] IS NOT NULL AND [Type] IN ('Signature','Initials') AND [SignerId] IS NOT NULL AND [FilledAt] IS NOT NULL AND [FilledBy] IS NOT NULL AND [FilledBy] = 'Signer' AND [Value] IS NOT NULL)");
         });
         model.Entity<AuthToken>().HasIndex(x => x.TokenSha256).IsUnique();
         model.Entity<AuthToken>().HasIndex(x => x.ExpiresAt);

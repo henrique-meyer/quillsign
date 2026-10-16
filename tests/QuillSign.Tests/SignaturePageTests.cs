@@ -83,6 +83,19 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
         await using var db=fixture.Open(); Assert.False(await db.SignaturePreviews.AnyAsync(x=>x.EnvelopeId==run.Envelope.Id)); Assert.Null((await db.Signers.SingleAsync(x=>x.Id==run.Signer.Id)).SignatureAdoptionId);
     }
 
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public async Task Hash_verification_failure_returns_recoverable_503_during_preview_or_adoption(bool duringAdoption)
+    {
+        await using var run=await Browser.Create(fixture); await run.Session("signer"); var page=await run.Get(); string receipt="";
+        if(duringAdoption) { using var prepared=await run.Preview(page); using var data=JsonDocument.Parse(await prepared.Content.ReadAsStringAsync()); receipt=data.RootElement.GetProperty("receipt").GetString()!; }
+        run.Storage.TamperRead=true;
+        using var result=duringAdoption ? await run.Adopt(page,receipt) : await run.Preview(page);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable,result.StatusCode);
+        Assert.Contains(duringAdoption ? "Adoption could not be confirmed" : "No adoption was recorded",await result.Content.ReadAsStringAsync());
+        await using var db=fixture.Open(); Assert.Null((await db.Signers.SingleAsync(x=>x.Id==run.Signer.Id)).SignatureAdoptionId);
+    }
+
     [Fact]
     public async Task JSON_adoption_returns_body_without_redirect_or_notice_cookie_and_current_consent_is_required()
     {
@@ -145,8 +158,8 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
     }
     private sealed class Clock : TimeProvider { private DateTimeOffset now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public override DateTimeOffset GetUtcNow()=>now; public void Advance(TimeSpan value)=>now+=value; }
     private sealed class TestStorage(IBlobStore inner) : IBlobStore
-    { public IBlobStore Inner=>inner; public List<DocumentBlob> Created=[]; public bool FailRead;
+    { public IBlobStore Inner=>inner; public List<DocumentBlob> Created=[]; public bool FailRead,TamperRead;
         public Task WriteAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,long length,CancellationToken ct=default) { Created.Add(b); return inner.WriteAsync(p,b,s,length,ct); }
-        public Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct=default) { if(FailRead)throw new IOException("Synthetic storage unavailable"); return inner.CopyToAsync(p,b,s,ct); }
+        public async Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct=default) { if(FailRead)throw new IOException("Synthetic storage unavailable"); if(TamperRead) { EnvelopeStorageAuthorization.DemandRead(p,b); var bytes=SignatureAdoptionTests.Mark(100); await s.WriteAsync(bytes,ct); return bytes.Length; } return await inner.CopyToAsync(p,b,s,ct); }
         public Task DeleteAsync(ClaimsPrincipal p,DocumentBlob b,CancellationToken ct=default)=>inner.DeleteAsync(p,b,ct); }
 }

@@ -194,6 +194,10 @@ namespace QuillSign.Data.Migrations
                         .HasPrecision(10, 8)
                         .HasColumnType("decimal(10,8)");
 
+                    b.Property<byte[]>("ImageSha256")
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
                     b.Property<string>("Label")
                         .HasMaxLength(512)
                         .HasColumnType("nvarchar(512)");
@@ -213,6 +217,9 @@ namespace QuillSign.Data.Migrations
                         .IsRequired()
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
+
+                    b.Property<Guid?>("SignatureAdoptionId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<Guid?>("SignerId")
                         .HasColumnType("uniqueidentifier");
@@ -245,11 +252,13 @@ namespace QuillSign.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("EnvelopeId", "SignerId");
+                    b.HasIndex("EnvelopeId", "SignerId", "SignatureAdoptionId");
 
                     b.ToTable("Fields", t =>
                         {
                             t.HasCheckConstraint("CK_DocumentField_FilledBy", "[FilledBy] IS NULL OR [FilledBy] IN ('Sender','Signer','Recipient','System')");
+
+                            t.HasCheckConstraint("CK_DocumentField_ImageSha256", "[ImageSha256] IS NULL OR DATALENGTH([ImageSha256]) = 32");
 
                             t.HasCheckConstraint("CK_DocumentField_Source", "[Source] IS NULL OR [Source] IN ('Manual','Ai','AcroForm')");
 
@@ -260,6 +269,8 @@ namespace QuillSign.Data.Migrations
                             t.HasCheckConstraint("CK_Field_Bounds", "[Page] >= 1 AND [X] >= 0 AND [Y] >= 0 AND [Width] > 0 AND [Height] > 0 AND [X] + [Width] <= 1 AND [Y] + [Height] <= 1");
 
                             t.HasCheckConstraint("CK_Field_Confidence", "[AiConfidence] IS NULL OR ([AiConfidence] >= 0 AND [AiConfidence] <= 1)");
+
+                            t.HasCheckConstraint("CK_Field_MarkBinding", "([SignatureAdoptionId] IS NULL AND [ImageSha256] IS NULL) OR ([SignatureAdoptionId] IS NOT NULL AND [ImageSha256] IS NOT NULL AND [Type] IN ('Signature','Initials') AND [SignerId] IS NOT NULL AND [FilledAt] IS NOT NULL AND [FilledBy] IS NOT NULL AND [FilledBy] = 'Signer' AND [Value] IS NOT NULL)");
                         });
                 });
 
@@ -937,6 +948,12 @@ namespace QuillSign.Data.Migrations
                         .WithMany()
                         .HasForeignKey("EnvelopeId", "SignerId")
                         .HasPrincipalKey("EnvelopeId", "Id")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("QuillSign.Data.SignaturePreview", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "SignerId", "SignatureAdoptionId")
+                        .HasPrincipalKey("EnvelopeId", "SignerId", "Id")
                         .OnDelete(DeleteBehavior.NoAction);
                 });
 
