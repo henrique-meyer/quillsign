@@ -1,0 +1,27 @@
+Electronic Record and Signature Disclosure
+Version: {{version}}
+Envelope: {{public_id}}
+Document: {{title}}
+Sender contact: {{sender_contact}}
+
+Your choice and the scope of this disclosure
+Electronic participation is voluntary. This disclosure concerns only the document and envelope identified above. Agreement to receive electronic records does not itself sign the document.
+
+Paper alternatives and copies
+{{paper_copy_instructions}}
+Paper-copy fees: {{paper_copy_fees}}
+
+Withdrawing electronic-record consent
+{{withdrawal_instructions}}
+Conditions, consequences and fees: {{withdrawal_consequences}}
+Withdrawal concerns subsequent covered electronic records. It does not automatically cancel an earlier agreement or undo records properly provided before withdrawal takes effect.
+
+Updating electronic contact information
+{{contact_update_instructions}}
+
+Accessing and retaining electronic records
+{{access_requirements}}
+{{retention_notice}}
+
+Before agreeing
+Open the PDF preview and use its download or retention option. Confirm access only if you can access and retain the electronic form being used. If you cannot, ask the sender for an alternative instead of confirming successful access.

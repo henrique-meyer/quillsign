@@ -27,6 +27,7 @@ public sealed class Envelope : IVersionedRecord
     public string ReminderDaysJson { get; set; } = "[3,7]";
     public DateTimeOffset? ExpiresAt { get; set; }
     public string? ErsdVersion { get; set; }
+    public string? ErsdText { get; set; }
     public byte[]? ErsdSha256 { get; set; }
     public DateTimeOffset? ExclusionsAckAt { get; set; }
     public string? OriginalBlob { get; set; }
