@@ -51,6 +51,8 @@ public static class EmailConfiguration
         services.AddScoped<IEmailSender>(sp => new EmailSender(options,
             () => sp.GetRequiredService<Data.QuillSignDbContext>(), sp.GetRequiredService<Func<IEmailTransport>>()));
         services.AddScoped<VerificationEmailTemplate>();
+        services.AddScoped<RazorEmailViews>();
+        services.AddScoped<DeclineEmailTemplate>();
         services.AddScoped<SesFeedbackProcessor>();
         services.AddHttpClient("Sns", client => client.Timeout = TimeSpan.FromSeconds(10))
             .RemoveAllLoggers() // Confirmation URLs contain a subscription token.

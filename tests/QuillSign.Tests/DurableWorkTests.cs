@@ -13,11 +13,39 @@ using QuillSign.Data;
 using QuillSign.Email;
 using QuillSign.Storage;
 using QuillSign.Work;
+using QuillSign.Signing;
+using QuillSign.Legal;
 
 namespace QuillSign.Tests;
 
 public sealed class DurableWorkTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public async Task Decline_notification_uses_durable_submission_protocol_and_no_auth_tokens(bool retry)
+    {
+        await using var run = new Harness(fixture); var id = await run.DeclineAsync();
+        if (retry) run.Sender.Failure = new EmailNotSubmittedException(true);
+        Assert.True(await run.OnceAsync());
+        if (retry)
+        {
+            run.Sender.Failure = null; run.Clock.Advance(TimeSpan.FromMinutes(2));
+            await run.Signals.PublishAsync(id,TimeSpan.Zero,default); Assert.True(await run.OnceAsync());
+        }
+        Assert.Equal(retry ? 2 : 1,run.Sender.Calls); Assert.Contains("was declined",run.Sender.Last!.Text);
+        Assert.Contains("&lt;b&gt;",run.Sender.Last.Html); Assert.DoesNotContain("<b>Synthetic",run.Sender.Last.Html);
+        await run.Signals.PublishAsync(id,TimeSpan.Zero,default); Assert.True(await run.OnceAsync()); Assert.Equal(retry ? 2 : 1,run.Sender.Calls);
+        await using var db = fixture.Open(); Assert.Equal(EmailStatus.Sent,(await db.EmailOutbox.SingleAsync(x => x.Id == id)).Status);
+        Assert.False(await db.AuthTokens.AnyAsync(x => x.EnvelopeId == run.EnvelopeId));
+    }
+    [Fact]
+    public async Task Decline_notification_delivers_only_to_local_Mailpit()
+    {
+        await using var run = new Harness(fixture,realSmtp:true); var id = await run.DeclineAsync(); Assert.True(await run.OnceAsync());
+        await using var db = fixture.Open(); Assert.Equal(EmailStatus.Sent,(await db.EmailOutbox.SingleAsync(x => x.Id == id)).Status);
+        using var http = new HttpClient(); var json = await http.GetStringAsync("http://127.0.0.1:" + Environment.GetEnvironmentVariable("QUILLSIGN_TEST_MAIL_PORT") + "/api/v1/search?query=to:" + run.Recipient);
+        Assert.Contains("Your signing request was declined",json);
+    }
     [Fact]
     public async Task Delayed_verification_activates_only_at_dispatch_and_duplicate_wakeups_do_not_resend()
     {
@@ -379,6 +407,19 @@ public sealed class DurableWorkTests(SqlDatabaseFixture fixture) : IClassFixture
             var queued = await scope.ServiceProvider.GetRequiredService<EmailOutboxWriter>().EnqueueVerificationAsync(EnvelopeId, Recipient);
             Assert.Equal(expectedPublished, queued.WakeupPublished);
             return queued.Id;
+        }
+
+        public async Task<Guid> DeclineAsync()
+        {
+            await using var scope = App.Services.CreateAsyncScope(); var db = scope.ServiceProvider.GetRequiredService<QuillSignDbContext>();
+            var envelope = new Envelope { Id = EnvelopeId,SenderEmail = Recipient,Title = "Synthetic notification test",Status = EnvelopeStatus.Declined };
+            db.Envelopes.Add(envelope); await db.SaveChangesAsync();
+            var snapshot = new ElectronicRecordDisclosure(ElectronicRecordDisclosureTests.Policy()).Build(envelope.PublicId,envelope.Title,Recipient);
+            var identity = new VerifiedSigner(envelope.Id,envelope.PublicId,Guid.NewGuid(),"signer@example.invalid",Guid.NewGuid(),new string('a',64),new string('b',64),Clock.GetUtcNow().AddHours(2));
+            var context = new SignerReadContext(identity,envelope.Title,"Synthetic signer",null,new(envelope.Id,DocumentBlobKind.Normalized,identity.DocumentId),new byte[32],snapshot);
+            var writer = scope.ServiceProvider.GetRequiredService<DeclineNotificationWriter>(); Guid id;
+            await using (var transaction = await db.Database.BeginTransactionAsync()) { id = await writer.PrepareAsync(context,"<b>Synthetic reason</b>",default); await transaction.CommitAsync(); }
+            await writer.PublishAsync(id,default); return id;
         }
 
         public async Task<bool> OnceAsync()

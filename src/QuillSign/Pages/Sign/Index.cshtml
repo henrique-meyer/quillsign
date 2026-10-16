@@ -1,0 +1,63 @@
+@page "/sign/{publicId}"
+@model QuillSign.Pages.Sign.IndexModel
+@{ ViewData["Title"] = Model.Context.ConsentAt is null ? "Review electronic-record disclosure" : "Review document"; }
+@section Styles {
+<link rel="stylesheet" href="~/vendor/pdfjs/web/pdf_viewer.css" />
+<link rel="stylesheet" href="~/signer.css" asp-append-version="true" />
+}
+<section class="signer-flow">
+<p class="eyebrow">Signing request</p>
+<h1>@Model.Context.Title</h1>
+<p>For @Model.Context.SignerName · From <span class="contact">@Model.Context.Disclosure.SenderContact</span></p>
+<div asp-validation-summary="All" class="validation" role="alert"></div>
+@if (Model.Context.ConsentAt is not null) {
+    <p class="notice" role="status">Electronic-record consent was recorded at @Model.Context.ConsentAt.Value.ToString("u"). Review your document below. No signature has been recorded. Signature fields will be available in a later release.</p>
+}
+<h2>Electronic Record &amp; Signature Disclosure</h2>
+<p>Read the disclosure for this request. You may save it and the PDF before deciding.</p>
+<pre class="disclosure">@Model.Context.Disclosure.Text</pre>
+<p><a asp-page-handler="Disclosure">Download this disclosure as text</a></p>
+<h2>Review and save the document</h2>
+@if (Model.AccessError is not null) { <p class="document-error" role="alert">@Model.AccessError</p> }
+else {
+<div class="pdf-toolbar" aria-label="PDF controls">
+<button type="button" id="previous-page" disabled aria-label="Previous page">Previous</button>
+<span id="page-number" aria-live="polite">Loading…</span>
+<button type="button" id="next-page" disabled aria-label="Next page">Next</button>
+<label for="pdf-zoom">Zoom</label><select id="pdf-zoom"><option value="fit">Fit width</option><option value="1">100%</option><option value="2">200%</option></select>
+</div>
+<p id="preview-status" role="status">Loading PDF preview…</p>
+<div id="pdf-preview" class="pdf-preview" data-url="/sign/@Model.Context.Identity.PublicId?handler=Pdf"
+     data-render-error="The preview could not be displayed. Download and open the PDF before confirming access, or contact the sender."
+     data-load-error="The PDF is unavailable or your session expired. Reload this request or contact the sender for a new invitation."
+     aria-label="Read-only document preview">
+<div class="pdf-page"><canvas aria-label="Document page"></canvas><div class="textLayer"></div></div>
+</div>
+<p><a id="pdf-download" asp-page-handler="Pdf" asp-route-download="true">Download the PDF</a> · <a asp-page-handler="Pdf" target="_blank" rel="noopener">Open PDF in a new tab</a></p>
+<p class="hint">If the preview fails, download the PDF and open it in your PDF viewer. Do not continue if you cannot view or save it.</p>
+}
+@if (Model.Context.ConsentAt is null) {
+<form method="post" id="consent-form">
+<input type="hidden" asp-for="Receipt" />
+<fieldset><legend>How did you access the PDF?</legend>
+<label class="check-label"><input type="radio" asp-for="AccessMethod" value="preview" required /> I viewed the preview in this browser.</label>
+<label class="check-label"><input type="radio" asp-for="AccessMethod" value="download" required /> I opened the downloaded PDF in a PDF viewer.</label>
+</fieldset>
+<label class="check-label"><input type="checkbox" asp-for="CanRetain" required /> I can view this document and save or print an accurate copy for later reference.</label>
+<label class="check-label"><input type="checkbox" asp-for="Agreement" required /> I have read the disclosure above and agree to use electronic records and signatures for this request.</label>
+<p class="hint">This records electronic-record consent. It does not sign the document. The server verifies the saved PDF; your confirmations describe your own access.</p>
+<button type="submit" disabled="@(Model.Receipt is null)">Agree and continue</button>
+</form>
+<section class="start-card">
+<h2>Prefer another arrangement?</h2>
+<p>You may decline before consenting. This closes the request and queues a notification for the sender. Use the disclosure's instructions for paper copies, contact changes and withdrawal.</p>
+<form method="post" asp-page-handler="Decline">
+<label asp-for="Reason">Reason (optional)</label><textarea asp-for="Reason" maxlength="512" rows="3"></textarea>
+<button class="quiet-button" type="submit">Decline to sign</button>
+</form>
+</section>
+}
+</section>
+@section Scripts {
+<script type="module" src="~/js/signer-consent.mjs" asp-append-version="true"></script>
+}

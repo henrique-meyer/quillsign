@@ -36,7 +36,7 @@ public sealed class SignerInvitationFactory(SignerAccessOptions options,TimeProv
     }
 }
 public sealed record SignerReadContext(VerifiedSigner Identity,string Title,string SignerName,string? Role,
-    DocumentBlob Document,byte[] DocumentSha256,DisclosureSnapshot Disclosure);
+    DocumentBlob Document,byte[] DocumentSha256,DisclosureSnapshot Disclosure,DateTimeOffset? ConsentAt = null);
 
 public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerAccessOptions options,TimeProvider time)
 {
@@ -66,35 +66,43 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         await transaction.CommitAsync(ct); return context.Identity;
     }
 
-    public async Task<SignerReadContext?> GetContextAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct = default)
+    public async Task<SignerReadContext?> GetContextAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct = default,bool declinedConfirmation = false)
     {
         var identity = SignerAccessConfiguration.ReadIdentity(principal,time.GetUtcNow()); if (identity is null || identity.PublicId != publicId) return null;
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var context = await GetLockedContextAsync(principal,publicId,ct,declinedConfirmation);
+        await transaction.CommitAsync(ct); return context;
+    }
+    // The caller owns the transaction, so scope validation and mutation share the same lock.
+    internal async Task<SignerReadContext?> GetLockedContextAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct,bool declinedConfirmation = false)
+    {
+        if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("A transaction is required.");
+        var identity = SignerAccessConfiguration.ReadIdentity(principal,time.GetUtcNow()); if (identity is null || identity.PublicId != publicId) return null;
         var envelope = await Locked(identity.EnvelopeId).AsNoTracking().SingleOrDefaultAsync(ct);
-        var context = await EligibleAsync(envelope,identity.SignerId,ct);
+        var context = await EligibleAsync(envelope,identity.SignerId,ct,declinedConfirmation);
         if (context is null || identity.SessionExpiresAt <= time.GetUtcNow() || context.Identity.PublicId != identity.PublicId || context.Identity.Email != identity.Email ||
             context.Identity.DocumentId != identity.DocumentId || context.Identity.DocumentHash != identity.DocumentHash ||
             context.Identity.DisclosureHash != identity.DisclosureHash) return null;
-        await transaction.CommitAsync(ct); return context with { Identity = identity };
+        return context with { Identity = identity };
     }
     private IQueryable<Envelope> Locked(Guid id) => db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {id}");
-    private async Task<SignerReadContext?> EligibleAsync(Envelope? envelope,Guid signerId,CancellationToken ct)
+    private async Task<SignerReadContext?> EligibleAsync(Envelope? envelope,Guid signerId,CancellationToken ct,bool declinedConfirmation = false)
     {
         if (options.SessionHours is < 1 or > 24) throw new InvalidOperationException("Invalid signer session lifetime.");
         var now = time.GetUtcNow();
-        if (envelope is null || envelope.Status != EnvelopeStatus.Sent || envelope.SenderVerifiedAt is null || envelope.ExpiresAt <= now ||
+        if (envelope is null || envelope.Status != (declinedConfirmation ? EnvelopeStatus.Declined : EnvelopeStatus.Sent) || envelope.SenderVerifiedAt is null || envelope.ExpiresAt <= now ||
             !Guid.TryParseExact(envelope.SentPdfBlob,"N",out var documentId) || documentId == Guid.Empty || envelope.SentPdfSha256 is not { Length: 32 } ||
             envelope.ErsdVersion is null || envelope.Title is null || envelope.ErsdText is null || envelope.ErsdSha256 is not { Length: 32 }) return null;
         var disclosure = new DisclosureSnapshot(envelope.ErsdVersion,envelope.PublicId,envelope.Title,envelope.SenderEmail,envelope.ErsdText,envelope.ErsdSha256);
         if (!ElectronicRecordDisclosure.Verify(disclosure)) return null;
         var signer = await db.Signers.AsNoTracking().SingleOrDefaultAsync(x => x.Id == signerId && x.EnvelopeId == envelope.Id,ct);
-        if (signer is null || signer.Status is SignerStatus.Signed or SignerStatus.Declined ||
+        if (signer is null || (declinedConfirmation ? signer.Status != SignerStatus.Declined : signer.Status is SignerStatus.Signed or SignerStatus.Declined) ||
             await db.Signers.AnyAsync(x => x.EnvelopeId == envelope.Id && x.Order < signer.Order && x.Status != SignerStatus.Signed,ct)) return null;
         var expires = now.AddHours(options.SessionHours); if (envelope.ExpiresAt is DateTimeOffset end && end < expires) expires = end;
         expires = DateTimeOffset.FromUnixTimeSeconds(expires.ToUnixTimeSeconds()); if (expires <= now) return null;
         var identity = new VerifiedSigner(envelope.Id,envelope.PublicId,signer.Id,signer.Email,documentId,
             Convert.ToHexStringLower(envelope.SentPdfSha256),Convert.ToHexStringLower(envelope.ErsdSha256),expires);
-        return new(identity,envelope.Title,signer.FullName,signer.Role,new(envelope.Id,DocumentBlobKind.Normalized,documentId),envelope.SentPdfSha256,disclosure);
+        return new(identity,envelope.Title,signer.FullName,signer.Role,new(envelope.Id,DocumentBlobKind.Normalized,documentId),envelope.SentPdfSha256,disclosure,signer.ConsentAt);
     }
 }

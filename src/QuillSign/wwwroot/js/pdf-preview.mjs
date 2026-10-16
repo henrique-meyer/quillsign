@@ -47,7 +47,7 @@ if (preview) {
             preview.dispatchEvent(new CustomEvent('pdf-page-ready', { detail: { pageNumber } }));
         } catch (error) {
             if (current !== sequence || error?.name === 'RenderingCancelledException' || error?.name === 'AbortException') return;
-            status.textContent = 'The preview could not be displayed. Open the PDF below, or reload this draft.';
+            status.textContent = preview.dataset.renderError || 'The preview could not be displayed. Open the PDF below, or reload this draft.';
         }
     }
     previous.addEventListener('click', () => { if (pageNumber > 1) { pageNumber--; render(); } });
@@ -71,6 +71,6 @@ if (preview) {
         pageNumber = Math.min(pageNumber, pdf.numPages);
         await render();
     } catch {
-        status.textContent = 'The PDF is unavailable or your session expired. Reload the draft, or request a new email link.';
+        status.textContent = preview.dataset.loadError || 'The PDF is unavailable or your session expired. Reload the draft, or request a new email link.';
     }
 }
