@@ -1,4 +1,4 @@
-PDFsharp 6.2.4
+PDFsharp 6.2.4 and PDFsharp-MigraDoc 6.2.4
 Copyright (c) 2001-2026 empira Software GmbH.
 MIT license: licenses/PDFsharp-MIT.txt
 Source: https://github.com/empira/PDFsharp/tree/v6.2.4
