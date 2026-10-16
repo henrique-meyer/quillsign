@@ -20,7 +20,7 @@ public sealed class SignerFieldPageTests(SqlDatabaseFixture fixture) : IClassFix
             Assert.True(response.Headers.CacheControl!.NoStore); Assert.Equal("no-referrer",Assert.Single(response.Headers.GetValues("Referrer-Policy")));
             var body=await response.Content.ReadAsStringAsync(); Assert.DoesNotContain("PRIVATE OTHER SIGNER",body); Assert.DoesNotContain("<img src=x onerror=",body);
         }
-        var review=await r.Client.GetStringAsync(Review(r)); Assert.Contains("7 required entries missing",review); Assert.Contains("Finish is not available",review);
+        var review=await r.Client.GetStringAsync(Review(r)); Assert.Contains("7 required entries missing",review); Assert.Contains("Prepare exact review PDF",review);
         await using var db=fixture.Open(); Assert.All(await db.Fields.Where(x=>x.EnvelopeId==r.Envelope.Id && x.SignerId==r.Signer.Id).ToArrayAsync(),x=>Assert.Null(x.FilledAt));
         Assert.False(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==r.Envelope.Id));
     }

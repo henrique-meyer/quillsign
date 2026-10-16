@@ -57,10 +57,13 @@ public static class SenderConfiguration
             {
                 var context=rejected.HttpContext;
                 if(context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value is { } path &&
-                    (path.EndsWith("/signature",StringComparison.Ordinal) || path.EndsWith("/fields",StringComparison.Ordinal) || path.EndsWith("/review",StringComparison.Ordinal)))
+                    (path.EndsWith("/signature",StringComparison.Ordinal) || path.EndsWith("/fields",StringComparison.Ordinal) || path.EndsWith("/review",StringComparison.Ordinal) || path.EndsWith("/confirmed",StringComparison.Ordinal)))
                 {
                     var isSignature=path.EndsWith("/signature",StringComparison.Ordinal);
-                    var message=isSignature ? "Too many signature requests. Wait before trying again; adoption has not been confirmed." : "Too many field requests. Wait before retrying and refresh saved state; saving has not been confirmed.";
+                    var isReview=path.EndsWith("/review",StringComparison.Ordinal) || path.EndsWith("/confirmed",StringComparison.Ordinal);
+                    var message=isSignature ? "Too many signature requests. Wait before trying again; adoption has not been confirmed." :
+                        isReview ? "Too many review requests. Wait before retrying. Check your signing confirmation before repeating Finish." :
+                        "Too many field requests. Wait before retrying and refresh saved state; saving has not been confirmed.";
                     context.Response.Headers.CacheControl="no-store";
                     context.Response.Headers["Referrer-Policy"]="no-referrer";
                     if(WantsJson(context))await context.Response.WriteAsJsonAsync(new { message },ct);
@@ -73,7 +76,7 @@ public static class SenderConfiguration
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
                 if(context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value is { } fieldPath &&
-                    (fieldPath.EndsWith("/fields",StringComparison.Ordinal) || fieldPath.EndsWith("/review",StringComparison.Ordinal)))
+                    (fieldPath.EndsWith("/fields",StringComparison.Ordinal) || fieldPath.EndsWith("/review",StringComparison.Ordinal) || fieldPath.EndsWith("/confirmed",StringComparison.Ordinal)))
                     return RateLimitPartition.GetFixedWindowLimiter("signer-fields:"+address,_=>new FixedWindowRateLimiterOptions {
                         PermitLimit=120,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });
                 return limited ? RateLimitPartition.GetFixedWindowLimiter(address, _ => new FixedWindowRateLimiterOptions
