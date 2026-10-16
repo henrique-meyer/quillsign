@@ -91,6 +91,9 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
         {throw Invalid();}
     }
 
+    internal async Task<CompletionCandidateData?> ReadPublishedAsync(Guid id,PublishedCompletionSource source,CancellationToken ct)
+    {var row=await Row(id,ct); return row is null ? null : await Verified(row,ct,source);}
+
     private static CompletionCandidate Create(CompletionMaterialization source,PreparedCompletionPacket packet)
     {
         var json=JsonSerializer.Serialize(source.Evidence); if(Encoding.UTF8.GetByteCount(json)>MaximumEvidenceBytes)throw Invalid();
@@ -114,7 +117,7 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
         return await db.CompletionCandidates.AsNoTracking().SingleOrDefaultAsync(x=>x.EnvelopeId==id,ct);
     }
 
-    private async Task<CompletionCandidateData?> Verified(CompletionCandidate row,CancellationToken ct)
+    private async Task<CompletionCandidateData?> Verified(CompletionCandidate row,CancellationToken ct,PublishedCompletionSource? published=null)
     {
         if(row.Id==Guid.Empty || row.EnvelopeId==Guid.Empty || row.FinishId==Guid.Empty || row.SourceObjectId==Guid.Empty || row.PdfObjectId==Guid.Empty ||
             row.SourceObjectId==row.PdfObjectId || row.PdfLength is <16 or >MaximumPdfBytes || row.CopyVersion is <1 or >20 ||
@@ -125,7 +128,7 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
         var evidence=CompletionEvidenceValidation.Own(JsonSerializer.Deserialize<CompletionEvidence>(row.EvidenceJson) ?? throw Invalid(),ct);
         if(evidence.PreparedAt!=row.PreparedAt || evidence.Events.Count!=row.AuditSequence || !Same(evidence.AuditAnchor,row.AuditAnchor) ||
             !Same(evidence.Document.CurrentSha256,row.SourceSha256) || !Same(CompletionEvidenceValidation.Digest(evidence),row.EvidenceSha256))throw Invalid();
-        var current=await collector.CollectAsync(row.EnvelopeId,ct); if(current is null)return null;
+        var current=published is null ? await collector.CollectAsync(row.EnvelopeId,ct) : await collector.CollectPublishedAsync(row.EnvelopeId,published,ct); if(current is null)return null;
         if(current.FinishId!=row.FinishId || current.CopyVersion!=row.CopyVersion || current.SourceObjectId!=row.SourceObjectId ||
             !Same(current.FrozenStateSha256,row.FrozenStateSha256) || current.Evidence.Events.Count<row.AuditSequence ||
             !Same(current.Evidence.Events[checked((int)row.AuditSequence)-1].Hash,row.AuditAnchor))throw Invalid();
@@ -143,7 +146,7 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         await using(var transaction=await db.Database.BeginTransactionAsync(ct))
         {
-            await collector.RecheckLockedAsync(row.EnvelopeId,row.FrozenStateSha256,ct,row.AuditSequence,row.AuditAnchor);
+            await collector.RecheckLockedAsync(row.EnvelopeId,row.FrozenStateSha256,ct,row.AuditSequence,row.AuditAnchor,published);
             var saved=await Row(row.EnvelopeId,ct);
             if(saved is null || saved.Id!=row.Id || !saved.RowVersion.AsSpan().SequenceEqual(row.RowVersion) || !Same(saved.RecipeSha256,row.RecipeSha256))throw new DocumentConflictException();
             // The preparation event is immutable too; detect even a valid rehashed change during I/O.

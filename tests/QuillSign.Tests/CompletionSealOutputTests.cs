@@ -228,7 +228,7 @@ public sealed class CompletionSealOutputTests(SqlDatabaseFixture fixture) : ICla
         Assert.Equal(pair.Certificate.Pdf.Bytes,(await run.Read())!.Certificate.Pdf.Bytes); Assert.Equal(2,run.Seal.Requests);
     }
 
-    private sealed class Run : IAsyncDisposable
+    internal sealed class Run : IAsyncDisposable
     {
         public SigningRun Signing=null!; public SealFixtures Seal=null!; public Probe Storage=null!; public CompletionCandidateData Candidate=null!;
         private SqlDatabaseFixture fixture=null!; private TimestampAuthority timestamps=null!; private PlatformPdfSeal engine=null!; private SealCms verifier=null!;
@@ -241,8 +241,8 @@ public sealed class CompletionSealOutputTests(SqlDatabaseFixture fixture) : ICla
             r.verifier=new(r.Seal.Options,r.timestamps); r.Storage=new(r.Signing.H.Blobs.Inner,r.Signing.H.Clock);
             await using var db=fixture.Open(); r.Candidate=(await r.Candidates(db).PrepareAsync(r.Signing.Envelope.Id))!; Assert.NotNull(r.Candidate); return r;
         }
-        private CompletionEvidenceCollector Collector(QuillSignDbContext db)=>new(db,new(db,Signing.H.Clock),new(Storage,Signing.H.Clock),Storage,Signing.H.Clock);
-        private CompletionCandidates Candidates(QuillSignDbContext db)=>new(db,Collector(db),new(),Storage,new(db,Signing.H.Clock),Signing.H.Clock);
+        public CompletionEvidenceCollector Collector(QuillSignDbContext db)=>new(db,new(db,Signing.H.Clock),new(Storage,Signing.H.Clock),Storage,Signing.H.Clock);
+        public CompletionCandidates Candidates(QuillSignDbContext db)=>new(db,Collector(db),new(),Storage,new(db,Signing.H.Clock),Signing.H.Clock);
         public CompletionSealOutputs Service(QuillSignDbContext db)=>new(db,Candidates(db),Collector(db),new(),engine,verifier,Storage,new(db,Signing.H.Clock),Signing.H.Clock);
         public async Task<CompletionSealPair?> Prepare(Faults? faults=null,CancellationToken ct=default)
         {
@@ -254,7 +254,7 @@ public sealed class CompletionSealOutputTests(SqlDatabaseFixture fixture) : ICla
         public async Task<CountsData> Counts() {await using var db=fixture.Open(); var id=Signing.Envelope.Id; return new(await db.AuditEvents.CountAsync(x=>x.EnvelopeId==id),await db.WorkItems.CountAsync(x=>x.EnvelopeId==id),await db.EmailOutbox.CountAsync(x=>x.EnvelopeId==id),Signing.H.Sender.Calls);}
         public async ValueTask DisposeAsync() {timestamps.Dispose(); await Storage.DisposeAsync(); await Seal.DisposeAsync(); await Signing.DisposeAsync();}
     }
-    private sealed class Faults : DbTransactionInterceptor,ISaveChangesInterceptor
+    internal sealed class Faults : DbTransactionInterceptor,ISaveChangesInterceptor
     {
         public string Event=""; public bool LoseCommit,RejectAudit,RejectCommit; public CancellationTokenSource? CancelAfterCommit; private bool armed;
         public ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e,InterceptionResult<int> result,CancellationToken ct=default)
@@ -274,7 +274,7 @@ public sealed class CompletionSealOutputTests(SqlDatabaseFixture fixture) : ICla
         var type=assembly.GetType("QuillSign.Storage."+name,true)!; var operation=Enum.Parse(assembly.GetType("QuillSign.Storage.AssetOperation",true)!,op.ToString());
         return (ClaimsPrincipal)type.GetMethod("Create",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[blob,operation,time])!;
     }
-    private sealed class Probe(IBlobStore inner,TimeProvider time) : IBlobStore,IAsyncDisposable
+    internal sealed class Probe(IBlobStore inner,TimeProvider time) : IBlobStore,IAsyncDisposable
     {
         public List<DocumentBlob> Created=[],Deleted=[]; public DocumentBlobKind? LoseWrite,ReadKind; public string? ReadFault; public Func<DocumentBlob,Task>? AfterWrite,AfterRead;
         public Func<ClaimsPrincipal,DocumentBlob,Stream,CancellationToken,Task<long>>? Override;
