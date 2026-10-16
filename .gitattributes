@@ -1,0 +1,2 @@
+src/QuillSign/wwwroot/vendor/pdfjs/** -text -whitespace linguist-vendored
+licenses/** -text -whitespace

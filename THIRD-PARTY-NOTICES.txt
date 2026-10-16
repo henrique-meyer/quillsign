@@ -1,0 +1,16 @@
+PDFsharp 6.2.4
+Copyright (c) 2001-2026 empira Software GmbH.
+MIT license: licenses/PDFsharp-MIT.txt
+Source: https://github.com/empira/PDFsharp/tree/v6.2.4
+This version is pinned to retain its permissive license. Later releases use different licensing.
+
+PDF.js / pdfjs-dist 6.4.299
+Copyright Mozilla Foundation and contributors.
+Apache-2.0 license: src/QuillSign/wwwroot/vendor/pdfjs/LICENSE
+Source: https://github.com/mozilla/pdf.js
+The vendored distribution includes additional license notices for fonts, character maps,
+and WebAssembly components in its standard_fonts, cmaps, and wasm directories.
+Version, package integrity, and individual file hashes are in vendor/pdfjs/manifest.json.
+
+These notices describe the bundled PDF components. Other .NET dependencies retain
+the licenses recorded in their NuGet packages; QuillSign's own license is in LICENSE.

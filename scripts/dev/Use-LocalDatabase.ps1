@@ -14,6 +14,8 @@ $previousTestStorage = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_STO
 $previousTestSmtpPort = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_SMTP_PORT')
 $previousTestMailPort = [Environment]::GetEnvironmentVariable('QUILLSIGN_TEST_MAIL_PORT')
 $workPrevious = @{}
+$limitNames = 'Sender__SessionHours','Sender__DailyRequests','Sender__RequestsPerWindow','Sender__WindowMinutes','Documents__MaximumBytes','Documents__MaximumPages'
+foreach ($name in $limitNames) { $workPrevious[$name] = [Environment]::GetEnvironmentVariable($name) }
 foreach ($name in 'ASPNETCORE_ENVIRONMENT','Storage__Provider','Storage__ConnectionString','Work__Enabled','Work__QueueName','Work__HintContainer',
     'Email__Enabled','Email__Provider','Email__FromEmail','Email__BaseUrl','Email__Smtp__Host','Email__Smtp__Port','Email__Smtp__UseStartTls') {
     $workPrevious[$name] = [Environment]::GetEnvironmentVariable($name)
@@ -54,6 +56,7 @@ try {
             $env:Work__Enabled = 'true'
             $env:Work__QueueName = $resolved.services.app.environment.Work__QueueName
             $env:Work__HintContainer = $resolved.services.app.environment.Work__HintContainer
+            foreach ($name in $limitNames) { [Environment]::SetEnvironmentVariable($name, [string]$resolved.services.app.environment.$name) }
             $env:Email__Enabled = 'true'
             $env:Email__Provider = 'Smtp'
             $env:Email__FromEmail = 'noreply@example.invalid'

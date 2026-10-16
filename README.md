@@ -4,7 +4,7 @@ An open-source e-signature app being built around sequential signing, no account
 
 ## Current status
 
-QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app supports sender email verification and a session scoped to one draft. The `/health` endpoint returns `{"status":"ok"}` without querying the database. Document upload and signing follow next.
+QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app supports sender email verification, a session scoped to one draft, PDF upload/replacement, and preview confirmation. The `/health` endpoint returns `{"status":"ok"}` without querying the database. Field editing and signing follow in later milestones.
 
 The demo's cloud resources are provisioned: Azure hosts the app, data, and background work; Amazon SES provides email. Hosted SQL, storage, application keys, and worker execution are verified. Public email delivery remains disabled pending SES readiness. The full sender verification flow runs locally with Mailpit. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
 
@@ -56,7 +56,7 @@ The initializer generates local SQL and Azurite credentials in ignored `.env` co
 | SMTP capture | `localhost:1025` | `mailpit:1025` |
 | Gotenberg | Through the app container only | `gotenberg:3000` |
 
-The app shows the verification form when database, storage, email, and background work are configured; otherwise it shows an email-unavailable notice. Document upload and Office conversion remain unavailable in the app.
+The app shows the verification form when database, storage, email, and background work are configured; otherwise it shows an email-unavailable notice. Verified senders can upload and review a PDF. Office conversion remains unavailable in the app.
 
 Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
 
@@ -110,7 +110,11 @@ pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action ListenWork
 
 ### Document storage and application keys
 
-Compose configures Azurite automatically. The `IBlobStore` adapter checks a verified sender's envelope scope before storage access, uses opaque document references, and streams bounded blocks. It never returns public document URLs. Uploads become readable only after their declared size is verified; existing objects cannot be overwritten. The upload UI follows next.
+Compose configures Azurite automatically. The `IBlobStore` adapter checks a verified sender's envelope scope before storage access, uses opaque document references, and streams bounded blocks. It never returns public document URLs. Uploads become readable only after their declared size is verified; existing objects cannot be overwritten.
+
+After verifying through Mailpit, upload an unsigned, unencrypted PDF to the draft. The default limits are 10 MiB and 20 pages, configurable with `Documents:MaximumBytes` and `Documents:MaximumPages` within the storage limit. Malformed, encrypted, XFA, and already-signed PDFs are rejected. The app retains the original and a rewritten PDF with hashes and page geometry; PDF.js renders the stored preview with page navigation, zoom, selectable text, and a download fallback. Confirming the preview keeps the document as a draft. Replacing it clears prior confirmation, fields, and document suggestions. Stale tabs must reload before changing a newer version.
+
+PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.js 6.4.299 is vendored locally, including its font/decoder assets and license notices. CI verifies the committed asset hashes with `python scripts/dev/vendor_pdfjs.py --verify`; maintainers regenerate the pinned distribution with the same script without `--verify`. See [third-party notices](THIRD-PARTY-NOTICES.txt) for attribution.
 
 For host-side development, configure `Storage:Provider` as `Azurite` and `Storage:ConnectionString` in ignored local settings, pointing to the published emulator endpoint. Hosted configuration uses `Azure`, `Storage:BlobServiceUri`, and optionally `Storage:ManagedIdentityClientId`; credentials come from managed identity. `Storage:MaximumBlobBytes` defaults to 25 MiB. See `appsettings.example.json` for the configuration keys; environment variables replace `:` with `__`.
 
@@ -124,8 +128,8 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- PDF upload, preview, and the signing workflows.
-- Office conversion and background processing.
+- Field editing, signer setup, and sequential signing.
+- Office conversion and document-processing workers.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - PDF stamping, audit evidence, completion certificates, sealing, and verification.
 - Optional AI suggestions.

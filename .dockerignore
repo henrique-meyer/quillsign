@@ -6,6 +6,9 @@
 !assets/logo-mark.svg
 !Dockerfile
 !LICENSE
+!licenses/
+!licenses/PDFsharp-MIT.txt
+!THIRD-PARTY-NOTICES.txt
 src/**/bin/
 src/**/obj/
 **/appsettings.Development.json
