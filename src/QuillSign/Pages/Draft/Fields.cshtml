@@ -1,0 +1,68 @@
+@page "/draft/{publicId}/fields"
+@model QuillSign.Pages.Draft.FieldsModel
+@{ ViewData["Title"] = "Place document fields"; }
+<p class="eyebrow">PREPARE YOUR DOCUMENT</p>
+<h1>Make room<br />for every detail.</h1>
+<p class="intro">Place fields on the preview and assign each one. Sender fields become fixed content when you send.</p>
+<nav class="editor-links"><a href="/draft/@Model.Draft.PublicId/signers">Edit signers</a><a href="/draft/@Model.Draft.PublicId">Back to PDF preview</a></nav>
+<section id="field-editor" data-maximum="@Model.MaximumFields" aria-label="Document field editor">
+    <textarea id="field-data" hidden>@Model.InitialJson</textarea>
+    <form id="field-properties">
+        @Html.AntiForgeryToken()
+        <div class="field-add">
+            <label for="add-type">New field</label>
+            <select id="add-type"><option>Signature</option><option>Initials</option><option value="FullName">Full name</option><option value="DateSigned">Date signed</option><option>Text</option><option>Checkbox</option><option>Date</option></select>
+            <label for="add-owner">Who fills it?</label>
+            <select id="add-owner"><option value="">Sender (before sending)</option>
+                @foreach (var signer in Model.Draft.Signers) { <option value="@signer.Id">@signer.Order. @signer.FullName</option> }
+            </select>
+            <button type="button" id="add-field" disabled>Add to this page</button>
+        </div>
+        <p id="save-status" role="status" aria-live="polite">Loading editor…</p>
+        <p id="field-error" class="validation" role="alert" hidden></p>
+        <div class="editor-links"><button type="button" id="export-fields" class="quiet-button">Export field edits</button><a href="/draft/@Model.Draft.PublicId/fields">Reload saved fields</a></div>
+        <div class="field-workspace">
+            <div class="field-document">
+                <div class="pdf-toolbar" aria-label="PDF editor controls">
+                    <button type="button" id="previous-page" disabled aria-label="Previous page">Previous</button><span id="page-number" aria-live="polite">Loading…</span>
+                    <button type="button" id="next-page" disabled aria-label="Next page">Next</button>
+                    <label for="pdf-zoom">Zoom</label><select id="pdf-zoom"><option value="fit">Fit width</option><option value="0.5">50%</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select>
+                </div>
+                <p id="preview-status" role="status">Loading your preview…</p>
+                <div id="pdf-preview" class="pdf-preview" data-url="/draft/@Model.Draft.PublicId/document/@Model.Draft.DocumentId" aria-label="PDF field placement preview">
+                    <div class="pdf-page"><canvas aria-hidden="true"></canvas><div class="textLayer"></div><div id="field-overlay" aria-label="Fields on this page" hidden></div></div>
+                </div>
+                <p class="hint">Drag fields to move them. Drag the lower-right corner to resize. Select a field below to edit its exact position without dragging. All positions and sizes are percentages of the visible page.</p>
+            </div>
+            <div class="field-details">
+                <h2>Who fills what</h2><ul id="owner-legend"></ul>
+                <h2>Document fields</h2><ol id="field-list"></ol>
+                <fieldset id="selected-field" disabled hidden>
+                    <legend>Selected field</legend>
+                    <label for="field-type">Type</label><select id="field-type"><option>Signature</option><option>Initials</option><option value="FullName">Full name</option><option value="DateSigned">Date signed</option><option>Text</option><option>Checkbox</option><option>Date</option></select>
+                    <label for="field-owner">Who fills it?</label><select id="field-owner"><option value="">Sender (before sending)</option>
+                        @foreach (var signer in Model.Draft.Signers) { <option value="@signer.Id">@signer.Order. @signer.FullName</option> }
+                    </select>
+                    <label for="field-label">Label</label><input id="field-label" maxlength="512" />
+                    <label for="field-page">Page</label><input id="field-page" type="number" min="1" max="@Model.Draft.Pages.Count" step="1" required />
+                    <div class="field-numbers">
+                        <label for="field-x">Left %</label><input id="field-x" type="number" min="0" max="100" step="any" required />
+                        <label for="field-y">Top %</label><input id="field-y" type="number" min="0" max="100" step="any" required />
+                        <label for="field-width">Width %</label><input id="field-width" type="number" min="0.01" max="100" step="any" required />
+                        <label for="field-height">Height %</label><input id="field-height" type="number" min="0.01" max="100" step="any" required />
+                    </div>
+                    <label class="check-label"><input id="field-required" type="checkbox" /> Required</label>
+                    <div id="sender-value"><label for="field-value">Sender value</label><textarea id="field-value" maxlength="4000"></textarea>
+                        <label class="check-label" id="checkbox-value-label"><input type="checkbox" id="checkbox-value" /> Checked</label>
+                        <p class="hint" id="value-hint"></p>
+                    </div>
+                    <div class="editor-links"><button type="button" id="apply-field">Apply changes</button><button type="button" id="discard-properties" class="quiet-button">Discard property edits</button><button type="button" id="duplicate-field" class="quiet-button">Duplicate</button><button type="button" id="delete-field" class="quiet-button">Delete</button></div>
+                </fieldset>
+            </div>
+        </div>
+    </form>
+    <noscript><p>Enable JavaScript to place fields. You can still open the PDF from its preview page.</p></noscript>
+</section>
+<p class="hint">Your document stays a draft. No invitations are sent here.</p>
+@section Styles { <link rel="stylesheet" href="~/vendor/pdfjs/web/pdf_viewer.css" /><link rel="stylesheet" href="~/field-editor.css" /> }
+@section Scripts { <script src="~/vendor/interact/interact.min.js"></script><script type="module" src="~/js/field-editor.mjs"></script> }

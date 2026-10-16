@@ -1,0 +1,29 @@
+body:has(#field-editor) main { max-width: 1280px; }
+#field-editor [hidden] { display: none !important; }
+#field-editor form { display: block; }
+.field-add, .editor-links { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.field-add { margin-top: 28px; padding: 20px; background: white; border: 1px solid #d9d5cd; border-radius: 8px; }
+.field-add select { max-width: 100%; }
+.editor-links button { margin: 0; }
+.field-workspace { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 24px; margin-top: 24px; }
+.field-document { min-width: 0; grid-column: 2; grid-row: 1; }
+.field-details { grid-column: 1; grid-row: 1; padding: 18px; border: 1px solid #d9d5cd; border-radius: 8px; background: #fffdf7; }
+#owner-legend { padding: 0; list-style: none; }
+#owner-legend li { padding-left: 12px; border-left: 6px solid var(--owner-color); margin: 10px 0; overflow-wrap: anywhere; }
+#field-list { padding-left: 24px; max-height: 220px; overflow: auto; }
+#field-list button { text-align: left; width: 100%; padding: 8px; margin: 3px 0; background: transparent; border: 1px solid #83909a; font-size: 14px; overflow-wrap: anywhere; }
+#field-list button[aria-pressed=true] { outline: 2px solid #172d40; }
+#selected-field { border: 0; padding: 0; margin-top: 24px; }
+#selected-field label, #selected-field select, #selected-field input, #selected-field textarea { display: block; width: 100%; margin: 8px 0; }
+#selected-field .check-label { display: flex; }
+#selected-field input[type=checkbox] { width: 20px; margin: 0; }
+#selected-field textarea { min-height: 90px; padding: 10px; font: inherit; }
+.field-numbers { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 4px 12px; }
+.field-numbers label { grid-column: 1; }
+.field-numbers input { grid-column: 2; min-width: 0; padding: 8px; }
+#field-overlay { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.placed-field { position: absolute; margin: 0; padding: 0 2px; min-width: 0; min-height: 0; overflow: hidden; border: 2px solid var(--owner-color); background: color-mix(in srgb, var(--owner-color) 16%, white 84%); color: #172d40; font-size: clamp(6px, calc(12px * var(--total-scale-factor)), 18px); line-height: 1.2; text-align: left; pointer-events: auto; touch-action: none; user-select: none; cursor: move; }
+.placed-field:hover { background: color-mix(in srgb, var(--owner-color) 28%, white 72%); }
+.placed-field[aria-pressed=true] { outline: 2px solid #172d40; outline-offset: 2px; }
+.resize-handle { position: absolute; right: 0; bottom: 0; width: min(14px, 35%); height: min(14px, 35%); background: var(--owner-color); cursor: se-resize; }
+@media (max-width: 900px) { .field-workspace { grid-template-columns: 1fr; } .field-details { max-width: 590px; } .field-document, .field-details { grid-column: auto; grid-row: auto; } }

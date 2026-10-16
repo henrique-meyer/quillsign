@@ -12,5 +12,12 @@ The vendored distribution includes additional license notices for fonts, charact
 and WebAssembly components in its standard_fonts, cmaps, and wasm directories.
 Version, package integrity, and individual file hashes are in vendor/pdfjs/manifest.json.
 
-These notices describe the bundled PDF components. Other .NET dependencies retain
-the licenses recorded in their NuGet packages; QuillSign's own license is in LICENSE.
+interact.js 1.10.28 — MIT
+Source: https://github.com/taye/interact.js
+The build restores the pinned npm archive into an ignored cache and includes
+the complete, unmodified upstream copyright and MIT license notice at
+wwwroot/vendor/interact/LICENSE beside the browser script in distributed builds.
+Integrity metadata: src/QuillSign/Build/interact.manifest.json.
+
+These notices describe the bundled browser/PDF components. Other .NET dependencies
+retain the licenses recorded in their NuGet packages; QuillSign's own license is in LICENSE.

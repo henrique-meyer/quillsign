@@ -17,6 +17,7 @@ if (preview) {
         renderTask?.cancel(); textLayer?.cancel();
         previous.disabled = next.disabled = true;
         status.textContent = 'Loading page…';
+        preview.dispatchEvent(new CustomEvent('pdf-page-loading'));
         try {
             const page = await pdf.getPage(pageNumber);
             if (current !== sequence) return;
@@ -43,6 +44,7 @@ if (preview) {
             indicator.textContent = `Page ${pageNumber} of ${pdf.numPages}`;
             status.textContent = 'Review each page. You can select text or open the PDF separately.';
             previous.disabled = pageNumber <= 1; next.disabled = pageNumber >= pdf.numPages;
+            preview.dispatchEvent(new CustomEvent('pdf-page-ready', { detail: { pageNumber } }));
         } catch (error) {
             if (current !== sequence || error?.name === 'RenderingCancelledException' || error?.name === 'AbortException') return;
             status.textContent = 'The preview could not be displayed. Open the PDF below, or reload this draft.';
@@ -51,6 +53,13 @@ if (preview) {
     previous.addEventListener('click', () => { if (pageNumber > 1) { pageNumber--; render(); } });
     next.addEventListener('click', () => { if (pageNumber < pdf.numPages) { pageNumber++; render(); } });
     zoom.addEventListener('change', render);
+    preview.addEventListener('pdf-page-request', event => {
+        const requested = event.detail?.pageNumber;
+        if (Number.isInteger(requested) && requested >= 1 && (!pdf || requested <= pdf.numPages)) {
+            pageNumber = requested;
+            if (pdf) render();
+        }
+    });
     let resizeTimer;
     new ResizeObserver(() => {
         if (pdf && zoom.value === 'fit') { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 120); }
@@ -59,6 +68,7 @@ if (preview) {
         pdf = await getDocument({ url: preview.dataset.url, withCredentials: true, isEvalSupported: false, enableXfa: false,
             cMapUrl: '/vendor/pdfjs/cmaps/', cMapPacked: true, standardFontDataUrl: '/vendor/pdfjs/standard_fonts/',
             wasmUrl: '/vendor/pdfjs/wasm/', disableAutoFetch: true, disableRange: true }).promise;
+        pageNumber = Math.min(pageNumber, pdf.numPages);
         await render();
     } catch {
         status.textContent = 'The PDF is unavailable or your session expired. Reload the draft, or request a new email link.';
