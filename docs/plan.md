@@ -164,3 +164,13 @@ Create tracked `docs/e-signature-requirements.md` with a README link. Cover US E
 Validate source provisions, consumer access/withdrawal/change disclosures, retained copies and delivery-failure handling, an unchecked release checklist, Markdown links, whitespace, and secret scans. Commit, push, open and merge a small QUILS-17 PR, then move Jira to Done in the same pass.
 
 Validation: Primary legal/technical sources were reviewed and linked with pinpoint provisions and a review date. Local links and source references resolve, all 15 release criteria remain unchecked, whitespace checks pass, and Gitleaks reports no documentation secrets. The guide distinguishes legal duties from product controls and planned behavior from compliance claims. No application or cloud configuration changed.
+
+## QUILS-19: Build signer setup and sequential ordering for confirmed drafts
+
+Status: To Do. Depends on merged QUILS-16 and the existing sender/persistence foundation. Owned by the overnight-development chat.
+
+Let the verified sender manage the ordered signer list for their own confirmed PDF draft. Provide accessible responsive Razor Pages to add/edit/remove signers, enter full name/email/optional role, add the verified sender, and reorder with keyboard-accessible controls. Require the current PDF confirmation, sender/envelope ownership, and draft status. Enforce server validation, normalized case-insensitive unique emails, and a configurable maximum of 10 signers by default. Use antiforgery and clean redirect/one-time browser notices.
+
+Persist consecutive sequential order atomically, with concurrency protection against competing edits and cross-envelope IDs. Audit list changes through the existing canonical chain. Reject destructive changes that would silently reassign existing fields. Preserve form input on validation errors. This slice does not send invitations, accept signatures/consent, freeze signing content, place fields, or call AI.
+
+Test ownership, validation, duplicates/caps, reorder concurrency/rollback, field references, audit events, and actual desktop/mobile/keyboard flow from PDF confirmation to signer setup using synthetic fixtures. Pass appropriate checks/secret scans, commit/push/open/attach/merge a small QUILS-19 PR, and move Done after merge. No cloud changes or live email.
