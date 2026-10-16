@@ -8,6 +8,15 @@
 @if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
 @if(Model.Data is { } data) {
 <h2>@data.State</h2><p>Sent at @data.SentAt.ToString("u"). The sent document and preparation are frozen.</p>
+@if(Model.Final is { } final) {
+<section aria-labelledby="final-heading"><h2 id="final-heading">Final packet</h2>
+<p>Completed at @final.CompletedAt.ToString("u"). Save both files for your records. These downloads verify the saved packet before serving it.</p>
+<form method="post" asp-page-handler="Download"><input type="hidden" name="kind" value="executed" /><button type="submit">Download executed PDF</button></form>
+<form method="post" asp-page-handler="Download"><input type="hidden" name="kind" value="certificate" /><button type="submit">Download certificate of completion</button></form>
+@if(final.RetainedUntil is { } until) { <p>Server retention ends at @until.ToString("u"). Save your copies before then.</p> }
+<p>Downloads use your current verified session. Preparing a download does not confirm receipt or saving. Completion email delivery is not confirmed by this page.</p></section>
+}
+else if(data.Status==QuillSign.Data.EnvelopeStatus.Completed) { <p class="notice" role="status">Final downloads are unavailable in this session. Refresh manually to retry.</p> }
 <p>The first signing invitation was queued. Submission to an email provider does not confirm inbox delivery.</p>
 @if(data.ExpiresAt is { } expires) { <p>Request expiry: @expires.ToString("u").</p> }
 @if(!string.IsNullOrEmpty(data.Message)) { <p class="document-message">@data.Message</p> }
@@ -22,5 +31,5 @@
 <ul class="recipient-cards">@foreach(var recipient in data.Recipients) { <li class="signer-card"><strong>@recipient.Name</strong><span class="signer-email">@recipient.Email</span></li> }</ul>
 <p>This private page uses your verified sender session. Keep this tab to check progress during that session.</p>
 }
-<p><a href="">Refresh status</a></p>
+<p><a asp-page="/Draft/Sent" asp-route-publicId="@RouteData.Values["publicId"]">Refresh status</a></p>
 </section>

@@ -10,7 +10,15 @@
 <p>Your entries are frozen. Finish was accepted at @accepted.FinishedAt.ToString("u"). Date Signed: @accepted.DateSigned.ToString("yyyy-MM-dd") (UTC).</p>
 @if(accepted.ProcessingPending) { <p class="notice" role="status">Your signing copy is being processed. Refresh this page manually to check when it is ready.</p> }
 else { <p class="notice" role="status">Your signing copy is ready.</p><p><a class="button-link" asp-page-handler="Pdf">Download your signing copy</a></p> }
-<p>This is your saved signing checkpoint. The complete request may still need other signers and final sealing. This page does not confirm final completion.</p>
+<p>This signing copy is your saved checkpoint at the time you signed.</p>
+@if(Model.Final is { } final) {
+<section aria-labelledby="final-heading"><h2 id="final-heading">Final packet ready</h2>
+<p>The request completed at @final.CompletedAt.ToString("u"). The executed PDF includes every signer's saved entries and the certificate. Save both final files for your records.</p>
+<form method="post" asp-page-handler="Download"><input type="hidden" name="kind" value="executed" /><button type="submit">Download executed PDF</button></form>
+<form method="post" asp-page-handler="Download"><input type="hidden" name="kind" value="certificate" /><button type="submit">Download certificate of completion</button></form>
+@if(final.RetainedUntil is { } until) { <p>Server retention ends at @until.ToString("u"). Save your copies before then.</p> }
+<p>These downloads verify the saved packet before serving it and use your current signing session. Preparing a download does not confirm receipt or saving. Your Finish and Date Signed stay unchanged.</p></section>
+} else { <p>The complete request may still need other signers and final sealing, or final downloads may be unavailable in this session. Refresh manually to check. This page does not confirm final completion.</p> }
 }
-<p><a href="">Refresh confirmation</a></p>
+<p><a asp-page="/Sign/Confirmed" asp-route-publicId="@RouteData.Values["publicId"]">Refresh confirmation</a></p>
 </section>

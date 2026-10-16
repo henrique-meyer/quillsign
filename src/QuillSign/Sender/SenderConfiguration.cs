@@ -56,6 +56,13 @@ public static class SenderConfiguration
             limiter.OnRejected = async (rejected,ct) =>
             {
                 var context=rejected.HttpContext;
+                if(IsFinalFile(context.Request.Path) || context.Request.Query["handler"]=="Download" &&
+                    (context.Request.Path.StartsWithSegments("/draft") || context.Request.Path.StartsWithSegments("/sign"))) {
+                    context.Response.Headers.CacheControl="no-store"; context.Response.Headers["Referrer-Policy"]="no-referrer";
+                    const string downloadMessage="Too many download requests. Wait before preparing a new download from your private confirmation page.";
+                    if(WantsJson(context))await context.Response.WriteAsJsonAsync(new {message=downloadMessage},ct);
+                    else await context.Response.WriteAsync(downloadMessage,ct); return;
+                }
                 if(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value is { } draftPath &&
                     (draftPath.EndsWith("/review",StringComparison.Ordinal) || draftPath.EndsWith("/sent",StringComparison.Ordinal))) {
                     const string message="Too many request actions. Wait before retrying and check private status before repeating Send.";
@@ -84,6 +91,8 @@ public static class SenderConfiguration
                     (context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/review",StringComparison.Ordinal)==true && HttpMethods.IsPost(context.Request.Method)) ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(IsFinalFile(context.Request.Path))return RateLimitPartition.GetFixedWindowLimiter("final-download:"+address,_=>new FixedWindowRateLimiterOptions {
+                    PermitLimit=120,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });
                 if(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/sent",StringComparison.Ordinal)==true)
                     return RateLimitPartition.GetFixedWindowLimiter("sender-status:"+address,_=>new FixedWindowRateLimiterOptions {
                         PermitLimit=120,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });
@@ -112,6 +121,9 @@ public static class SenderConfiguration
     }
 
     public static bool WantsJson(HttpContext context) => context.Request.Headers.Accept.ToString().Contains("application/json", StringComparison.OrdinalIgnoreCase);
+    private static bool IsFinalFile(PathString path) {
+        var parts=path.Value?.Split('/'); return parts is {Length:5} && parts[1] is "draft" or "sign" && parts[3]=="final";
+    }
 
     public static ClaimsPrincipal Principal(VerifiedSender sender) => new(new ClaimsIdentity([
         new Claim(EnvelopeStorageAuthorization.EnvelopeClaim, sender.EnvelopeId.ToString()),

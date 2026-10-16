@@ -6,6 +6,7 @@ using QuillSign.Sender;
 using QuillSign.Documents;
 using QuillSign.Signing;
 using QuillSign.Sealing;
+using QuillSign.Completion;
 
 if (args.Length > 0 && args[0] == "database")
 {
@@ -51,6 +52,7 @@ builder.Services.AddScoped<Func<SendDraftWorkflow>>(sp=>()=>sp.GetRequiredServic
 builder.Services.AddScoped<SenderSentStatus>();
 builder.Services.AddScoped<Func<SenderSentStatus>>(sp=>()=>sp.GetRequiredService<SenderSentStatus>());
 builder.Services.AddScoped<SenderSendReadiness>();
+builder.Services.AddCompletionDownloads();
 var app = builder.Build();
 app.UseForwardedHeaders();
 

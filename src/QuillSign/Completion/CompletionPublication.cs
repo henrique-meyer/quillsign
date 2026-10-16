@@ -10,7 +10,12 @@ using QuillSign.Storage;
 namespace QuillSign.Completion;
 
 public sealed record PublishedCompletion(Guid EnvelopeId,DateTimeOffset CompletedAt,FinalStoredDocument Executed,
-    FinalStoredDocument Certificate,byte[] ExecutedBytes,byte[] CertificateBytes);
+    FinalStoredDocument Certificate,byte[] ExecutedBytes,byte[] CertificateBytes)
+{
+    public Guid PublicationId {get;init;}
+    public byte[] PublicationRecipeSha256 {get;init;}=[];
+    public byte[] PublicationRowVersion {get;init;}=[];
+}
 
 // Internal workflow prerequisite. Callers must separately authorize public access. No job or mail producer.
 public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandidates candidates,CompletionSealOutputs seals,
@@ -94,7 +99,8 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
                 await Recheck(candidate,pair,ct,context);
                 await transaction.CommitAsync(ct);
             }
-            return new(id,result.CompletedAt,documents.Executed,documents.Certificate,executed,certificate);
+            return new(id,result.CompletedAt,documents.Executed,documents.Certificate,executed,certificate) {
+                PublicationId=result.Id,PublicationRecipeSha256=result.RecipeSha256.ToArray(),PublicationRowVersion=result.RowVersion.ToArray()};
         }
         catch(Azure.RequestFailedException) {throw new IOException("Final completion storage is unavailable.");}
         catch(Exception error) when(error is JsonException or FormatException or InvalidOperationException or ArgumentException or UnauthorizedAccessException or KeyNotFoundException)
@@ -229,13 +235,13 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
     private static Envelope Before(CompletionPublicationIntent row)=>JsonSerializer.Deserialize<Envelope>(row.BeforeEnvelopeJson) ?? throw Invalid();
     private static string Bindings(CompletionCandidateData candidate,CompletionSealPair pair)=>JsonSerializer.Serialize(new {candidate.Id,candidate.EnvelopeId,candidate.RecipeSha256,candidate.RowVersion,
         candidate.FrozenStateSha256,candidate.AuditSequence,candidate.AuditAnchor,outputs=new[]{pair.Executed,pair.Certificate}.Select(x=>new {x.Id,x.PdfObjectId,x.Kind,x.RecipeSha256,x.RowVersion,x.AuditSequence,x.AuditHash,x.Pdf.Sha256})});
-    private static byte[] Recipe(CompletionPublicationIntent row)=>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {Version,row.Id,row.EnvelopeId,row.CandidateId,row.ExecutedOutputId,row.CertificateOutputId,
+    internal static byte[] Recipe(CompletionPublicationIntent row)=>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {Version,row.Id,row.EnvelopeId,row.CandidateId,row.ExecutedOutputId,row.CertificateOutputId,
         row.ExecutedObjectId,row.CertificateObjectId,beforeSha256=SHA256.HashData(Encoding.UTF8.GetBytes(row.BeforeEnvelopeJson)),stagesSha256=SHA256.HashData(Encoding.UTF8.GetBytes(row.StageBindingsJson)),row.RetentionDays,row.DevelopmentWriteOnce,row.PreparedAt}));
-    private static byte[] Recipe(CompletionPublicationResult row)=>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {Version,row.Id,row.EnvelopeId,row.IntentId,row.CompletedAt,row.AfterEnvelopeSha256,
+    internal static byte[] Recipe(CompletionPublicationResult row)=>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {Version,row.Id,row.EnvelopeId,row.IntentId,row.CompletedAt,row.AfterEnvelopeSha256,
         row.IntentRecipeSha256,row.AuditSequence,documentsSha256=SHA256.HashData(Encoding.UTF8.GetBytes(row.FinalDocumentsJson))}));
-    private static string Evidence(CompletionPublicationIntent row)=>JsonSerializer.Serialize(new {Version,intentId=row.Id,row.CandidateId,row.ExecutedOutputId,row.CertificateOutputId,row.ExecutedObjectId,row.CertificateObjectId,
+    internal static string Evidence(CompletionPublicationIntent row)=>JsonSerializer.Serialize(new {Version,intentId=row.Id,row.CandidateId,row.ExecutedOutputId,row.CertificateOutputId,row.ExecutedObjectId,row.CertificateObjectId,
         row.RetentionDays,row.DevelopmentWriteOnce,row.PreparedAt,recipeSha256=Convert.ToHexStringLower(row.RecipeSha256),serverEvidence="stable_final_targets_reserved_before_upload"});
-    private static string Evidence(CompletionPublicationResult row)=>JsonSerializer.Serialize(new {Version,publicationId=row.Id,row.IntentId,row.CompletedAt,row.AuditSequence,
+    internal static string Evidence(CompletionPublicationResult row)=>JsonSerializer.Serialize(new {Version,publicationId=row.Id,row.IntentId,row.CompletedAt,row.AuditSequence,
         recipeSha256=Convert.ToHexStringLower(row.RecipeSha256),serverEvidence="exact_verified_pair_published_with_selected_retention"});
     private static bool Same(byte[]? a,byte[]? b)=>CompletionEvidenceValidation.Same(a,b);
     private static InvalidDataException Invalid()=>new("The immutable final publication could not be verified.");
