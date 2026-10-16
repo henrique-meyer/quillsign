@@ -21,6 +21,10 @@ src/QuillSign/Documents/*
 !src/QuillSign/Documents/PdfValidation.cs
 !src/QuillSign/Documents/EmbeddedPdfFont.cs
 !src/QuillSign/Documents/SenderPdfRenderer.cs
+!src/QuillSign/Documents/SignerPdfRenderer.cs
+!src/QuillSign/Data/
+src/QuillSign/Data/*
+!src/QuillSign/Data/Entities.cs
 !src/QuillSign/Signing/
 src/QuillSign/Signing/*
 !src/QuillSign/Signing/FieldGeometry.cs

@@ -7,6 +7,7 @@ using PDFtoImage;
 using PdfFieldSpike;
 using QuillSign.Documents;
 using QuillSign.Signing;
+using QuillSign.Data;
 using SkiaSharp;
 using PigDocument = UglyToad.PdfPig.PdfDocument;
 
@@ -32,6 +33,7 @@ PageCase[] cases =
 ];
 var results = new List<object>();
 var productionResults = new List<object>();
+var signerResults = new List<object>();
 foreach (var spec in cases)
 {
     var source = Fixtures.Create(spec); var sourceHash = SHA256.HashData(source.Bytes);
@@ -95,6 +97,38 @@ foreach (var spec in cases)
     }
     productionResults.Add(new { spec.Name, bytes = sender.Bytes.Length, sha256 = Convert.ToHexStringLower(sender.Sha256), senderText });
     Console.WriteLine($"PASS production sender renderer {spec.Name}: original content, upright/complete in-bounds text, checkbox states and output hashes.");
+    var envelopeId=Guid.NewGuid(); var signerId=Guid.NewGuid(); var adoptionId=Guid.NewGuid();
+    var marks=new SignerPdfMarks(adoptionId,Guid.NewGuid(),Guid.NewGuid(),signature,initials,signatureAsset.Sha256,initialsAsset.Sha256,SignaturePng.Version);
+    var finishAt=new DateTimeOffset(2026,10,16,9,0,0,TimeSpan.Zero);
+    var signerFields=fields.Select(f=>new SignerPdfField(Guid.NewGuid(),envelopeId,signerId,new byte[]{1,0,0,0,0,0,0,0},Enum.Parse<FieldType>(f.Kind.ToString()),
+        f.Page,f.X,f.Y,f.Width,f.Height,true,f.Kind switch { StampKind.DateSigned=>null,StampKind.Signature=>marks.SignatureObjectId.ToString("N"),StampKind.Initials=>marks.InitialsObjectId.ToString("N"),_=>f.Value },
+        f.Kind==StampKind.DateSigned ? null : finishAt.AddMinutes(-1),f.Kind==StampKind.DateSigned ? null : PartyType.Signer,
+        f.Kind is StampKind.Signature or StampKind.Initials ? adoptionId : null,f.Kind==StampKind.Signature ? signatureAsset.Sha256 : f.Kind==StampKind.Initials ? initialsAsset.Sha256 : null)).ToArray();
+    var signedCopy=new SignerPdfRenderer(25*1024*1024,20,200).Render(source.Bytes,sourceHash,source.Pages,new(envelopeId,signerId,"Synthetic signer",finishAt,adoptionId,signerFields,marks));
+    File.WriteAllBytes(Path.Combine(output,spec.Name+".signer.pdf"),signedCopy.Bytes);
+    using var signerImage=Conversion.ToImage(signedCopy.Bytes,page:0,options:options);
+    using(var png=signerImage.Encode(SKEncodedImageFormat.Png,100))File.WriteAllBytes(Path.Combine(output,spec.Name+".signer.png"),png.ToArray());
+    var signerPixels=signerImage.Pixels; var signerText=Find(signerImage,signerPixels,Black,(.08,.22,.84,.09));
+    Require(SameBounds(redBefore,Find(signerImage,signerPixels,c=>c.Red>180 && c.Green<70 && c.Blue<70),1),spec.Name+": signer renderer altered original content or alpha.");
+    Require(signerText.Count>30 && signerText.Right-signerText.Left>2*(signerText.Bottom-signerText.Top),spec.Name+": signer text is missing or not upright.");
+    Require(AllBlackInsideFields(signerImage,signerPixels,fields),spec.Name+": signer text/checkbox escaped field bounds.");
+    Require(Find(signerImage,signerPixels,Black,CheckboxInterior(.08,signerImage.Width,signerImage.Height)).Count>5 &&
+        Find(signerImage,signerPixels,Black,CheckboxInterior(.18,signerImage.Width,signerImage.Height)).Count==0,spec.Name+": signer checkbox state is wrong.");
+    var signerMark=Find(signerImage,signerPixels,c=>c.Red is >65 and <150 && c.Green<80 && c.Blue is >90 and <190,(.5,.65,.4,.10));
+    var signerInitials=Find(signerImage,signerPixels,c=>c.Red is >65 and <150 && c.Green<80 && c.Blue is >90 and <190,(.5,.80,.2,.08));
+    Require(signerMark.Count>20 && Math.Abs((double)(signerMark.Right-signerMark.Left+1)/(signerMark.Bottom-signerMark.Top+1)-5.42)<.6,spec.Name+": production signer mark lost aspect ratio.");
+    Require(signerInitials.Count>20 && Math.Abs((double)(signerInitials.Right-signerInitials.Left+1)/(signerInitials.Bottom-signerInitials.Top+1)-2.75)<.5,spec.Name+": production initials lost aspect ratio.");
+    using(var parsedSigner=PigDocument.Open(signedCopy.Bytes)) {
+        var extractedSigner=Flatten(parsedSigner.GetPage(1).Text); Require(extractedSigner.Contains("BASE"),spec.Name+": signer source text was lost.");
+        foreach(var f in fields.Where(f=>f.Kind is not (StampKind.Signature or StampKind.Initials or StampKind.Checkbox)))Require(extractedSigner.Contains(Flatten(f.Value!)),spec.Name+": signer value was clipped or lost.");
+    }
+    using(var check=new MemoryStream(signedCopy.Bytes))using(var discard=new MemoryStream()) {
+        var outputPages=new PdfValidation(new() { MaximumBytes=25*1024*1024,MaximumPages=20 }).Rewrite(check,discard);
+        Require(JsonSerializer.Serialize(outputPages)==JsonSerializer.Serialize(source.Pages),spec.Name+": signer page geometry changed.");
+    }
+    Require(signedCopy.Sha256.SequenceEqual(SHA256.HashData(signedCopy.Bytes)) && signedCopy.SourceSha256.SequenceEqual(sourceHash) && signedCopy.BindingSha256.Length==32,spec.Name+": signer hashes changed.");
+    signerResults.Add(new { spec.Name,bytes=signedCopy.Bytes.Length,sha256=Convert.ToHexStringLower(signedCopy.Sha256),bindingSha256=Convert.ToHexStringLower(signedCopy.BindingSha256),signerText,signerMark,signerInitials });
+    Console.WriteLine($"PASS production signer renderer {spec.Name}: source/geometry, upright complete text, checkbox states, transparent mark aspect and hashes.");
 }
 
 var basis = Fixtures.Create(cases[0]); var basisHash = SHA256.HashData(basis.Bytes); var first = fields[0]; var rejected = new List<string>();
@@ -140,11 +174,11 @@ using (var image = Conversion.ToImage(naive, page: 0, options: new RenderOptions
         "The regression check failed to detect a deliberately naive transform.");
 
 var report = new { pdfsharp = "6.2.4", pdftoimage = "5.4.0", pdfpig = "0.1.16", font = "Liberation Sans 2.1.5 / OFL-1.1",
-    cases = results, productionCases = productionResults, rejected, canonicalAccent = true, fittedFontSize, naiveTransformDetected = true,
+    cases = results, productionCases = productionResults, signerCases = signerResults, rejected, canonicalAccent = true, fittedFontSize, naiveTransformDetected = true,
     signatureNormalization = new { signatureAsset.Version,signatureAsset.Width,signatureAsset.Height,
         sha256 = Convert.ToHexStringLower(signatureAsset.Sha256),initialsWidth = initialsAsset.Width,initialsHeight = initialsAsset.Height } };
 File.WriteAllText(Path.Combine(output, "report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
-Console.WriteLine($"PASS {cases.Length} prototype and {productionResults.Count} production geometry cases, {rejected.Count} negative cases, NFC and naive-transform detection. Outputs: {output}");
+Console.WriteLine($"PASS {cases.Length} prototype, {productionResults.Count} sender and {signerResults.Count} signer production geometry cases, {rejected.Count} negative cases, NFC and naive-transform detection. Outputs: {output}");
 
 static string Flatten(string value) => Regex.Replace(value.Normalize(NormalizationForm.FormC), @"\s+", "");
 static bool Black(SKColor c) => c.Red < 65 && c.Green < 65 && c.Blue < 65;

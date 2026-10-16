@@ -19,6 +19,8 @@
     <Compile Include="../../src/QuillSign/Signing/SignaturePng.cs" Link="Shared/SignaturePng.cs" />
     <Compile Include="../../src/QuillSign/Documents/EmbeddedPdfFont.cs" Link="Shared/EmbeddedPdfFont.cs" />
     <Compile Include="../../src/QuillSign/Documents/SenderPdfRenderer.cs" Link="Shared/SenderPdfRenderer.cs" />
+    <Compile Include="../../src/QuillSign/Documents/SignerPdfRenderer.cs" Link="Shared/SignerPdfRenderer.cs" />
+    <Compile Include="../../src/QuillSign/Data/Entities.cs" Link="Shared/Entities.cs" />
     <EmbeddedResource Include="../../src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf" LogicalName="QuillSign.Fonts.LiberationSans-Regular.ttf" />
     <Content Include="../../src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LiberationSans-Regular.ttf" Link="fonts/LiberationSans-Regular.ttf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../src/QuillSign/wwwroot/vendor/pdfjs/standard_fonts/LICENSE_LIBERATION" Link="fonts/LICENSE" CopyToOutputDirectory="PreserveNewest" />
