@@ -70,7 +70,7 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
 
 public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options, EmailPayloadProtection protection,
     VerificationEmailTemplate template, IEmailSender sender, TimeProvider time,DeclinePayloadProtection? declines = null,
-    DeclineEmailTemplate? declineTemplate = null) : IWorkHandler
+    DeclineEmailTemplate? declineTemplate = null,SignerInvitationDelivery? invitations = null) : IWorkHandler
 {
     public WorkKind Kind => WorkKind.Email;
 
@@ -78,6 +78,7 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
     {
         if (!options.Enabled) return new(WorkOutcome.Retry, "delivery-disabled");
         var email = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id, cancellationToken);
+        if (email.Template == "signer-invitation") return await (invitations ?? throw new InvalidOperationException("Missing signer invitation delivery.")).ExecuteAsync(lease,cancellationToken);
         if (email.Template is not ("sender-verification" or "signer-declined")) return new(WorkOutcome.Failed, "unsupported-template");
         var isDecline = email.Template == "signer-declined";
         VerificationPayload payload;

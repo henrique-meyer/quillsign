@@ -3,6 +3,8 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using QuillSign.Storage;
+using QuillSign.Data;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace QuillSign.Signing;
 
@@ -24,12 +26,18 @@ public static class SignerAccessConfiguration
     public const string DisclosureHashClaim = "quillsign:signer-disclosure-hash";
     public const string ExpiryClaim = "quillsign:signer-session-expiry";
 
-    public static IServiceCollection AddQuillSignSignerAccess(this IServiceCollection services,IConfiguration config,IHostEnvironment environment)
+    public static IServiceCollection AddQuillSignSignerAccessCore(this IServiceCollection services,IConfiguration config)
     {
         var options = config.GetSection("SignerAccess").Get<SignerAccessOptions>() ?? new();
         if (options.InvitationHours is < 1 or > 168 || options.SessionHours is < 1 or > 24)
             throw new InvalidOperationException("SignerAccess supports 1–168 invitation hours and 1–24 session hours.");
-        services.AddSingleton(options); services.AddSingleton<SignerInvitationFactory>(); services.AddScoped<SignerAccess>();
+        services.TryAddSingleton(options); services.TryAddSingleton<SignerInvitationFactory>(); services.TryAddScoped<SignerAccess>(); services.TryAddScoped<AuditWriter>();
+        return services;
+    }
+    public static IServiceCollection AddQuillSignSignerAccess(this IServiceCollection services,IConfiguration config,IHostEnvironment environment)
+    {
+        services.AddQuillSignSignerAccessCore(config);
+        var options = config.GetSection("SignerAccess").Get<SignerAccessOptions>() ?? new();
         services.AddAuthentication().AddCookie(Scheme,cookie =>
         {
             cookie.Cookie.Name = environment.IsDevelopment() ? "QuillSign.Signer" : "__Host-QuillSign.Signer";

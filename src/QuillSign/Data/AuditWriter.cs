@@ -4,7 +4,7 @@ namespace QuillSign.Data;
 
 public sealed class AuditWriter(QuillSignDbContext db, TimeProvider time)
 {
-    public async Task AppendAsync(Guid envelopeId, string eventName, string email, string? ip, string? userAgent, CancellationToken cancellationToken,
+    public async Task AppendAsync(Guid envelopeId, string eventName, string? email, string? ip, string? userAgent, CancellationToken cancellationToken,
         string dataJson = "{}",PartyType actorType = PartyType.Sender,Guid? actorId = null)
     {
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("Audit appends require a transaction.");
