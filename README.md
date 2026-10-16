@@ -137,3 +137,5 @@ See the [implementation plan](docs/plan.md) for tracked work. The SVG and PNG br
 Copyright (c) 2026 Henrique Meyer. QuillSign is licensed under the [GNU Affero General Public License, version 3 or later](LICENSE) (`AGPL-3.0-or-later`).
 
 Software is provided as-is. Operators are responsible for checking whether electronic signatures are suitable for their use case and jurisdiction. The public demo is intended for evaluation and periodic data purging; document lifecycle deletion is asynchronous, not an exact retention deadline.
+
+See the [electronic-signature requirements and acceptance checklist](docs/e-signature-requirements.md) for US ESIGN/UETA and EU eIDAS rules, conditional consumer disclosures, evidence and retention targets, and unsupported uses. This guide describes requirements; it does not certify the current application or guarantee enforceability.
