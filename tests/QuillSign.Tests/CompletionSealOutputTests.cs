@@ -245,9 +245,9 @@ public sealed class CompletionSealOutputTests(SqlDatabaseFixture fixture) : ICla
     {
         public SigningRun Signing=null!; public SealFixtures Seal=null!; public Probe Storage=null!; public CompletionCandidateData Candidate=null!;
         private SqlDatabaseFixture fixture=null!; private TimestampAuthority timestamps=null!; private PlatformPdfSeal engine=null!; private SealCms verifier=null!;
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool prepareCandidate=true,bool publishLast=true,bool senderAlsoSigns=false,int? uploadRetentionDays=null)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool prepareCandidate=true,bool publishLast=true,bool senderAlsoSigns=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null)
         {
-            var r=new Run {fixture=fixture,Signing=await SigningRun.Create(fixture,demo:true,publishLast:publishLast,senderAlsoSigns:senderAlsoSigns,uploadRetentionDays:uploadRetentionDays),Seal=await SealFixtures.Create()};
+            var r=new Run {fixture=fixture,Signing=await SigningRun.Create(fixture,demo:true,publishLast:publishLast,senderAlsoSigns:senderAlsoSigns,uploadRetentionDays:uploadRetentionDays,afterUploadDelay:afterUploadDelay),Seal=await SealFixtures.Create()};
             var latest=new[]{r.Signing.H.Clock.GetUtcNow(),r.Seal.Time.GetUtcNow()}.Max();
             r.Signing.H.Clock.Advance(latest-r.Signing.H.Clock.GetUtcNow()+TimeSpan.FromMilliseconds(123)); r.Seal.Time.Advance(latest-r.Seal.Time.GetUtcNow()+TimeSpan.FromMilliseconds(123));
             r.timestamps=new(r.Seal.Options,r.Seal.App.Environment,r.Signing.H.Clock); r.engine=new(r.Seal.Options,r.Seal.Certificates,r.timestamps,r.Seal.App.Environment,r.Signing.H.Clock);
@@ -269,9 +269,9 @@ public sealed class CompletionSealOutputTests(SqlDatabaseFixture fixture) : ICla
     }
     internal sealed class Faults : DbTransactionInterceptor,ISaveChangesInterceptor
     {
-        public string Event=""; public bool LoseCommit,RejectAudit,RejectCommit; public CancellationTokenSource? CancelAfterCommit; private bool armed;
+        public string Event=""; public bool LoseCommit,RejectAudit,RejectCommit; public CancellationTokenSource? CancelAfterCommit; public Action? BeforeAudit; private bool armed;
         public ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e,InterceptionResult<int> result,CancellationToken ct=default)
-        {if(e.Context!.ChangeTracker.Entries<AuditEvent>().Any(x=>x.State==EntityState.Added && x.Entity.Event==Event)) {if(RejectAudit)throw new DbUpdateException("Synthetic seal audit rollback"); armed=true;} return ValueTask.FromResult(result);}
+        {if(e.Context!.ChangeTracker.Entries<AuditEvent>().Any(x=>x.State==EntityState.Added && x.Entity.Event==Event)) {BeforeAudit?.Invoke();if(RejectAudit)throw new DbUpdateException("Synthetic seal audit rollback"); armed=true;} return ValueTask.FromResult(result);}
         public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData e,CancellationToken ct=default)
         {
             if(armed && CancelAfterCommit is not null) {CancelAfterCommit.Cancel(); CancelAfterCommit=null; ct.ThrowIfCancellationRequested();}

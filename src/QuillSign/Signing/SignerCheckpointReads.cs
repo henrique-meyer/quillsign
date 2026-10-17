@@ -1,15 +1,21 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
+using QuillSign.Documents;
 
 namespace QuillSign.Signing;
 
-public sealed record SignerOwnCheckpoint(SignerFinishAccepted Acceptance,byte[] Pdf);
+public sealed record SignerOwnCheckpoint(SignerFinishAccepted Acceptance,byte[] Pdf)
+{
+    internal DateTimeOffset? RetentionDeadline {get;init;}
+}
 public sealed class SignerCheckpointReads(QuillSignDbContext db,SignerAccess access,SignerCheckpointState state,SignerCheckpointBlobs blobs,
     SignerReviewProtection protection,TimeProvider time)
 {
     public async Task<SignerFinishAccepted?> ConfirmAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct=default)
         =>(await GetAsync(principal,publicId,receipt,false,ct))?.Acceptance;
+    internal Task<SignerOwnCheckpoint?> ConfirmScopeAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct)
+        =>GetAsync(principal,publicId,receipt,false,ct);
     public Task<SignerOwnCheckpoint?> ReadAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct=default)
         =>GetAsync(principal,publicId,receipt,true,ct);
     private async Task<SignerOwnCheckpoint?> GetAsync(ClaimsPrincipal principal,string publicId,string? receipt,bool published,CancellationToken ct)
@@ -27,6 +33,8 @@ public sealed class SignerCheckpointReads(QuillSignDbContext db,SignerAccess acc
         var adoption=await state.AcceptanceAsync(f,signer,ct); if(adoption is null)return null;
         var bytes=await blobs.PdfAsync(f,false,ct); await blobs.AssetsAsync(f,adoption,ct);
         if((await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true))?.ConsentAt is null || context.Identity.SessionExpiresAt<=time.GetUtcNow())return null;
-        await transaction.CommitAsync(ct); return new(SignerFinish.Result(f),bytes);
+        await transaction.CommitAsync(ct);DocumentRetentionAccess.Check(context.RetentionDeadline,time);
+        if(context.Identity.SessionExpiresAt<=time.GetUtcNow())return null;
+        return new(SignerFinish.Result(f),bytes){RetentionDeadline=context.RetentionDeadline};
     }
 }

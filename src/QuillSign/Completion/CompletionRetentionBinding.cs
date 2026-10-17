@@ -38,6 +38,14 @@ internal static class CompletionRetentionBinding
     }
     internal static DateTimeOffset? RequiredUntil(CompletionPublicationIntent intent,DateTimeOffset decision)
         =>FixedUntil(intent) ?? new FinalRetention(intent.RetentionDays,intent.DevelopmentWriteOnce).RequiredUntil(decision);
+    // Read the frozen versioned layout without normalizing or rewriting its bytes.
+    // This structural parser grants no capability and reads no current private policy.
+    internal static string StagesJson(CompletionPublicationIntent intent)
+    {
+        if(FixedUntil(intent) is null)return intent.StageBindingsJson;
+        using var document=JsonDocument.Parse(intent.StageBindingsJson,new JsonDocumentOptions {MaxDepth=12});
+        return document.RootElement.GetProperty(nameof(Binding.Stages)).GetRawText();
+    }
     internal static bool Matches(CompletionPublicationIntent intent,DocumentRetentionSnapshot? row)
     {
         var until=FixedUntil(intent);

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Signing;
+using QuillSign.Documents;
 
 namespace QuillSign.Sender;
 
@@ -30,6 +31,7 @@ public sealed class SenderVoidState(QuillSignDbContext db,SignerCheckpointState 
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);await using var tx=await db.Database.BeginTransactionAsync(ct);
         var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={identity.Value.Id}").AsNoTracking().SingleOrDefaultAsync(ct);
         if(e is null || e.PublicId!=publicId || e.SenderEmail!=identity.Value.Email || e.SenderVerifiedAt is null || e.Status==EnvelopeStatus.Draft)return null;
+        var deadline=await SenderPreparationRetention.ReadAsync(db,e,time,ct);
         if(!Enum.IsDefined(e.Status) || e.SentAt is null || e.SentAt>time.GetUtcNow())throw Invalid();
         _=await SenderSentStatus.ReadSentAsync(db,e,null,ct);SenderVoidRecord? action=null;
         if(e.Status==EnvelopeStatus.Voided)action=(await ReadLockedAsync(e.Id,ct)??throw Invalid()).Action;
@@ -52,7 +54,9 @@ public sealed class SenderVoidState(QuillSignDbContext db,SignerCheckpointState 
         }
         var progress=signers.Select(x=>new SenderSignerProgress(x.Order,x.FullName,x.Email,x.Role,Progress(x),x.SignedAt)).ToArray();
         if(ticketExpiresAt<=time.GetUtcNow())return null;
-        await tx.CommitAsync(ct);return new(e.PublicId,e.Title!,e.Status,Convert.ToBase64String(e.RowVersion),e.SentAt.Value,
+        DocumentRetentionAccess.Check(deadline,time);
+        await tx.CommitAsync(ct);DocumentRetentionAccess.Check(deadline,time);if(ticketExpiresAt<=time.GetUtcNow())return null;
+        return new(e.PublicId,e.Title!,e.Status,Convert.ToBase64String(e.RowVersion),e.SentAt.Value,
             live,progress,action);
     }
 
