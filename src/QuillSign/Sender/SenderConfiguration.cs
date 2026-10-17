@@ -26,12 +26,13 @@ public static class SenderConfiguration
         // Resolve the mutation backend only when a trusted caller invokes it.
         services.AddScoped<SenderVoid>(sp=> {
             var db=sp.GetRequiredService<QuillSignDbContext>();var clock=sp.GetRequiredService<TimeProvider>();
-            return new(db,new(db,clock),sp.GetRequiredService<AuditWriter>(),clock);
+            return new(db,new(db,clock),sp.GetRequiredService<AuditWriter>(),clock,sp.GetService<Func<Work.VoidNotificationJobs>>());
         });
         services.AddScoped<SenderVoidState>(sp=> {
             var db=sp.GetRequiredService<QuillSignDbContext>();var clock=sp.GetRequiredService<TimeProvider>();
             return new(db,new(db,clock),clock);
         });
+        services.AddScoped<Func<SenderVoidState>>(sp=>()=>sp.GetRequiredService<SenderVoidState>());
         services.AddScoped<Func<Work.EmailOutboxWriter>>(sp => () => sp.GetRequiredService<Work.EmailOutboxWriter>());
         services.AddScoped<Func<SenderWorkflow>>(sp => () => sp.GetRequiredService<SenderWorkflow>());
         services.AddScoped<AuditWriter>();
@@ -66,6 +67,12 @@ public static class SenderConfiguration
             limiter.OnRejected = async (rejected,ct) =>
             {
                 var context=rejected.HttpContext;
+                if(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value is { } voidPath && voidPath.EndsWith("/void",StringComparison.Ordinal)) {
+                    const string message="Too many void actions. Wait before retrying and check saved request status first; no new void is confirmed by this response.";
+                    context.Response.Headers.CacheControl="no-store";context.Response.Headers["Referrer-Policy"]="no-referrer";
+                    if(WantsJson(context))await context.Response.WriteAsJsonAsync(new {message},ct);
+                    else {context.Response.ContentType="text/html; charset=utf-8";await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\""+System.Net.WebUtility.HtmlEncode(voidPath[..^4]+"sent")+"\">Check saved request status</a></p></main></body></html>",ct);}return;
+                }
                 if(context.Request.Path.StartsWithSegments("/complete")) {
                     context.Response.Headers.CacheControl="no-store"; context.Response.Headers["Referrer-Policy"]="no-referrer";
                     const string message="Too many completed-record requests. Wait before retrying. If access was already opened, return to your saved records; do not assume the link is unused.";
@@ -107,6 +114,9 @@ public static class SenderConfiguration
                     (context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/review",StringComparison.Ordinal)==true && HttpMethods.IsPost(context.Request.Method)) ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/void",StringComparison.Ordinal)==true)
+                    return RateLimitPartition.GetFixedWindowLimiter((HttpMethods.IsPost(context.Request.Method) ? "sender-void-action:" : "sender-void-read:")+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=HttpMethods.IsPost(context.Request.Method) ? Math.Min(10,options.RequestsPerWindow) : 120,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });
                 if(context.Request.Path=="/complete/access" && HttpMethods.IsPost(context.Request.Method))
                     return RateLimitPartition.GetFixedWindowLimiter("completion-entry:"+address,_=>new FixedWindowRateLimiterOptions {
                         PermitLimit=options.RequestsPerWindow,Window=TimeSpan.FromMinutes(options.WindowMinutes),QueueLimit=0,AutoReplenishment=true });

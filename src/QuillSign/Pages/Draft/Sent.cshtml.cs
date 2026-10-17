@@ -5,11 +5,14 @@ using QuillSign.Sender;
 using QuillSign.Storage;
 using QuillSign.Completion;
 using QuillSign.Data;
+using Microsoft.AspNetCore.Authentication;
 
 namespace QuillSign.Pages.Draft;
 [Authorize(AuthenticationSchemes=EnvelopeStorageAuthorization.SenderScheme)]
-public sealed class SentModel(SenderSentStatus status,BrowserNotices notices,Func<CompletionDownloads>? downloads=null) : PageModel
+public sealed class SentModel(SenderSentStatus status,BrowserNotices notices,Func<CompletionDownloads>? downloads=null,
+    Func<SenderVoidState>? voids=null) : PageModel
 {
+    public SenderVoidPreview? Void {get;private set;}
     public FinalDownloadAvailability? Final {get;private set;}
     public SenderSentSnapshot? Data { get; private set; }
     public string? Notice { get; private set; }
@@ -19,8 +22,13 @@ public sealed class SentModel(SenderSentStatus status,BrowserNotices notices,Fun
         Response.Headers.CacheControl="no-store"; Response.Headers["Referrer-Policy"]="no-referrer";
         try {
             Data=await status.GetAsync(User,publicId,ct:ct); if(Data is null)return NotFound();
+            if(voids is not null && Data.Status is EnvelopeStatus.Sent or EnvelopeStatus.Voided) {
+                var ticket=await HttpContext.AuthenticateAsync(EnvelopeStorageAuthorization.SenderScheme);
+                if(!ticket.Succeeded || ticket.Principal is null || ticket.Properties?.ExpiresUtc is not { } until)return NotFound();
+                Void=await voids().PreviewAsync(ticket.Principal,publicId,until,ct)??throw new InvalidDataException("Void status could not be verified.");
+            }
             if(downloads is not null)Final=await downloads().AvailabilityAsync(HttpContext,publicId,PartyType.Sender,ct);
-            if(SenderConfiguration.WantsJson(HttpContext))return new JsonResult(new { Data.PublicId,Data.Title,state=Data.State,Data.SentAt,Data.ExpiresAt,Data.Signers,Data.Recipients });
+            if(SenderConfiguration.WantsJson(HttpContext))return new JsonResult(new { Data.PublicId,Data.Title,state=Data.State,Data.SentAt,Data.ExpiresAt,Data.Signers,Data.Recipients,voidAction=Void?.Action,canVoid=Void?.CanVoid??false });
             Notice=notices.Take(HttpContext); return Page();
         }
         catch(Exception e) when(ReviewModel.StorageError(e)) { ErrorMessage="Saved request status could not be verified. Retry later; do not assume delivery or completion."; Response.StatusCode=503; return Page(); }

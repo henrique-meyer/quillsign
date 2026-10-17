@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Signing;
+using QuillSign.Work;
 
 namespace QuillSign.Sender;
 
@@ -19,9 +20,10 @@ public enum SenderVoidOutcome { Voided,AlreadyVoided,InvalidContext,InvalidConfi
 public sealed record SenderVoidRecord(string PublicId,DateTimeOffset VoidedAt,string? Reason);
 public sealed record SenderVoidResult(SenderVoidOutcome Outcome,SenderVoidRecord? Action=null);
 
-// Internal application operation; no HTTP endpoint or notification producer. The caller
+// The caller
 // supplies the original named sender ticket's expiry, never an expiry from a form.
-public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState checkpoints,AuditWriter audit,TimeProvider time)
+public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState checkpoints,AuditWriter audit,TimeProvider time,
+    Func<VoidNotificationJobs>? notifications=null)
 {
     private readonly SenderVoidState state=new(db,checkpoints,time);
 
@@ -63,11 +65,15 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         await audit.AppendAsync(id,"voided",email,ip,ua,ct,JsonSerializer.Serialize(SenderVoidState.Bind(envelope,source,version,reason,at)),PartyType.Sender);
         envelope.Status=EnvelopeStatus.Voided;
         var result=await Recorded(envelope,version,reason,ct)??throw Invalid();
+        var producer=notifications?.Invoke();
+        var jobs=producer is null ? [] : await producer.PrepareLockedAsync(id,ct);
         if(until<=time.GetUtcNow())return new(SenderVoidOutcome.InvalidContext);
         if(envelope.ExpiresAt<=time.GetUtcNow())return new(SenderVoidOutcome.Closed);
         // A lost acknowledgement propagates. A later explicit saved-state read/repeat
         // can verify the existing action; it cannot create a second void record.
-        await tx.CommitAsync(ct);return new(SenderVoidOutcome.Voided,result);
+        await tx.CommitAsync(ct);await tx.DisposeAsync();
+        if(producer is not null)await producer.PublishAsync(jobs,ct);
+        return new(SenderVoidOutcome.Voided,result);
     }
 
     private async Task<SenderVoidRecord?> Recorded(Envelope envelope,string version,string? reason,CancellationToken ct)

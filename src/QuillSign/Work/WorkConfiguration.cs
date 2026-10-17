@@ -53,6 +53,7 @@ public static class WorkConfiguration
         if (registerHandlers)
         {
             services.AddCompletionNotificationWork(config);
+            services.AddVoidNotificationWork();
             services.AddQuillSignSignerAccessCore(config);
             services.AddScoped<SignerInvitationProtection>(); services.AddScoped<SignerInvitationOutbox>(); services.AddScoped<SignerInvitationDelivery>();
             services.AddScoped<DeclinePayloadProtection>();
@@ -90,6 +91,26 @@ public static class WorkConfiguration
             uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.AbsolutePath != "/")
             throw new InvalidOperationException("Work requires HTTPS service endpoints without credentials or paths.");
         return uri;
+    }
+}
+
+public static class VoidNotificationWorkConfiguration
+{
+    public static IServiceCollection AddVoidNotificationWork(this IServiceCollection services)
+    {
+        // Worker-only and scanner-safe hosts resolve SQL dependencies only on use.
+        services.TryAddScoped<QuillSign.Sender.SenderVoidState>(sp=> {
+            var db=sp.GetRequiredService<QuillSign.Data.QuillSignDbContext>();var clock=sp.GetRequiredService<TimeProvider>();
+            return new(db,new(db,clock),clock);
+        });
+        services.TryAddScoped<VoidNotificationProtection>();
+        services.TryAddScoped<VoidNotificationJobs>(sp=>ActivatorUtilities.CreateInstance<VoidNotificationJobs>(sp));
+        services.TryAddScoped<VoidNotificationDelivery>(sp=>ActivatorUtilities.CreateInstance<VoidNotificationDelivery>(sp));
+        services.TryAddScoped<QuillSign.Email.VoidEmailTemplate>(sp=>ActivatorUtilities.CreateInstance<QuillSign.Email.VoidEmailTemplate>(sp));
+        services.TryAddScoped<Func<VoidNotificationJobs>>(sp=>()=>sp.GetRequiredService<VoidNotificationJobs>());
+        services.TryAddScoped<Func<VoidNotificationDelivery>>(sp=>()=>sp.GetRequiredService<VoidNotificationDelivery>());
+        services.TryAddScoped<Func<QuillSign.Email.VoidEmailTemplate>>(sp=>()=>sp.GetRequiredService<QuillSign.Email.VoidEmailTemplate>());
+        return services;
     }
 }
 
