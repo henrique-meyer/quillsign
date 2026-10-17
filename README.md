@@ -4,18 +4,51 @@ An open-source e-signature app being built around sequential signing, no account
 
 ## Current status
 
-QuillSign is in early development. The .NET 10 ASP.NET Core Razor Pages app supports sender email verification, a session scoped to one draft, PDF upload/replacement, preview confirmation, signer setup with sequential ordering, manual field placement with sender prefill, document details/completion recipients, and a preparation review with corrective links. The `/health` endpoint returns `{"status":"ok"}` without querying the database. Sending and signing follow in later milestones.
+QuillSign is under active development. The application implements verified-sender PDF preparation, sequential signer setup, manual field placement and sender prefill, reviewed Send, electronic-record consent, signature capture, deliberate field application, exact PDF review and Finish. Durable workers publish signer checkpoints and prepare, seal and publish the completed PDF and certificate of completion. Private downloads, completion emails, sender voiding, public uploaded-PDF verification and finite expiry maintenance are also implemented.
 
-The demo's cloud resources are provisioned: Azure hosts the app, data, and background work; Amazon SES provides email. Hosted SQL, storage, application keys, and worker execution are verified. Public email delivery remains disabled pending SES readiness. The full sender verification flow runs locally with Mailpit. Setup instructions are in the [cloud infrastructure guide](infra/README.md).
+Synthetic end-to-end flows have local automated and browser coverage. Hosted completion still needs operator disclosures, retention settings, timestamp-provider trust and immutable final-storage configuration, followed by end-to-end validation. Public email delivery remains disabled until SES and feedback handling are ready. The `/health` endpoint returns `{"status":"ok"}` without querying the database. See the [cloud infrastructure guide](infra/README.md) for hosting setup.
 
-## Planned signing flow
+## Signing flow
 
 1. Verify the sender's email through a single-use magic link.
 2. Upload a document, review its PDF preview, add signers in order, and place fields.
 3. Fill sender-owned fields before sending; each signer reviews, consents, and signs sequentially.
-4. Seal the completed PDF once, record the audit trail, and deliver the executed document and certificate of completion to every party.
+4. Append completion evidence, seal each final PDF once with a platform seal and timestamp, and deliver the executed document and standalone certificate to the sender, signers and completion recipients.
 
-The editor uses PDF.js and interact.js. Planned stamping, sealing, and timestamp support uses PDFsharp and BouncyCastle; Gotenberg will handle Office conversion. Azure OpenAI will suggest signer roles and field locations for the sender to accept. Amazon SES v2 is the default email provider, SMTP supports local development, and ACS remains an optional future adapter. There is no CAPTCHA; verified email, rate limits, daily caps, and suppression form the planned abuse controls.
+## Technology stack
+
+| Area | Technology |
+| --- | --- |
+| Application | .NET 10 LTS, C#, ASP.NET Core Razor Pages |
+| Database | EF Core 10 with SQL Server; Azure SQL Database for hosting, SQL Server Developer locally |
+| PDF viewer and editor | PDF.js, interact.js and signature_pad; assets are served locally |
+| PDF rendering and evidence | PDFsharp/MigraDoc 6.2.4 (MIT), PdfPig and BouncyCastle for CMS seals and RFC 3161 timestamps |
+| Timestamp authority | Provider-configurable RFC 3161 client; [FreeTSA](https://www.freetsa.org/index_en.php) is the selected free demo option and still requires runtime configuration |
+| Files and final-record protection | Azure Blob Storage, with version-level immutable retention for hosted final PDFs; Azurite for local development |
+| Sessions and secrets | ASP.NET Core Data Protection, Blob-persisted keys, Azure Key Vault and managed identity |
+| Background work | SQL durable work/outbox records, Azure Storage Queues and Blob recovery hints; finite Container Apps jobs |
+| Email | Amazon SES v2 and SMTP/Mailpit; ACS remains a future optional adapter |
+| Hosting and delivery | Azure Container Apps Consumption, GitHub Actions, GHCR and Bicep; CloudFormation for AWS resources |
+| Planned extensions | Gotenberg for Office conversion; Azure OpenAI for sender-approved signer-role and field suggestions |
+
+There is no CAPTCHA. Verified email, request limits, daily caps and bounce/complaint suppression provide abuse controls. Office conversion and AI suggestions are not implemented yet.
+
+### Timestamp, immutable storage and retention setup
+
+The seal engine requires an HTTPS RFC 3161 timestamp service and a trusted certificate chain. FreeTSA's public service has no subscription fee, permits application use, and allows at most one request per second per source IP. It is best-effort without an SLA. Before enabling it, configure its verified public CA and serialize timestamp requests across both final PDF seals and all workers sharing that IP. Provider rate coordination and hosted configuration remain rollout work; a timestamp outage can delay completion. See [FreeTSA's usage policy](https://www.freetsa.org/freetsa.html) and the [seal configuration guide](docs/platform-pdf-seals.md).
+
+Immutable storage is a policy on ordinary Azure Blob Storage, not a separate compute or storage service. Hosted publication requires a private final-files container with version-level immutability enabled and actual blob protection covering the promised retention interval. Existing containers require migration; enabling support cannot be reversed, and locked retention cannot be shortened. Keep the deletion deadline and protection expiry aligned. The application verifies protection but does not provision or change hosted policies. See [Azure's version-level immutability documentation](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-version-level-worm-policies) and [final publication](docs/final-publication.md).
+
+Configure these values through environment variables or private settings, using [the example configuration](src/QuillSign/appsettings.example.json):
+
+| Environment variable | Current purpose |
+| --- | --- |
+| `Seal__TsaUrl` | HTTPS RFC 3161 endpoint; FreeTSA publishes `https://freetsa.org/tsr` |
+| `Seal__TsaTrustedRootPaths__0` | Absolute runtime path to a verified public TSA root certificate; indexed entries support multiple roots |
+| `Retention__CompletedDays` | Retention interval for completed ordinary requests |
+| `Demo__PurgeAfterDays` | Positive retention interval for completed demo requests |
+
+The current publication intervals start at completion and are unset by default. They do not schedule deletion. The planned demo policy instead keeps each document for an environment-configurable interval from upload, with seven days selected for the demo. Applying that fixed deadline throughout signing and completion, aligning immutable protection, and implementing automatic purge are still required. Deletion must handle stored versions and disclose backup/soft-delete recovery windows accurately; setting a day count alone does not guarantee erasure.
 
 ## Run locally
 
@@ -83,7 +116,7 @@ Compose selects SMTP and captures messages in Mailpit using a synthetic sender. 
 
 The adapters also support [bounded PDF attachments](docs/email-attachments.md), preserving exact supplied bytes with safe filenames and explicit MIME encoding. [Completion notifications](docs/completion-notifications.md) queue atomically with final publication and deliver the verified pair plus a private readonly backup link through finite email work. Live delivery remains disabled by default.
 
-For a complete browser flow using the local services, migrate first, then run these commands in separate terminals:
+For sender verification and draft preparation using the local services, migrate first, then run these commands in separate terminals:
 
 ```powershell
 pwsh -File scripts/dev/Use-LocalDatabase.ps1 -Action RunApp -AppPort 5081
@@ -94,7 +127,7 @@ Start `RunApp` first so it builds the application; `-NoBuild` lets the listener 
 
 Verification links work once and expire 15 minutes after dispatch. Sender sessions last two hours without sliding renewal and only open their own draft. The default cap is five requests per address per UTC day, plus 20 HTTP requests per IP per ten-minute window. Configure these limits through the `Sender` section in `appsettings.example.json`. Suppressed and capped requests receive the same neutral inbox message. Browser notices appear once after a clean redirect; JSON clients receive the message body and still require antiforgery tokens for POST requests.
 
-Outside Compose, email is disabled by default. Use the `Email` section of `appsettings.example.json` for provider, sender, base URL, SMTP, SES configuration set, and SNS topic settings. `Email:BaseUrl` builds verification links; templates render when dispatching. `/webhooks/ses` processes authenticated delivery feedback and suppresses permanent bounces and complaints. Transient bounces do not permanently suppress recipients. Feedback and subscription auto-confirmation are disabled by default. Public SES delivery remains gated on durable dispatch, a confirmed feedback subscription, and approved SES readiness.
+Outside Compose, email is disabled by default. Use the `Email` section of `appsettings.example.json` for provider, sender, base URL, SMTP, SES configuration set, and SNS topic settings. `Email:BaseUrl` builds verification links; templates render when dispatching. `/webhooks/ses` processes authenticated delivery feedback and suppresses permanent bounces and complaints. Transient bounces do not permanently suppress recipients. Feedback and subscription auto-confirmation are disabled by default. Public SES delivery remains gated on a confirmed feedback subscription, simulator validation and approved SES readiness.
 
 ### Background work
 
@@ -124,25 +157,25 @@ Open **Document details and recipients** to save a title and optional message, a
 
 Choose **Review document preparation** to see the PDF, ordered signers, sender-filled values and completion recipients together. Missing confirmation, title/signers, invalid field placement/assignment or unfilled sender values produce corrective links. An unchecked sender checkbox counts as filled. Signers without a Signature field produce a warning only. Review reads one coherent draft revision, changes nothing and sends no invitations; passing these preparation checks does not establish legal validity or guarantee text fitting when stamping is integrated.
 
-The [versioned electronic-record disclosure foundation](docs/electronic-record-disclosure.md) builds exact envelope-bound text and hashes for a later send/consent transaction. Operators must supply actual paper-copy, withdrawal, contact-update, access and retention policies through private `ElectronicRecords__...` settings; empty examples fail snapshot construction. This foundation exposes no consent or signing UI.
+The [versioned electronic-record disclosure foundation](docs/electronic-record-disclosure.md) builds exact envelope-bound text and hashes used by the Send and consent transactions. Operators must supply actual paper-copy, withdrawal, contact-update, access and retention policies through private `ElectronicRecords__...` settings; empty examples fail snapshot construction. The signer consent screen records acceptance of the frozen snapshot. A demo must clearly describe its actual limitations and prohibit real contracts.
 
 The backend [signer-access foundation](docs/signer-access.md) provides single-use invitation redemption, isolated two-hour signer sessions and access scoped to the frozen PDF/disclosure. Invitation tokens are created at actual dispatch with a default 24-hour life, bounded by envelope expiry. The [signer consent flow](docs/signer-consent.md) adds a safe invitation landing, stored disclosure/PDF downloads, read-only preview, explicit access/consent confirmations and decline with durable sender notification. [Reviewed Send and private sender status](docs/sender-send.md) use the [atomic freeze backend](docs/send-freeze.md) to queue the first signer invitation, with tokens activated at dispatch. Actual operator disclosure policies and approved delivery configuration are required. Consented signers can [type, draw or upload their signature and initials](docs/signature-capture.md), review exact saved server previews and explicitly adopt them through the [adoption backend](docs/signature-adoption.md). The field screen supports deliberate per-field application and a saved-entry review, followed by exact PDF review and explicit Finish.
 
 The [signature asset processor](docs/signature-assets.md) validates and normalizes bounded PNG marks for adoption previews. It provides image processing only; the separate adoption workflow authorizes storage and records explicit adoption.
 
-The [signer field screens and backend](docs/signer-fields.md) record one deliberate owned-field application at a time, bound to the current adoption ID/image hash. Signers select fields, explicitly apply/save/clear each entry, and review server-saved values. Replacement makes older mark applications stale until each is reapplied or cleared. [Exact PDF review and Finish](docs/signer-review-finish.md) require explicit preparation, verified PDF access and affirmative review/intent before freezing entries. Confirmation offers the signer's exact checkpoint copy after processing; final sealing and completion delivery remain subsequent work.
+The [signer field screens and backend](docs/signer-fields.md) record one deliberate owned-field application at a time, bound to the current adoption ID/image hash. Signers select fields, explicitly apply/save/clear each entry, and review server-saved values. Replacement makes older mark applications stale until each is reapplied or cleared. [Exact PDF review and Finish](docs/signer-review-finish.md) require explicit preparation, verified PDF access and affirmative review/intent before freezing entries. Confirmation offers the signer's exact checkpoint copy after processing; the completion worker handles final sealing, publication and delivery.
 
-The internal [signer PDF renderer](docs/signer-pdf-rendering.md) turns a verified saved-field snapshot into a new hash-bound copy, preserving earlier contents and page geometry. It derives Full Name and Date Signed from server inputs and verifies applied mark bindings. The later Finish transaction will authorize and publish these copies; rendering alone does not complete signing.
+The internal [signer PDF renderer](docs/signer-pdf-rendering.md) turns a verified saved-field snapshot into a new hash-bound copy, preserving earlier contents and page geometry. It derives Full Name and Date Signed from server inputs and verifies applied mark bindings. The Finish transaction authorizes publication of these copies; rendering alone does not complete signing.
 
 The internal [review-candidate backend](docs/signer-review-candidates.md) stages immutable exact PDFs bound to current saved fields, adoption, consent and session. Review receipts expire within ten minutes and before the next UTC date; a later explicit Finish must consume the reviewed copy and match its prospective server date.
 
-The internal [Finish acceptance backend](docs/signer-finish.md) consumes that exact review on explicit intent, records actual server Date Signed and freezes signer entries atomically. Its durable [checkpoint worker](docs/signer-checkpoints.md) verifies/publishes the exact accepted PDF, records Signed state and advances the next signer against the verified current copy. Public review/Finish/confirmation is available; final completion remains subsequent work.
+The internal [Finish acceptance backend](docs/signer-finish.md) consumes that exact review on explicit intent, records actual server Date Signed and freezes signer entries atomically. Its durable [checkpoint worker](docs/signer-checkpoints.md) verifies/publishes the exact accepted PDF, records Signed state and advances the next signer against the verified current copy. Public review, Finish and confirmation integrate with the durable completion workflow.
 
 PDFsharp is pinned to MIT-licensed 6.2.4; later releases changed licensing. PDF.js 6.4.299 is vendored locally, including its font/decoder assets and license notices. Its four Liberation Sans fonts are replaced with unmodified upstream 2.1.5 under OFL-1.1. CI verifies the committed asset hashes with `python scripts/dev/vendor_pdfjs.py --verify`; maintainers regenerate the pinned distribution with the same script without `--verify`. See [third-party notices](THIRD-PARTY-NOTICES.txt) for attribution.
 
 The standalone [PDF field feasibility harness](docs/pdf-field-feasibility.md) checks stamping geometry, embedded text, checkboxes and image marks with independent rendering and text extraction. Run `pwsh -File scripts/dev/Test-PdfFieldSpike.ps1`; generated fixtures stay ignored. The harness does not enable production stamping or signing.
 
-The internal [timestamped platform seal engine](docs/platform-pdf-seals.md) validates an exact prepared source, applies one detached CMS seal and verifies its RFC 3161 timestamp and complete output. Certificate providers support configured PFX, managed-identity Key Vault backing material and a persistent encrypted demo identity. Provider/TSA values remain private, and configured failures never silently replace an identity. Generated local tests run independently with OpenSSL on Windows and Linux; final publication and delivery remain separate work.
+The internal [timestamped platform seal engine](docs/platform-pdf-seals.md) validates an exact prepared source, applies one detached CMS seal and verifies its RFC 3161 timestamp and complete output. Certificate providers support configured PFX, managed-identity Key Vault backing material and a persistent encrypted demo identity. Provider/TSA values remain private, and configured failures never silently replace an identity. Generated local tests run independently with OpenSSL on Windows and Linux; the completion worker integrates sealing with final publication and delivery.
 
 The internal [completion-evidence collector](docs/completion-evidence.md) verifies the complete recorded signing/audit chain and exact stored sources/assets, then rechecks its database snapshot without restoring user authority. [Durable candidate preparation](docs/completion-candidates.md) freezes one exact unsigned packet and historical evidence snapshot with conditional storage and atomic audit recording. [Resumable sealing](docs/completion-seals.md) prepares both private timestamped outputs, pins their platform certificate identity and verifies actual stored CMS/timestamp evidence across retries. The [certificate renderer](docs/completion-certificates.md) includes bounded pagination, accepted marks, versioned consent and recorded times; the standalone form binds the executed-file hash without circular self-hashes. [Immutable final publication](docs/final-publication.md) reserves stable final targets, verifies explicit retention protection and commits Completed with canonical evidence. Its readonly verifier accounts for the owned transition and growing audit tails without private-key access. The supported [completion worker](docs/completion-worker.md) now queues atomically with the final signer checkpoint and resumes those stages through publication, with lease checks and storage-hint recovery. Existing live sender and accepted-signer sessions can download the verified final pair. [Completed-record retrieval](docs/completion-access.md) adds scanner-safe fragment/manual-code entry, explicit single-use link redemption and independent readonly final downloads for the frozen sender, signers and recipients after signing expiry. [Completion notifications](docs/completion-notifications.md) issue those links at dispatch, preserve exact attachments and prevent automatic resend after uncertain provider acceptance.
 
@@ -152,7 +185,7 @@ The public **Verify a completed PDF** link opens `/verify`. Its [bounded upload 
 
 Finite [signing-expiry maintenance](docs/signing-expiry.md) records due requests through `work expire`, preserving on-time accepted checkpoints and the final completion path. New signer activity remains blocked at the deadline; automatic maintenance scheduling and expiry notices remain separate work.
 
-The backend [sender-prefill renderer](docs/sender-pdf-rendering.md) now shares these independent geometry checks. It validates source bytes and sender text/date/checkbox fields, embeds the pinned font, and returns bounded output and hashes. It has no endpoint and does not yet freeze, send or sign drafts.
+The backend [sender-prefill renderer](docs/sender-pdf-rendering.md) now shares these independent geometry checks. It validates source bytes and sender text/date/checkbox fields, embeds the pinned font, and returns bounded output and hashes. It is an internal component of the reviewed Send transaction, which freezes the sender-prefilled copy before inviting the first signer.
 
 The .NET build restores interact.js 1.10.28 from its exact npm archive into an ignored `obj/browser-assets` cache, checks pinned SHA-512/SHA-256 hashes, and copies the browser script plus unmodified MIT license into build/publish output. No npm scripts run. First builds require registry access and `tar` (included with current Windows and the .NET SDK Linux image); cached builds work offline. Verify output with `python scripts/dev/verify_interact.py src/QuillSign/bin/Release/net10.0/wwwroot/vendor/interact`. The Docker build performs the same restore. Runtime browsers use local assets without a CDN.
 
@@ -168,8 +201,10 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- Completion delivery and sender status-link email.
-- Office conversion and document-processing workers.
+- Hosted readiness: operator disclosures, TSA configuration and rate coordination, immutable final storage, retention and end-to-end validation.
+- Environment-configurable per-document demo retention from upload and automatic purge, with matching immutable protection and recovery-copy handling.
+- Automatic expiry scheduling, reminders, invitation resend, contact correction and document lookup.
+- Office/image document conversion.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - Optional AI suggestions.
 
@@ -179,6 +214,6 @@ See the [implementation plan](docs/plan.md) for tracked work. The SVG and PNG br
 
 Copyright (c) 2026 Henrique Meyer. QuillSign is licensed under the [GNU Affero General Public License, version 3 or later](LICENSE) (`AGPL-3.0-or-later`).
 
-Software is provided as-is. Operators are responsible for checking whether electronic signatures are suitable for their use case and jurisdiction. The public demo is intended for evaluation and periodic data purging; document lifecycle deletion is asynchronous, not an exact retention deadline.
+Software is provided as-is. Operators are responsible for checking whether electronic signatures are suitable for their use case and jurisdiction. The public demo is for synthetic evaluation only, not real-life contracts. Its planned per-document retention is configurable, with seven days selected; automatic deletion is not implemented yet. Participants must download copies before the displayed deletion deadline once that policy is enabled.
 
 See the [electronic-signature requirements and acceptance checklist](docs/e-signature-requirements.md) for US ESIGN/UETA and EU eIDAS rules, conditional consumer disclosures, evidence and retention targets, and unsupported uses. This guide describes requirements; it does not certify the current application or guarantee enforceability.
