@@ -28,8 +28,8 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
         var entry=await db.AuditEvents.SingleAsync(x=>x.EnvelopeId==after.Id && x.Event=="sent");using var json=JsonDocument.Parse(entry.DataJson);var cap=json.RootElement.GetProperty("retentionSigning");
         Assert.Equal("retention-signing-v1",cap.GetProperty("version").GetString());Assert.Equal(review.RetentionSha256,cap.GetProperty("uploadRetentionSha256").GetString());Assert.Equal(expected,cap.GetProperty("effectiveDeadline").GetDateTimeOffset());Assert.Equal(expected,json.RootElement.GetProperty("signingDeadline").GetDateTimeOffset());
         Assert.Equal(requested=="absent" ? JsonValueKind.Null : JsonValueKind.String,cap.GetProperty("requestedDeadline").ValueKind);Assert.Equal(AuditHash.Compute(entry),entry.Hash);
-        var bytes=await run.H.Read(Guid.ParseExact(after.SentPdfBlob!,"N"));Assert.Equal(sent.DocumentHash,Convert.ToHexStringLower(SHA256.HashData(bytes)));Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==after.Id));
-        Assert.NotNull(await run.H.Send(reviewedRetentionSha256:review.RetentionSha256));Assert.NotNull(await run.H.Send(reviewedRetentionSha256:review.RetentionSha256));Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==after.Id));Assert.Equal(2,run.H.Signals.HintCalls);Assert.Equal(1,await db.AuditEvents.CountAsync(x=>x.EnvelopeId==after.Id && x.Event=="sent"));
+        var bytes=await run.H.Read(Guid.ParseExact(after.SentPdfBlob!,"N"));Assert.Equal(sent.DocumentHash,Convert.ToHexStringLower(SHA256.HashData(bytes)));Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==after.Id && x.Kind!=WorkKind.Purge));
+        Assert.NotNull(await run.H.Send(reviewedRetentionSha256:review.RetentionSha256));Assert.NotNull(await run.H.Send(reviewedRetentionSha256:review.RetentionSha256));Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==after.Id && x.Kind!=WorkKind.Purge));Assert.Equal(2,run.H.Signals.HintCalls);Assert.Equal(1,await db.AuditEvents.CountAsync(x=>x.EnvelopeId==after.Id && x.Event=="sent"));
     }
 
     [Theory]
@@ -77,7 +77,7 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
         await using var run=await Retained.Create(fixture);var review=(await run.Review())!;run.H.Faults.Event="sent";run.H.Faults.FailCommit=true;
         await Assert.ThrowsAsync<IOException>(()=>run.H.Send(reviewedRetentionSha256:review.RetentionSha256));var current=await run.State();Assert.Equal(EnvelopeStatus.Sent,current.Status);Assert.Equal(run.Policy.DeleteAfter,current.ExpiresAt);
         run.H.Faults.FailCommit=false;var recovered=(await run.H.Send(reviewedRetentionSha256:review.RetentionSha256))!;Assert.Equal(recovered.DocumentHash,Convert.ToHexStringLower(current.SentPdfSha256!));
-        await using var db=fixture.Open();Assert.Single(await db.EmailOutbox.Where(x=>x.EnvelopeId==current.Id).ToArrayAsync());Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==current.Id));Assert.Equal(2,run.H.Signals.HintCalls);Assert.Empty(run.H.Blobs.Deleted);
+        await using var db=fixture.Open();Assert.Single(await db.EmailOutbox.Where(x=>x.EnvelopeId==current.Id).ToArrayAsync());Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==current.Id && x.Kind!=WorkKind.Purge));Assert.Equal(2,run.H.Signals.HintCalls);Assert.Empty(run.H.Blobs.Deleted);
     }
 
     [Theory]
@@ -124,7 +124,7 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
             Assert.Equal(HttpStatusCode.Redirect,result.StatusCode);Assert.Equal(flow.Status,result.Headers.Location!.ToString());Assert.DoesNotContain("?",result.Headers.Location.ToString());
             var status=await flow.Page(flow.Status);Assert.Contains("The request was sent.",status);Assert.Contains(run.Policy.DeleteAfter.ToString("u"),status);
             Assert.DoesNotContain("The request was sent.",await flow.Page(flow.Status));Assert.Equal(run.Policy.DeleteAfter,(await run.State()).ExpiresAt);
-            await using var db=fixture.Open();Assert.Single(await db.EmailOutbox.Where(x=>x.EnvelopeId==before.Id).ToArrayAsync());Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==before.Id));
+            await using var db=fixture.Open();Assert.Single(await db.EmailOutbox.Where(x=>x.EnvelopeId==before.Id).ToArrayAsync());Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==before.Id && x.Kind!=WorkKind.Purge));
         }
         else
         {
@@ -138,7 +138,7 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
         await using var run=await Retained.Create(fixture);var review=(await run.Review())!;
         var results=await Task.WhenAll(run.H.Send(reviewedRetentionSha256:review.RetentionSha256),run.H.Send(reviewedRetentionSha256:review.RetentionSha256));
         Assert.Equal(results[0],results[1]);var state=await run.State();Assert.Equal(run.Policy.DeleteAfter,state.ExpiresAt);
-        await using var db=fixture.Open();Assert.Single(await db.EmailOutbox.Where(x=>x.EnvelopeId==state.Id).ToArrayAsync());Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==state.Id));Assert.Equal(3,run.H.Blobs.Created.Count);
+        await using var db=fixture.Open();Assert.Single(await db.EmailOutbox.Where(x=>x.EnvelopeId==state.Id).ToArrayAsync());Assert.Equal(2,await db.WorkItems.CountAsync(x=>x.EnvelopeId==state.Id && x.Kind!=WorkKind.Purge));Assert.Equal(3,run.H.Blobs.Created.Count);
     }
 
     // Test-assembly-only host for manual desktop/mobile/keyboard checks. It uses
@@ -160,12 +160,26 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
     internal sealed class Retained:IAsyncDisposable
     {
         public Shared H=null!;public DocumentRetentionSnapshot Policy=null!;internal SqlDatabaseFixture fixture=null!;
-        public static async Task<Retained> Create(SqlDatabaseFixture fixture,string requested="later",int? browserPort=null,bool browser=false,Func<QuillSign.Signing.VerifiedSigner?>? syntheticSigner=null,int retentionDays=7)
+        public static async Task<Retained> Create(SqlDatabaseFixture fixture,string requested="later",int? browserPort=null,bool browser=false,Func<QuillSign.Signing.VerifiedSigner?>? syntheticSigner=null,int retentionDays=7,DateTimeOffset? initialTime=null)
         {
             var run=new Retained{fixture=fixture,H=await Shared.Create(fixture,browser:browser || browserPort is not null,browserPort:browserPort,syntheticSigner:syntheticSigner)};var h=run.H;var old=Guid.ParseExact(h.Envelope.PdfBlob!,"N");h.App.Services.GetRequiredService<DemoRetentionOptions>().PurgeAfterDays=retentionDays;
+            if(initialTime is { } start) {
+                h.Clock.Advance(start-h.Clock.GetUtcNow());
+                // Historical synthetic requests use the same explicit fixture clock
+                // at the raw signer-read boundary; production authorization is unchanged.
+                h.Blobs.SyntheticSignerRead=async (principal,blob,destination,ct)=> {
+                    var identity=QuillSign.Signing.SignerAccessConfiguration.ReadIdentity(principal,h.Clock.GetUtcNow());
+                    if(identity is null || blob.Kind!=DocumentBlobKind.Normalized || blob.EnvelopeId!=identity.EnvelopeId || blob.ObjectId!=identity.DocumentId)
+                        throw new UnauthorizedAccessException("A current synthetic signer read scope is required.");
+                    var source=h.App.Services.GetRequiredService<Azure.Storage.Blobs.BlobServiceClient>().GetBlobContainerClient("normalized").GetBlobClient($"{blob.EnvelopeId:N}/{blob.ObjectId:N}");
+                    var value=(await source.DownloadStreamingAsync(cancellationToken:ct)).Value;await using var input=value.Content;
+                    await input.CopyToAsync(destination,ct);return value.Details.ContentLength;
+                };
+            }
             await using(var db=fixture.Open())
             {
                 var e=await db.Envelopes.SingleAsync(x=>x.Id==h.Envelope.Id);e.IsDemo=true;e.PdfBlob=null;e.PdfSha256=null;e.PageCount=null;e.PageSizesJson=null;e.PreviewConfirmedAt=null;
+                if(initialTime is not null){e.CreatedAt=h.Clock.GetUtcNow();e.SenderVerifiedAt=h.Clock.GetUtcNow();}
                 e.ExpiresAt=requested=="absent" ? null : h.Clock.GetUtcNow().AddDays(requested=="earlier" ? 2 : requested=="equal" ? 7 : 30);await db.Fields.Where(x=>x.EnvelopeId==e.Id).ExecuteDeleteAsync();await db.SaveChangesAsync();
             }
             await h.Blobs.Inner.DeleteAsync(h.Principal,new(h.Envelope.Id,DocumentBlobKind.Normalized,old));var before=await run.State();
@@ -176,12 +190,13 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
             }
             before=await run.State();using(var scope=h.App.Services.CreateScope())Assert.True(await scope.ServiceProvider.GetRequiredService<DocumentWorkflow>().ConfirmAsync(h.Principal,before.PublicId,before.RowVersion,before.PdfBlob!,true,null,null,default));
             await using(var db=fixture.Open()) {db.Fields.Add(new(){EnvelopeId=h.Envelope.Id,SignerId=h.First.Id,Type=FieldType.Signature,Page=1,X=.1m,Y=.4m,Width=.4m,Height=.1m});await db.SaveChangesAsync();run.Policy=await db.DocumentRetentionSnapshots.AsNoTracking().SingleAsync(x=>x.EnvelopeId==h.Envelope.Id);}
-            h.Envelope=await run.State();h.Version=h.Envelope.RowVersion;h.Source=await h.Read(Guid.ParseExact(h.Envelope.PdfBlob!,"N"));return run;
+            h.Envelope=await run.State();h.Version=h.Envelope.RowVersion;h.Source=await h.Read(Guid.ParseExact(h.Envelope.PdfBlob!,"N"));
+            h.Signals.HintCalls=0;h.Signals.Published=0;return run;
         }
         public async Task<Envelope> State() {await using var db=fixture.Open();return await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==H.Envelope.Id);}
         public async Task<DraftReviewSnapshot?> Review() {using var scope=H.App.Services.CreateScope();return await scope.ServiceProvider.GetRequiredService<DraftReview>().GetAsync(H.Principal,H.Envelope.PublicId);}
         public async Task Unsent(Envelope before)
-        {var e=await State();Assert.Equal(EnvelopeStatus.Draft,e.Status);Assert.Equal(before.RowVersion,e.RowVersion);Assert.Equal(before.ExpiresAt,e.ExpiresAt);Assert.Null(e.SentPdfBlob);await using var db=fixture.Open();Assert.False(await db.EmailOutbox.AnyAsync(x=>x.EnvelopeId==e.Id));Assert.False(await db.WorkItems.AnyAsync(x=>x.EnvelopeId==e.Id));Assert.False(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==e.Id && x.Event=="sent"));}
+        {var e=await State();Assert.Equal(EnvelopeStatus.Draft,e.Status);Assert.Equal(before.RowVersion,e.RowVersion);Assert.Equal(before.ExpiresAt,e.ExpiresAt);Assert.Null(e.SentPdfBlob);await using var db=fixture.Open();Assert.False(await db.EmailOutbox.AnyAsync(x=>x.EnvelopeId==e.Id));Assert.Single(await db.WorkItems.Where(x=>x.EnvelopeId==e.Id && x.Kind==WorkKind.Purge).ToArrayAsync());Assert.False(await db.WorkItems.AnyAsync(x=>x.EnvelopeId==e.Id && x.Kind!=WorkKind.Purge));Assert.False(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==e.Id && x.Event=="sent"));}
         public ValueTask DisposeAsync()=>H.DisposeAsync();
     }
 }

@@ -32,7 +32,7 @@ dotnet QuillSign.dll database grant-demo-purge
 
 This grants only procedure `EXECUTE` through `app_demo_purge_role` to the already provisioned `app_worker`. Ordinary startup, `grant-runtime` and `provision-worker` do not grant it, and the web runtime receives no procedure permission. The command is permission preparation for operator review; it has not been run against hosted SQL. Hosted rollout still requires owner approval. SQL object names here are fixed application aliases, not cloud resource identities.
 
-The SQL module cannot authenticate a blob marker. That requirement belongs to the application protocol before invocation, and authenticated already-removed replay remains private to that protocol. A direct privileged module invocation is not evidence that storage recovery was established. The following coordinator must use this service, handle other workers and ordinary attempt exhaustion, and truthfully update disclosure/readiness before claiming automatic purge.
+The SQL module cannot authenticate a blob marker. That requirement belongs to the application protocol before invocation, and authenticated already-removed replay remains private to that protocol. A direct privileged module invocation is not evidence that storage recovery was established. The [coordinator](demo-purge-coordinator.md) uses this service, fences other workers, preserves purge retries beyond ordinary attempt exhaustion and verifies scheduling before new disclosure/Send.
 
 ## Validation
 

@@ -142,7 +142,7 @@ public sealed class UploadRetentionTests(SqlDatabaseFixture fixture) : IClassFix
         await DatabasePermissions.GrantRuntimeAsync(connection);command.CommandText="EXECUTE AS USER = 'app_runtime'";await command.ExecuteNonQueryAsync();
         try
         {
-            var options=new DocumentOptions();var service=new DocumentWorkflow(db,h.Store,new(options),options,new(db,h.Time),h.Time,NullLogger<DocumentWorkflow>.Instance,h.Retention);
+            var options=new DocumentOptions();var service=new DocumentWorkflow(db,h.Store,new(options),options,new(db,h.Time),h.Time,NullLogger<DocumentWorkflow>.Instance,h.Retention,h.PurgeJobs(db));
             var bytes=PdfFixtures.Create();using var source=new MemoryStream(bytes);var before=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==h.Id);
             Assert.True(await service.UploadAsync(h.Sender,h.PublicId,before.RowVersion,"Synthetic.pdf",source,bytes.Length,null,null,default));
             Assert.NotNull(await new UploadRetention(db,h.Retention,h.Time).ReadAsync(await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==h.Id)));

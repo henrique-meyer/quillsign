@@ -209,7 +209,7 @@ public sealed class DocxDocumentWorkflowTests(SqlDatabaseFixture fixture) : ICla
     }
     private static DocxDocumentWorkflow Service(Harness run, QuillSignDbContext db, Provider provider, bool enabled = true)
     {
-        var options = new DocumentOptions(); var documents = new DocumentWorkflow(db, run.Store, new(options), options, new(db, run.Time), run.Time, NullLogger<DocumentWorkflow>.Instance, run.Retention);
+        var options = new DocumentOptions(); var documents = new DocumentWorkflow(db, run.Store, new(options), options, new(db, run.Time), run.Time, NullLogger<DocumentWorkflow>.Instance, run.Retention,run.PurgeJobs(db));
         var converter = new GotenbergDocxConverter(new HttpClient(provider, false), new() { Enabled = enabled, BaseUrl = "https://converter.example.invalid" }, options, new(options), new EnvironmentStub());
         return new(documents, new(options), converter);
     }
