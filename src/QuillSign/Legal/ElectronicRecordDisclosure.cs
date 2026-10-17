@@ -7,6 +7,7 @@ namespace QuillSign.Legal;
 
 public sealed class ElectronicRecordOptions
 {
+    public string Profile { get; set; } = "";
     public string PaperCopyInstructions { get; set; } = "";
     public string PaperCopyFees { get; set; } = "";
     public string WithdrawalInstructions { get; set; } = "";
@@ -33,13 +34,22 @@ public sealed partial class ElectronicRecordDisclosure(ElectronicRecordOptions o
         return Normalize(reader.ReadToEnd(), MaximumTextCharacters, "template", singleLine: false);
     });
 
-    public DisclosureSnapshot Build(string? publicId, string? title, string? senderContact)
+    public DisclosureSnapshot Build(string? publicId, string? title, string? senderContact)=>Build(publicId,title,senderContact,null);
+
+    internal DisclosureSnapshot Build(string? publicId,string? title,string? senderContact,DemoDisclosureContext? demo)
     {
         if (publicId is not { Length: 32 } || !publicId.All(char.IsAsciiHexDigit)) throw new DisclosureRejectedException("Use the current envelope identifier.");
         var normalizedTitle = Normalize(title,512,"document title",singleLine:true);
         string contact;
         try { contact = EmailAddress.Normalize(senderContact?.Trim() ?? ""); }
         catch (ArgumentException) { throw new DisclosureRejectedException("Use the verified sender's contact address."); }
+        if(!string.IsNullOrEmpty(options.Profile))
+        {
+            if(options.Profile!=SyntheticDemoDisclosure.Profile || new[]{options.PaperCopyInstructions,options.PaperCopyFees,
+                options.WithdrawalInstructions,options.WithdrawalConsequences,options.ContactUpdateInstructions,options.AccessRequirements,options.RetentionNotice}
+                .Any(x=>!string.IsNullOrWhiteSpace(x)))throw new DisclosureRejectedException("Select one complete disclosure policy profile.");
+            return SyntheticDemoDisclosure.Build(publicId,normalizedTitle,contact,demo);
+        }
         var values = new Dictionary<string,string>(StringComparer.Ordinal)
         {
             ["version"] = CurrentVersion, ["public_id"] = publicId, ["title"] = normalizedTitle, ["sender_contact"] = contact,
