@@ -7,6 +7,7 @@ using QuillSign.Documents;
 using QuillSign.Signing;
 using QuillSign.Sealing;
 using QuillSign.Completion;
+using QuillSign.Verification;
 
 if (args.Length > 0 && args[0] == "database")
 {
@@ -55,6 +56,7 @@ builder.Services.AddScoped<SenderSendReadiness>();
 builder.Services.AddCompletionDownloads();
 builder.Services.AddCompletionAccess(builder.Configuration);
 builder.Services.AddCompletionReaderBrowser(builder.Environment);
+builder.Services.AddPdfVerificationBrowser(builder.Configuration);
 var app = builder.Build();
 app.UseForwardedHeaders();
 
@@ -73,6 +75,7 @@ app.Use(async (context, next) =>
 app.UseStaticFiles();
 app.UseRouting();
 app.UseRateLimiter();
+app.UseMiddleware<VerificationUploadBoundary>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
