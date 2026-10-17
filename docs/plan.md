@@ -848,7 +848,7 @@ Update matching docs/plan.md before implementation; keep To Do until QUILS-58 me
 
 ## QUILS-61: Coordinate FreeTSA timestamp requests across workers
 
-Status: In Progress. Independent of deadline-expiry scheduling; uses the merged seal and storage foundations.
+Status: Implementation complete. Shared timestamp coordination uses the merged seal and storage foundations; hosted FreeTSA configuration remains separate rollout work.
 
 Implement the request coordination required before the approved low-volume FreeTSA demo provider can be enabled. Existing RFC3161 validation, configured CA trust, PDF seal evidence and certificate-provider behavior remain authoritative. This is independent of signing-expiry work and adds no SQL polling, cloud resource, purchase or public delivery enablement.
 
