@@ -17,6 +17,29 @@ namespace QuillSign.Tests;
 public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
     [Fact]
+    public async Task On_time_Finish_survives_late_checkpoint_processing_without_inviting_after_the_deadline_then_expiry_preserves_it()
+    {
+        await using var run=await Run.Create(fixture,publishLast:false,firstOnly:true);run.H.Clock.Advance(TimeSpan.FromHours(2));
+        Assert.Equal(SigningExpiryOutcome.AcceptedPending,(await run.Use((SigningExpiry s)=>s.ExpireAsync(run.Envelope.Id))).Outcome);
+        await using var db=fixture.Open();var mails=await db.EmailOutbox.CountAsync(x=>x.EnvelopeId==run.Envelope.Id);Assert.True(await run.H.Once());
+        var f=await db.SignerFinishAcceptances.AsNoTracking().SingleAsync(x=>x.EnvelopeId==run.Envelope.Id);await run.Refresh();
+        Assert.True(f.ProcessedAt>run.Envelope.ExpiresAt);Assert.True(f.FinishedAt<run.Envelope.ExpiresAt);Assert.Null(f.NextInvitationId);Assert.Equal(1,run.Envelope.CurrentCopyVersion);
+        Assert.Equal(mails,await db.EmailOutbox.CountAsync(x=>x.EnvelopeId==run.Envelope.Id));
+        Assert.Equal(SigningExpiryOutcome.Expired,(await run.Use((SigningExpiry s)=>s.ExpireAsync(run.Envelope.Id))).Outcome);
+        Assert.Equal(SigningExpiryOutcome.AlreadyExpired,(await run.Use((SigningExpiry s)=>s.ExpireAsync(run.Envelope.Id))).Outcome);
+        Assert.Equal(f.PdfObjectId,(await db.SignerFinishAcceptances.AsNoTracking().SingleAsync(x=>x.Id==f.Id)).PdfObjectId);
+    }
+    [Fact]
+    public async Task Final_on_time_acceptance_publishes_after_deadline_and_remains_collectable_for_completion_instead_of_expiry()
+    {
+        await using var run=await Run.Create(fixture,publishLast:false);run.H.Clock.Advance(TimeSpan.FromHours(2));
+        Assert.Equal(SigningExpiryOutcome.AcceptedPending,(await run.Use((SigningExpiry s)=>s.ExpireAsync(run.Envelope.Id))).Outcome);
+        Assert.True(await run.H.Once());Assert.Equal(SigningExpiryOutcome.AllSigned,(await run.Use((SigningExpiry s)=>s.ExpireAsync(run.Envelope.Id))).Outcome);
+        var material=await run.Collect();Assert.NotNull(material);
+        await using var db=fixture.Open();var finish=await db.SignerFinishAcceptances.AsNoTracking().Where(x=>x.EnvelopeId==run.Envelope.Id).OrderByDescending(x=>x.FinishedAt).FirstAsync();
+        Assert.True(finish.ProcessedAt>run.Envelope.ExpiresAt);Assert.True(finish.FinishedAt<run.Envelope.ExpiresAt);Assert.False(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==run.Envelope.Id && x.Event=="expired"));
+    }
+    [Fact]
     public async Task Genuine_verified_preparation_and_two_signer_chain_collect_exact_source_marks_parties_and_complete_audit_without_writes()
     {
         await using var run=await Run.Create(fixture); var before=await run.Counts();
@@ -196,7 +219,7 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
         private SqlDatabaseFixture fixture=null!;
         public async Task<T> Use<S,T>(Func<S,Task<T>> action) where S:notnull {using var scope=H.App.Services.CreateScope(); return await action(scope.ServiceProvider.GetRequiredService<S>());}
         public async Task<Envelope> Refresh() {await using var db=fixture.Open(); return Envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==Envelope.Id);}
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false)
         {
             var run=new Run {fixture=fixture,H=await Shared.Create(fixture,browser:true)}; var email="completion-"+Guid.NewGuid().ToString("N")+"@example.invalid";
             _=await run.Use((SenderWorkflow s)=>s.RequestAsync(email,"127.0.0.1","Synthetic sender")); Assert.True(await run.H.Once());
@@ -219,7 +242,7 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
                 await db.SaveChangesAsync();
             }
             await run.Refresh(); Assert.NotNull(await run.Use((SendDraftWorkflow s)=>s.SendAsync(run.Sender,run.Envelope.PublicId,run.Envelope.RowVersion,true,true,SenderSendStatement.Version,"127.0.0.1","Synthetic sender")));
-            for(var i=1;i<=2;i++)await run.SignNext(i<2 || publishLast,i<2 || finishLast);
+            var last=firstOnly ? 1 : 2;for(var i=1;i<=last;i++)await run.SignNext(i<last || publishLast,i<last || finishLast);
             await run.Refresh(); run.Probe=new(run.H.Blobs.Inner); return run;
         }
         private static string Token(Shared h) {var raw=Regex.Match(h.Sender.Last!.Text,"token=([A-Za-z0-9_-]{43})").Groups[1].Value; Assert.Equal(43,raw.Length); return raw;}

@@ -90,8 +90,8 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
         var adoptions=new List<SignaturePreview>();
         foreach(var signer in signers) {
             var finish=finishes.SingleOrDefault(x=>x.SignerId==signer.Id);
-            if(finish is null || finish.ProcessedAt is null || finish.FinishedAt<e.SentAt ||
-                e.ExpiresAt is DateTimeOffset end && (finish.FinishedAt>=end || finish.ProcessedAt>=end))throw Invalid();
+            if(finish is null || finish.ProcessedAt is null || finish.ProcessedAt<finish.FinishedAt || finish.FinishedAt<e.SentAt ||
+                e.ExpiresAt is DateTimeOffset end && (finish.FinishedAt>=end || finish.ReviewExpiresAt>end))throw Invalid();
             adoptions.Add(await checkpoints.AcceptanceAsync(finish,signer,ct) ?? throw Invalid());
         }
         var recipients=await db.Recipients.AsNoTracking().Where(x=>x.EnvelopeId==id).OrderBy(x=>x.Id).Take(101).ToArrayAsync(ct);

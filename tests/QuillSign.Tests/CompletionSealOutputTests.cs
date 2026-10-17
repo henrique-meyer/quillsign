@@ -228,6 +228,18 @@ public sealed class CompletionSealOutputTests(SqlDatabaseFixture fixture) : ICla
         Assert.Equal(pair.Certificate.Pdf.Bytes,(await run.Read())!.Certificate.Pdf.Bytes); Assert.Equal(2,run.Seal.Requests);
     }
 
+    [Fact]
+    public async Task Late_processing_of_the_last_on_time_Finish_can_seal_and_publish_the_exact_completed_pair()
+    {
+        await using var run=await Run.Create(fixture,prepareCandidate:false,publishLast:false);
+        run.Signing.H.Clock.Advance(TimeSpan.FromHours(2));run.Seal.Time.Advance(TimeSpan.FromHours(2));Assert.True(await run.Signing.H.Once());
+        Assert.NotNull(await run.Prepare());await using var db=fixture.Open();var final=new CompletionDownloadTests.FinalStore(run.Signing.H.Clock);
+        var publication=new CompletionPublication(db,run.Candidates(db),run.Service(db),run.Collector(db),final,new(db,run.Signing.H.Clock),run.Signing.H.Clock,
+            new() {DemoPurgeAfterDays=7,AllowDevelopmentWriteOnce=true},run.Seal.App.Environment);
+        var saved=await publication.PublishAsync(run.Signing.Envelope.Id);Assert.NotNull(saved);Assert.Equal(saved.ExecutedBytes,(await publication.ReadAsync(run.Signing.Envelope.Id))!.ExecutedBytes);
+        Assert.True(saved.CompletedAt>run.Signing.Envelope.ExpiresAt);Assert.Equal(2,run.Seal.Requests);Assert.Equal(2,final.Writes);
+    }
+
     internal sealed class Run : IAsyncDisposable
     {
         public SigningRun Signing=null!; public SealFixtures Seal=null!; public Probe Storage=null!; public CompletionCandidateData Candidate=null!;

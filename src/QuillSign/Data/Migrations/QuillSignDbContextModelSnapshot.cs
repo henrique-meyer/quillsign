@@ -932,6 +932,9 @@ namespace QuillSign.Data.Migrations
 
                     b.HasIndex("PurgeAfter");
 
+                    b.HasIndex("ExpiresAt", "Id")
+                        .HasFilter("[Status] = 'Sent' AND [ExpiresAt] IS NOT NULL");
+
                     b.HasIndex("Id", "CurrentFinishId");
 
                     b.ToTable("Envelopes", t =>

@@ -43,12 +43,13 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
                 if(recovered is Guid recoveredWork)await completion!.PublishAsync(recoveredWork,ct);
                 return new(WorkOutcome.Completed);
             }
-            if(!Live(envelope) || signer.Status!=SignerStatus.Viewed || signer.SignedAt is not null || source.ObjectId!=f.SourceObjectId ||
+            if(!Accepted(envelope,f) || signer.Status!=SignerStatus.Viewed || signer.SignedAt is not null || source.ObjectId!=f.SourceObjectId ||
                 !SignerCheckpointState.Same(source.Sha256,f.SourceSha256) || await db.Signers.AnyAsync(x=>x.EnvelopeId==envelopeId && x.Order<signer.Order && x.Status!=SignerStatus.Signed,ct))
                 return new(WorkOutcome.Failed,"checkpoint-not-current");
             var next=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==envelopeId && x.Order>signer.Order).OrderBy(x=>x.Order).FirstOrDefaultAsync(ct);
             if(next is not null && next.Status!=SignerStatus.Pending)return new(WorkOutcome.Failed,"next-signer-not-pending");
-            f.ProcessedAt=time.GetUtcNow(); f.NextInvitationId=next is null ? null : Guid.NewGuid();
+            var inviteNext=next is not null && (envelope.ExpiresAt is null || envelope.ExpiresAt>time.GetUtcNow());
+            f.ProcessedAt=time.GetUtcNow(); f.NextInvitationId=inviteNext ? Guid.NewGuid() : null;
             var changed=await db.SignerFinishAcceptances.Where(x=>x.Id==f.Id && x.RowVersion==f.RowVersion && x.ProcessedAt==null)
                 .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.ProcessedAt,f.ProcessedAt).SetProperty(x=>x.NextInvitationId,f.NextInvitationId),ct);
             if(changed!=1)return new(WorkOutcome.Retry,"checkpoint-conflict");
@@ -58,9 +59,9 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
                 .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.CurrentFinishId,f.Id).SetProperty(x=>x.CurrentCopyVersion,source.Version+1),ct);
             if(signerChanged!=1 || envelopeChanged!=1)return new(WorkOutcome.Retry,"checkpoint-conflict");
             await audit.AppendAsync(envelopeId,"signer_completed",signer.Email,f.Ip,f.UserAgent,ct,SignerCheckpointState.PublishedJson(f),PartyType.Signer,signer.Id);
-            if(next is not null)await invitations.PrepareAsync(envelopeId,next.Id,next.Email,ct,f.NextInvitationId);
+            if(inviteNext)await invitations.PrepareAsync(envelopeId,next!.Id,next.Email,ct,f.NextInvitationId);
             var completionWork=next is null && completion is not null ? await completion.PrepareAsync(envelopeId,ct) : null;
-            if(!Live(envelope) || !await Owns(lease,located.PayloadJson,ct))return new(WorkOutcome.Retry,"checkpoint-expired-during-publication");
+            if(!Accepted(envelope,f) || inviteNext && envelope.ExpiresAt<=time.GetUtcNow() || !await Owns(lease,located.PayloadJson,ct))return new(WorkOutcome.Retry,"checkpoint-expired-during-publication");
             await transaction.CommitAsync(ct); await transaction.DisposeAsync();
             if(f.NextInvitationId is Guid invitation)await invitations.PublishAsync(invitation,ct);
             if(completionWork is Guid finalization)await completion!.PublishAsync(finalization,ct);
@@ -71,7 +72,11 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
         catch(Exception e) when(e is InvalidDataException or SignatureImageRejectedException or DocumentRejectedException)
         { return new(WorkOutcome.Failed,"checkpoint-integrity-unavailable"); }
     }
-    private bool Live(Envelope envelope)=>envelope.Status==EnvelopeStatus.Sent && envelope.SenderVerifiedAt is not null && (envelope.ExpiresAt is null || envelope.ExpiresAt>time.GetUtcNow());
+    // The signer acted before the frozen deadline. Processing time must not discard
+    // that acceptance, but later invitation issuance still requires a live deadline.
+    private bool Accepted(Envelope envelope,SignerFinishAcceptance finish)=>envelope.Status==EnvelopeStatus.Sent && envelope.SenderVerifiedAt is not null &&
+        envelope.SentAt<=finish.FinishedAt && finish.FinishedAt<=time.GetUtcNow() &&
+        (envelope.ExpiresAt is null || finish.FinishedAt<envelope.ExpiresAt && finish.ReviewExpiresAt<=envelope.ExpiresAt);
     private async Task<bool> Owns(WorkLease lease,string payload,CancellationToken ct)
     {
         var row=await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {lease.Id}").AsNoTracking().SingleOrDefaultAsync(ct);
