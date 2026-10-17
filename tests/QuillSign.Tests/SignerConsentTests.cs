@@ -48,7 +48,6 @@ public sealed class SignerConsentTests(SqlDatabaseFixture fixture) : IClassFixtu
         Assert.Contains("hash_verified_pdf_prepared",audit.DataJson); Assert.DoesNotContain(receipt,audit.DataJson);
         Assert.Equal(seed.Envelope.RowVersion,(await inspect.Envelopes.AsNoTracking().SingleAsync(x => x.Id == seed.Envelope.Id)).RowVersion);
         Assert.Equal("unchanged",(await inspect.Fields.SingleAsync(x => x.EnvelopeId == seed.Envelope.Id)).Value);
-        Assert.Null(await Consent(inspect).DeclineAsync(seed.Principal,seed.Envelope.PublicId,"after consent",null,null));
     }
     [Theory]
     [InlineData("missing")][InlineData("tampered")][InlineData("foreign")][InlineData("expired")]
@@ -73,6 +72,32 @@ public sealed class SignerConsentTests(SqlDatabaseFixture fixture) : IClassFixtu
         Assert.Contains(result,new[] { ConsentResult.InvalidContext,ConsentResult.InvalidEvidence });
         Assert.Null((await db.Signers.AsNoTracking().SingleAsync(x => x.Id == seed.Signer.Id)).ConsentAt);
         Assert.False(await db.AuditEvents.AnyAsync(x => x.EnvelopeId == seed.Envelope.Id && x.Event == "consent_given"));
+    }
+    [Fact]
+    public async Task Actual_recorded_consent_can_be_followed_by_explicit_private_decline_without_changing_consent_or_fields()
+    {
+        var seed=await Seed();await using var app=await App(seed);using var client=app.GetTestClient();var cookies=new Dictionary<string,string>();
+        using(var session=await client.GetAsync("/synthetic-session"))Cookies(session,cookies,client);
+        var path="/sign/"+seed.Envelope.PublicId;string html;
+        using(var page=await client.GetAsync(path)){Cookies(page,cookies,client);html=await page.Content.ReadAsStringAsync();}
+        using(var accepted=await client.PostAsync(path,Form(html,new(){["Receipt"]=Input(html,"Receipt"),["Agreement"]="true",["CanRetain"]="true",["AccessMethod"]="download"})))
+            Assert.Equal(HttpStatusCode.Redirect,accepted.StatusCode);
+        await using var db=fixture.Open();var before=await db.Signers.AsNoTracking().SingleAsync(x=>x.Id==seed.Signer.Id);var audit=await db.AuditEvents.AsNoTracking().SingleAsync(x=>x.EnvelopeId==seed.Envelope.Id && x.Event=="consent_given");
+        using(var legacy=await client.PostAsync(path+"?handler=Decline",Form(html,new(){["Reason"]="legacy after consent"})))
+        {Assert.Equal(HttpStatusCode.Redirect,legacy.StatusCode);Assert.Equal(path+"/decline",legacy.Headers.Location!.OriginalString);}
+        Assert.False(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==seed.Envelope.Id && x.Event=="declined"));
+        using(var review=await client.GetAsync(path+"/decline")){Assert.Equal(HttpStatusCode.OK,review.StatusCode);Cookies(review,cookies,client);html=await review.Content.ReadAsStringAsync();Assert.True(review.Headers.CacheControl!.NoStore);Assert.Contains("ConfirmDecline",html);}
+        using(var csrf=await client.PostAsync(path+"/decline",new FormUrlEncodedContent(new Dictionary<string,string>{["ConfirmDecline"]="true"})))Assert.Equal(HttpStatusCode.BadRequest,csrf.StatusCode);
+        using(var missing=await client.PostAsync(path+"/decline",Form(html,new())))Assert.Equal(HttpStatusCode.BadRequest,missing.StatusCode);
+        using(var longReason=await client.PostAsync(path+"/decline",Form(html,new(){["ConfirmDecline"]="true",["Reason"]=new string('x',513)})))Assert.Equal(HttpStatusCode.BadRequest,longReason.StatusCode);
+        using(var declined=await client.PostAsync(path+"/decline",Form(html,new(){["ConfirmDecline"]="true",["Reason"]="Synthetic refusal after consent"})))
+        {Assert.Equal(HttpStatusCode.Redirect,declined.StatusCode);Assert.Equal(path+"/declined",declined.Headers.Location!.OriginalString);}
+        using(var repeat=await client.PostAsync(path+"/decline",Form(html,new(){["ConfirmDecline"]="true"})))Assert.Equal(path+"/declined",repeat.Headers.Location!.OriginalString);
+        var saved=await db.Signers.AsNoTracking().SingleAsync(x=>x.Id==seed.Signer.Id);Assert.Equal(before.ConsentAt,saved.ConsentAt);Assert.Equal(before.ConsentIp,saved.ConsentIp);Assert.Equal(before.ConsentUa,saved.ConsentUa);
+        Assert.Equal(audit.Hash,(await db.AuditEvents.AsNoTracking().SingleAsync(x=>x.Id==audit.Id)).Hash);Assert.Equal("unchanged",(await db.Fields.SingleAsync(x=>x.EnvelopeId==seed.Envelope.Id)).Value);
+        Assert.Equal(1,await db.AuditEvents.CountAsync(x=>x.EnvelopeId==seed.Envelope.Id && x.Event=="declined"));Assert.Equal(1,await db.EmailOutbox.CountAsync(x=>x.EnvelopeId==seed.Envelope.Id));
+        using(var thanks=await client.GetAsync(path+"/declined")){Cookies(thanks,cookies,client);Assert.Contains("did not Finish",await thanks.Content.ReadAsStringAsync());}
+        using(var ended=await client.GetAsync(path+"/decline"))Assert.Equal(HttpStatusCode.Unauthorized,ended.StatusCode);
     }
     [Fact]
     public async Task Decline_closes_every_session_and_queues_one_protected_notification_with_post_commit_publication()

@@ -1,6 +1,6 @@
 # Signer disclosure, PDF review and decline
 
-QUILS-27 adds the public signer consent flow on the QUILS-26 invitation/session foundation. Internal send/freeze and invitation dispatch are described in the send/freeze guide. After consent, the [capture UI](signature-capture.md) supports explicit signature/initials adoption; field filling and Finish remain subsequent work. No public token-issuance endpoint exists.
+QUILS-27 adds the public signer consent flow on the QUILS-26 invitation/session foundation. After consent, the [capture UI](signature-capture.md), [field application](signer-fields.md) and [exact review/Finish flow](signer-review-finish.md) support deliberate signing. QUILS-79 preserves the choice to decline until Finish acceptance.
 
 ## Entry and private reads
 
@@ -24,7 +24,11 @@ After consent the clean page displays the recorded time and continues read-only 
 
 ## Decline and notification recovery
 
-Before consent/signing, Decline accepts an optional reason of up to 512 characters. One envelope-locked transaction marks the signer and envelope Declined, records signer-attributed audit evidence and persists a protected `signer-declined` email outbox item with paired work. With durable work enabled, the hint is stored before commit and queue publication occurs afterward. Normal hint recovery handles a lost publication. Current-state validation ends all active signing access.
+Decline accepts an optional reason of up to 512 characters before Finish acceptance, including after electronic-record consent, mark adoption, saved field applications and exact review preparation. One envelope-locked transaction marks the signer and envelope Declined, records signer-attributed audit evidence and persists a protected `signer-declined` email outbox item with paired work. With durable work enabled, the hint is stored before commit and queue publication occurs afterward. Normal hint recovery handles a lost publication. Current-state validation ends all active signing access.
+
+Post-consent document, capture, field and review pages link to `/sign/{publicId}/decline`. The separate page requires an unchecked affirmative choice and CSRF-protected submission; opening it changes nothing. Field navigation uses the existing inline stay/discard guard for unsaved entries. The older document-page decline handler redirects consented signers to this explicit choice instead of mutating. Existing pre-consent decline remains available.
+
+The shared current-signer check rejects an accepted Finish under the same parent lock, so a racing Finish and decline cannot both win. Decline preserves previously recorded consent, adoptions, fields, candidate records and PDF bytes; it does not undo a signature by an earlier signer. A repeated post or a lost commit response can redirect to confirmation only after verifying the saved declining-signer context. If saved state cannot be verified, the page shows a private unavailable response without claiming success. Retention, original session and source/disclosure checks remain in force.
 
 The clean decline confirmation displays the stored disclosure, states that delivery may be delayed/unavailable, and signs out the declining session. It distinguishes closing this request from the disclosure's broader withdrawal procedure. Paper/contact instructions come from the stored disclosure.
 

@@ -76,6 +76,8 @@ public sealed class IndexModel(SignerAccess access,SignerPdfAccess pdf,SignerRec
         Private();
         try
         {
+            var current=await access.GetContextAsync(User,publicId,ct);if(current is null)return NotFound();
+            if(current.ConsentAt is not null)return Redirect("/sign/"+publicId+"/decline");
             var context = await consent.DeclineAsync(User,publicId,Reason,HttpContext.Connection.RemoteIpAddress?.ToString(),Request.Headers.UserAgent.ToString(),ct);
             return context is null ? NotFound() : Redirect("/sign/" + publicId + "/declined");
         }
