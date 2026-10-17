@@ -19,6 +19,57 @@ public sealed class CompletionFinalStoreTests
 {
     private static byte[] Bytes=>Encoding.UTF8.GetBytes("Opaque synthetic final storage bytes - NO AGREEMENT");
     [Theory]
+    [InlineData("fractional")][InlineData("offset")][InlineData("expired")]
+    public async Task Fixed_capability_never_rounds_a_frozen_deadline_or_opens_storage_with_an_invalid_one(string kind)
+    {
+        using var f=new Fake();f.Until=kind switch {"fractional"=>f.Until.AddTicks(1),"offset"=>f.Until.ToOffset(TimeSpan.FromHours(1)),_=>f.Time.GetUtcNow().AddSeconds(-1)};
+        var error=await Record.ExceptionAsync(()=>f.WriteFixed());if(error is TargetInvocationException wrapped)error=wrapped.InnerException;
+        if(kind=="expired")Assert.IsType<IOException>(error);else Assert.IsType<UnauthorizedAccessException>(error);Assert.Empty(f.Handler.Requests);
+    }
+    [Theory]
+    [InlineData(false,false)][InlineData(true,false)][InlineData(true,true)]
+    public async Task Fixed_deadline_commit_and_exact_version_lock_are_verified_and_recovered_without_extending(bool unlocked,bool loseLock)
+    {
+        using var f=new Fake();f.Handler.Mode=unlocked ? "unlocked" : "locked";f.Handler.LoseLock=loseLock;
+        var value=await f.WriteFixed();Assert.Equal(f.Until,value.ProtectedUntil);Assert.Equal(FinalProtection.LockedTime,value.Protection);
+        Assert.Equal(Bytes,await f.ReadFixed(value));Assert.Equal(unlocked ? 1 : 0,f.Handler.Locks);Assert.Equal(1,f.Handler.Commits);
+        var again=await f.WriteFixed();Assert.Equal(value.ProtectedUntil,again.ProtectedUntil);Assert.Equal(1,f.Handler.Commits);Assert.Equal(unlocked ? 1 : 0,f.Handler.Locks);
+        Assert.Equal(f.Until,f.Handler.RequestedUntil);Assert.DoesNotContain(f.Handler.Requests,x=>x.Container && x.Method!=HttpMethod.Head && x.Method!=HttpMethod.Get);
+    }
+    [Theory]
+    [InlineData("short")][InlineData("long")][InlineData("hold")][InlineData("missing")]
+    public async Task Fixed_scope_rejects_mismatched_policies_without_shortening_extending_or_removing_them(string mode)
+    {
+        using var f=new Fake();f.Handler.Mode=mode;
+        await Assert.ThrowsAsync<CompletionPublicationUnavailableException>(()=>f.WriteFixed());Assert.Equal(0,f.Handler.Locks);Assert.Equal(1,f.Handler.Commits);
+    }
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public async Task Fixed_version_lock_needs_actual_readback_and_required_permission(bool forbidden)
+    {
+        using var f=new Fake();f.Handler.Mode="unlocked";f.Handler.KeepUnlocked=!forbidden;f.Handler.DenyLock=forbidden;
+        await Assert.ThrowsAsync<CompletionPublicationUnavailableException>(()=>f.WriteFixed());Assert.Equal(1,f.Handler.Locks);Assert.Equal(1,f.Handler.Commits);
+    }
+    [Fact]
+    public async Task Wrong_actual_bytes_never_receive_an_irreversible_fixed_version_lock()
+    {
+        using var f=new Fake();f.Handler.Mode="unlocked";f.Handler.ReadFault="body";
+        await Assert.ThrowsAsync<InvalidDataException>(()=>f.WriteFixed());Assert.Equal(0,f.Handler.Locks);
+    }
+    [Fact]
+    public async Task Fixed_write_expiry_during_staging_cannot_commit_a_version_or_lock_a_policy()
+    {
+        using var f=new Fake();f.Until=f.Time.GetUtcNow().AddSeconds(5);f.Handler.AfterBlock=()=>f.Time.Advance(TimeSpan.FromSeconds(6));
+        await Assert.ThrowsAsync<IOException>(()=>f.WriteFixed());Assert.Equal(0,f.Handler.Commits);Assert.Equal(0,f.Handler.Locks);
+    }
+    [Fact]
+    public async Task Fixed_historical_reads_preserve_exact_bytes_after_expiry_and_reject_an_overlong_changed_policy()
+    {
+        using var f=new Fake();var value=await f.WriteFixed();f.Time.Advance(TimeSpan.FromDays(8));f.Handler.Mode="missing";
+        Assert.Equal(Bytes,await f.ReadFixed(value));f.Handler.Mode="long";await Assert.ThrowsAsync<InvalidDataException>(()=>f.ReadFixed(value));
+        Assert.Equal(1,f.Handler.Commits);Assert.Equal(0,f.Handler.Locks);
+    }
+    [Theory]
     [InlineData("locked",true)][InlineData("hold",true)][InlineData("unlocked",false)][InlineData("missing",false)][InlineData("short",false)][InlineData("indefinite-without-hold",false)]
     public async Task Actual_blob_policy_and_version_are_verified_without_setting_hosted_policies(string mode,bool accepted)
     {
@@ -141,11 +192,24 @@ public sealed class CompletionFinalStoreTests
         public Task<FinalStoredDocument> Write(DateTimeOffset? until=null,byte[]? source=null)
         {var required=Handler.Mode is "hold" or "indefinite-without-hold" ? until : until??Until; var hash=SHA256.HashData(Bytes); return Store.WriteAsync(WriteCapability(Target,Bytes.Length,hash,required,false,Time),Target,new MemoryStream(source??Bytes),Bytes.Length,hash,required);}
         public async Task<byte[]> Read(FinalStoredDocument value) {using var output=new MemoryStream(); await Store.ReadAsync(ReadCapability(value,Time),value,output); return output.ToArray();}
+        public Task<FinalStoredDocument> WriteFixed()
+        {
+            Handler.Fixed=true;var hash=SHA256.HashData(Bytes);var cap=(ClaimsPrincipal)typeof(IBlobStore).Assembly.GetType("QuillSign.Storage.CompletionFinalCapability",true)!
+                .GetMethod("WriteFixed",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[Target,(long)Bytes.Length,hash,Until,false,Time])!;
+            return Store.WriteAsync(cap,Target,new MemoryStream(Bytes),Bytes.Length,hash,Until);
+        }
+        public async Task<byte[]> ReadFixed(FinalStoredDocument value)
+        {
+            var cap=(ClaimsPrincipal)typeof(IBlobStore).Assembly.GetType("QuillSign.Storage.CompletionFinalCapability",true)!
+                .GetMethod("ReadFixed",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[value,Until,Time])!;
+            using var bytes=new MemoryStream();await Store.ReadAsync(cap,value,bytes);return bytes.ToArray();
+        }
         public void Dispose()=>Handler.Dispose();
     }
     private sealed class Handler(SealFixtures.Clock time) : HttpMessageHandler
     {
         public string Mode="locked"; public string? ReadFault; public bool Public,VersionSupport=true,LoseCommit; public int Commits;
+        public bool Fixed,LoseLock,KeepUnlocked,DenyLock;public int Locks;public DateTimeOffset? RequestedUntil;public Action? AfterBlock;
         public List<(HttpMethod Method,string Comp,bool Container)> Requests=[];
         private readonly Dictionary<string,byte[]> blocks=[]; private readonly Dictionary<string,byte[]> objects=[]; private readonly object sync=new();
         private readonly DateTimeOffset expires=time.GetUtcNow().AddDays(30),created=time.GetUtcNow();
@@ -162,9 +226,13 @@ public sealed class CompletionFinalStoreTests
             }
             if(request.Method==HttpMethod.Put && comp=="block") {
                 Assert.False(request.Headers.Contains("x-ms-immutability-policy-until-date")); Assert.False(request.Headers.Contains("x-ms-legal-hold"));
-                var bytes=await request.Content!.ReadAsByteArrayAsync(ct); lock(sync)blocks[path+":"+query["blockid"]]=bytes; return Response(HttpStatusCode.Created,[],0);
+                var bytes=await request.Content!.ReadAsByteArrayAsync(ct); lock(sync)blocks[path+":"+query["blockid"]]=bytes;AfterBlock?.Invoke();return Response(HttpStatusCode.Created,[],0);
             }
             if(request.Method==HttpMethod.Put && comp=="blocklist") {
+                if(Fixed) {
+                    Assert.Equal("locked",request.Headers.GetValues("x-ms-immutability-policy-mode").Single(),ignoreCase:true);
+                    RequestedUntil=DateTimeOffset.Parse(request.Headers.GetValues("x-ms-immutability-policy-until-date").Single(),System.Globalization.CultureInfo.InvariantCulture);
+                } else Assert.False(request.Headers.Contains("x-ms-immutability-policy-until-date"));
                 Assert.Contains("*",request.Headers.GetValues("If-None-Match")); var xml=XDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 lock(sync) {
                     if(objects.ContainsKey(path))return Error(HttpStatusCode.PreconditionFailed,"BlobAlreadyExists");
@@ -172,6 +240,13 @@ public sealed class CompletionFinalStoreTests
                     if(LoseCommit) {LoseCommit=false; return Error(HttpStatusCode.InternalServerError,"SyntheticLostCommitResponse");}
                 }
                 return Response(HttpStatusCode.Created,[],0);
+            }
+            if(request.Method==HttpMethod.Put && comp=="immutabilityPolicies") {
+                Assert.True(Fixed);Assert.Equal("synthetic-version",query["versionid"].ToString());Assert.True(request.Headers.Contains("If-Unmodified-Since"));Assert.False(request.Headers.Contains("If-Match"));
+                var until=DateTimeOffset.Parse(request.Headers.GetValues("x-ms-immutability-policy-until-date").Single(),System.Globalization.CultureInfo.InvariantCulture);Assert.Equal(RequestedUntil,until);Locks++;
+                if(DenyLock)return Error(HttpStatusCode.Forbidden,"AuthorizationPermissionMismatch");if(!KeepUnlocked)Mode="locked";
+                if(LoseLock) {LoseLock=false;return Error(HttpStatusCode.InternalServerError,"SyntheticLostLockResponse");}
+                var locked=Response(HttpStatusCode.OK,[],0);locked.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date",until.UtcDateTime.ToString("R"));locked.Headers.TryAddWithoutValidation("x-ms-immutability-policy-mode",Mode);return locked;
             }
             byte[] data; lock(sync) {if(!objects.TryGetValue(path,out var bytes))return Error(HttpStatusCode.NotFound,"BlobNotFound"); data=bytes.ToArray();}
             Assert.True(request.Method==HttpMethod.Head || request.Method==HttpMethod.Get);
@@ -182,7 +257,8 @@ public sealed class CompletionFinalStoreTests
             var result=Response(HttpStatusCode.OK,request.Method==HttpMethod.Head ? [] : returned,ReadFault=="length" ? data.Length+1 : data.Length);
             if(Mode!="missing") {
                 result.Headers.TryAddWithoutValidation("x-ms-immutability-policy-mode",Mode=="unlocked" ? "unlocked" : "locked");
-                result.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date",(Mode=="short" ? time.GetUtcNow().AddDays(1) : expires).UtcDateTime.ToString("R"));
+                var until=Fixed ? RequestedUntil!.Value.AddSeconds(Mode=="long" ? 1 : Mode=="short" ? -1 : 0) : Mode=="short" ? time.GetUtcNow().AddDays(1) : expires;
+                result.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date",until.UtcDateTime.ToString("R"));
             }
             result.Headers.TryAddWithoutValidation("x-ms-legal-hold",Mode=="hold" ? "true" : "false"); return result;
         }

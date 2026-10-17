@@ -10,7 +10,8 @@ using QuillSign.Completion;
 
 namespace QuillSign.Storage;
 
-// Hosted policy/resource creation is deliberately absent. Production inherits and verifies existing protection.
+// No container/default-policy provisioning. Fixed-deadline capabilities can set
+// protection only on their exact owned new version; generic writes inherit it.
 public sealed class AzureCompletionFinalStore(BlobServiceClient service,TimeProvider time,IHostEnvironment environment,bool local=false) : ICompletionFinalStore
 {
     private const int BufferSize=256*1024;
@@ -45,7 +46,10 @@ public sealed class AzureCompletionFinalStore(BlobServiceClient service,TimeProv
                         using var part=new MemoryStream(rented,0,n,false); await client.StageBlockAsync(id,part,cancellationToken:ct); blocks.Add(id);
                     }
                     if(await source.ReadAsync(rented.AsMemory(0,1),ct)!=0 || !Same(hash.GetHashAndReset(),expected))throw new InvalidDataException("Final source bytes changed.");
-                    await client.CommitBlockListAsync(blocks,new() {Conditions=new() {IfNoneMatch=ETag.All},HttpHeaders=new() {ContentType="application/pdf"}},ct);
+                    if(cap.ExactDeadline)cap.ValidateLifetime();
+                    var commit=new CommitBlockListOptions {Conditions=new() {IfNoneMatch=ETag.All},HttpHeaders=new() {ContentType="application/pdf"}};
+                    if(cap.ExactDeadline && !Local)commit.ImmutabilityPolicy=new() {ExpiresOn=cap.ExactUntil,PolicyMode=BlobImmutabilityPolicyMode.Locked};
+                    await client.CommitBlockListAsync(blocks,commit,ct);
                 }
                 finally {ArrayPool<byte>.Shared.Return(rented,clearArray:true);}
             }
@@ -75,7 +79,13 @@ public sealed class AzureCompletionFinalStore(BlobServiceClient service,TimeProv
             var properties=(await client.GetPropertiesAsync(new() {IfMatch=new ETag(reference.ETag)},ct)).Value;
             if(properties.ContentLength!=reference.Length || properties.ETag.ToString()!=reference.ETag || (properties.VersionId??"")!=reference.VersionId)throw Invalid();
             // Before the promised retention boundary, a weakened policy cannot be silently accepted.
-            if(reference.Protection!=FinalProtection.DevelopmentWriteOnce &&
+            if(cap.ExactDeadline && reference.Protection!=FinalProtection.DevelopmentWriteOnce)
+            {
+                if(reference.Protection!=FinalProtection.LockedTime || reference.ProtectedUntil!=cap.ExactUntil || properties.HasLegalHold ||
+                    properties.ImmutabilityPolicy?.ExpiresOn>cap.ExactUntil)throw Invalid();
+                if(time.GetUtcNow()<cap.ExactUntil)_=Protection(properties,cap.ExactUntil,false,true);
+            }
+            else if(reference.Protection!=FinalProtection.DevelopmentWriteOnce &&
                 (reference.ProtectedUntil is null || time.GetUtcNow()<reference.ProtectedUntil))
             {
                 var current=Protection(properties,reference.ProtectedUntil,false);
@@ -102,19 +112,41 @@ public sealed class AzureCompletionFinalStore(BlobServiceClient service,TimeProv
     }
     private async Task<FinalStoredDocument> VerifyCurrent(CompletionFinalCapability cap,FinalDocument target,long length,byte[] hash,DateTimeOffset? until,BlobProperties properties,CancellationToken ct)
     {
+        if(cap.ExactDeadline && !Local)properties=await FixedVersion(cap,target,length,hash,properties,ct);
         var version=properties.VersionId??""; var etag=properties.ETag.ToString();
         if(properties.ContentLength!=length || !Opaque(etag) || !Opaque(version,true) || !Local && string.IsNullOrEmpty(version))throw Invalid();
-        var protection=Protection(properties,until,Local && cap.DevelopmentWriteOnce);
+        var protection=Protection(properties,until,Local && cap.DevelopmentWriteOnce,cap.ExactDeadline);
         // Exact version plus ETag and actual SHA-256; no trust in mutable user metadata.
         await Copy(Client(target,version),length,hash,etag,version,Stream.Null,ct); cap.ValidateLifetime();
         return new(target,length,hash.ToArray(),version,etag,protection.Protection,protection.Until,properties.CreatedOn);
     }
-    private static (FinalProtection Protection,DateTimeOffset? Until) Protection(BlobProperties properties,DateTimeOffset? requiredUntil,bool development)
+    private async Task<BlobProperties> FixedVersion(CompletionFinalCapability cap,FinalDocument target,long length,byte[] hash,BlobProperties properties,CancellationToken ct)
+    {
+        if(properties.HasLegalHold || string.IsNullOrEmpty(properties.VersionId) || !Opaque(properties.VersionId) || !Opaque(properties.ETag.ToString()) ||
+            properties.ContentLength!=length || properties.ImmutabilityPolicy is not {ExpiresOn:DateTimeOffset until,PolicyMode:var mode} || until!=cap.ExactUntil ||
+            mode!=BlobImmutabilityPolicyMode.Locked && mode!=BlobImmutabilityPolicyMode.Unlocked)throw FixedUnavailable();
+        if(mode==BlobImmutabilityPolicyMode.Locked)return properties;
+        // A lost create/lock acknowledgement can leave an exact owned version with
+        // the requested unlocked policy. Verify bytes before this irreversible step.
+        var version=properties.VersionId;var client=Client(target,version);
+        await Copy(client,length,hash,properties.ETag.ToString(),version,Stream.Null,ct);cap.ValidateLifetime();
+        try
+        {
+            await client.SetImmutabilityPolicyAsync(new() {ExpiresOn=until,PolicyMode=BlobImmutabilityPolicyMode.Locked},
+                new() {IfUnmodifiedSince=properties.LastModified},ct);
+        }
+        catch(Exception e) when(e is RequestFailedException or IOException)
+        {ct.ThrowIfCancellationRequested(); /* Readback alone resolves an uncertain lock. */}
+        var current=(await client.GetPropertiesAsync(cancellationToken:ct)).Value;cap.ValidateLifetime();
+        if(current.VersionId!=version)throw Invalid();
+        _=Protection(current,until,false,true);return current;
+    }
+    private static (FinalProtection Protection,DateTimeOffset? Until) Protection(BlobProperties properties,DateTimeOffset? requiredUntil,bool development,bool exact=false)
     {
         if(development)return (FinalProtection.DevelopmentWriteOnce,null);
-        if(properties.HasLegalHold)return (FinalProtection.LegalHold,null);
+        if(properties.HasLegalHold) {if(exact)throw FixedUnavailable();return (FinalProtection.LegalHold,null);}
         if(requiredUntil is DateTimeOffset minimum && properties.ImmutabilityPolicy is {ExpiresOn:DateTimeOffset expires,PolicyMode:var mode} &&
-            mode==BlobImmutabilityPolicyMode.Locked && expires>=minimum)return (FinalProtection.LockedTime,expires);
+            mode==BlobImmutabilityPolicyMode.Locked && expires>=minimum && (!exact || expires==minimum))return (FinalProtection.LockedTime,expires);
         throw new CompletionPublicationUnavailableException("The final object does not have sufficient verified immutable retention protection.");
     }
     private BlobClient Client(FinalDocument target,string version)
@@ -140,4 +172,5 @@ public sealed class AzureCompletionFinalStore(BlobServiceClient service,TimeProv
     private static bool Same(byte[]? a,byte[]? b)=>a is {Length:32} && b is {Length:32} && CryptographicOperations.FixedTimeEquals(a,b);
     private static InvalidDataException Invalid()=>new("The exact retained final object could not be verified.");
     private static IOException Unavailable()=>new("Final packet storage is unavailable or not configured for protected publication.");
+    private static CompletionPublicationUnavailableException FixedUnavailable()=>new("The final version does not have the exact frozen retention policy.");
 }
