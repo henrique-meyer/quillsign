@@ -242,7 +242,8 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
                     db.Fields.Add(new() {EnvelopeId=run.Envelope.Id,SignerId=signer.Id,Type=type,Page=signer.Order,X=type==FieldType.DateSigned ? .65m : .1m,Y=type switch {FieldType.Signature=>.4m,FieldType.Initials=>.55m,FieldType.FullName=>.7m,_=>.4m},Width=type==FieldType.DateSigned ? .25m : .5m,Height=.08m,Required=true});
                 await db.SaveChangesAsync();
             }
-            await run.Refresh(); Assert.NotNull(await run.Use((SendDraftWorkflow s)=>s.SendAsync(run.Sender,run.Envelope.PublicId,run.Envelope.RowVersion,true,true,SenderSendStatement.Version,"127.0.0.1","Synthetic sender")));
+            await run.Refresh();var sendReview=await run.Use((DraftReview r)=>r.GetAsync(run.Sender,run.Envelope.PublicId));
+            Assert.NotNull(await run.Use((SendDraftWorkflow s)=>s.SendAsync(run.Sender,run.Envelope.PublicId,run.Envelope.RowVersion,true,true,SenderSendStatement.Version,"127.0.0.1","Synthetic sender",reviewedRetentionSha256:sendReview!.RetentionSha256)));
             var last=firstOnly ? 1 : 2;for(var i=1;i<=last;i++)await run.SignNext(i<last || publishLast,i<last || finishLast);
             await run.Refresh(); run.Probe=new(run.H.Blobs.Inner); return run;
         }

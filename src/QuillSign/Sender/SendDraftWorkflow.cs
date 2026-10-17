@@ -21,7 +21,7 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
     AuditWriter audit,TimeProvider time,ILogger<SendDraftWorkflow> logger,SigningExpiryJobs expiry)
 {
     public async Task<SentDraft?> SendAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,bool exclusionsAcknowledged,
-        bool sendAcknowledged,string? statementVersion,string? ip,string? userAgent,CancellationToken ct = default)
+        bool sendAcknowledged,string? statementVersion,string? ip,string? userAgent,CancellationToken ct = default,string? reviewedRetentionSha256=null)
     {
         var identity = Identity(sender,publicId); if (identity is null) return null;
         if (!exclusionsAcknowledged) throw new DocumentRejectedException("Confirm that this transaction is suitable for electronic signing.");
@@ -53,6 +53,10 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
                 if(expiryId is Guid pending)await expiry.PublishAsync(pending,expiryDue!.Value,ct);return existing;
             }
             if(!envelope.RowVersion.AsSpan().SequenceEqual(expectedVersion))throw new DocumentConflictException();
+            var retention=await RetentionSigningDeadline.ReadAsync(db,envelope,ct);
+            RetentionSigningDeadline.DemandReview(retention,reviewedRetentionSha256);
+            RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
+            envelope.ExpiresAt=retention.Effective;
             if(!workOptions.Enabled || !emailOptions.Enabled)throw new EmailDisabledException();
             if (envelope.ExpiresAt <= time.GetUtcNow()) throw new DocumentRejectedException("This draft has expired.");
             var signers = await db.Signers.AsNoTracking().Where(x => x.EnvelopeId == envelope.Id).OrderBy(x => x.Order).ToListAsync(ct);
@@ -88,21 +92,31 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             var changed = await db.Envelopes.Where(x => x.Id == envelope.Id && x.Status == EnvelopeStatus.Draft && x.RowVersion == expectedVersion)
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status,EnvelopeStatus.Sent).SetProperty(x => x.SentAt,now).SetProperty(x => x.ExclusionsAckAt,now)
                     .SetProperty(x => x.SentPdfBlob,envelope.SentPdfBlob).SetProperty(x => x.SentPdfSha256,rendered.Sha256)
-                    .SetProperty(x => x.Title,disclosure.Title).SetProperty(x => x.ErsdVersion,disclosure.Version).SetProperty(x => x.ErsdText,disclosure.Text).SetProperty(x => x.ErsdSha256,disclosure.Sha256),ct);
+                    .SetProperty(x => x.ExpiresAt,envelope.ExpiresAt).SetProperty(x => x.Title,disclosure.Title).SetProperty(x => x.ErsdVersion,disclosure.Version).SetProperty(x => x.ErsdText,disclosure.Text).SetProperty(x => x.ErsdSha256,disclosure.Sha256),ct);
             if (changed != 1) throw new DocumentConflictException();
             var invitation = await outbox.PrepareAsync(envelope.Id,signers[0].Id,signers[0].Email,ct);
+            RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             var fieldSnapshot = JsonSerializer.SerializeToUtf8Bytes(fields.Select(x => new { x.Id,x.SignerId,x.Type,x.Page,x.X,x.Y,x.Width,x.Height,x.Required,x.Label,x.Value }));
             var documentHash = Convert.ToHexStringLower(rendered.Sha256); var disclosureHash = Convert.ToHexStringLower(disclosure.Sha256);
             await audit.AppendAsync(envelope.Id,"fields_finalized",envelope.SenderEmail,ip,userAgent,ct,JsonSerializer.Serialize(new {
                 fieldSnapshotSha256 = Convert.ToHexStringLower(SHA256.HashData(fieldSnapshot)),fieldCount = fields.Count,documentSha256 = documentHash }));
-            await audit.AppendAsync(envelope.Id,"sent",envelope.SenderEmail,ip,userAgent,ct,JsonSerializer.Serialize(new {
+            RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
+            var sentData=JsonSerializer.Serialize(new {
                 documentSha256 = documentHash,sourceSha256 = Convert.ToHexStringLower(rendered.SourceSha256),disclosureVersion = disclosure.Version,
                 disclosureSha256 = disclosureHash,invitationWorkId = invitation,dispatch = "queued",exclusionsAcknowledged,
                 expiryWorkId=envelope.ExpiresAt is null ? (Guid?)null : SigningExpiryJobs.WorkId(envelope.Id),signingDeadline=envelope.ExpiresAt?.ToUniversalTime(),
                 reviewedVersion=Convert.ToBase64String(expectedVersion),senderConfirmed=sendAcknowledged,
-                senderStatementVersion=SenderSendStatement.Version,senderStatement=SenderSendStatement.Text,senderStatementSha256=SenderSendStatement.Sha256 }));
+                senderStatementVersion=SenderSendStatement.Version,senderStatement=SenderSendStatement.Text,senderStatementSha256=SenderSendStatement.Sha256 });
+            if(retention.Policy is not null)
+            {
+                var data=JsonSerializer.Deserialize<Dictionary<string,JsonElement>>(sentData)!;
+                data["retentionSigning"]=JsonSerializer.SerializeToElement(RetentionSigningDeadline.Evidence(retention));sentData=JsonSerializer.Serialize(data);
+            }
+            await audit.AppendAsync(envelope.Id,"sent",envelope.SenderEmail,ip,userAgent,ct,sentData);
+            RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             expiryId=await expiry.PrepareAsync(envelope.Id,ct);expiryDue=envelope.ExpiresAt;
             result = new(envelope.Id,envelope.PublicId,invitation,documentHash,disclosureHash);
+            RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             commitStarted = true; await transaction.CommitAsync(ct);
         }
         catch
