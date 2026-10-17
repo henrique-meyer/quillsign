@@ -1,5 +1,7 @@
 # Signing request expiry maintenance
 
+For newly sent demo documents enrolled in [fixed upload retention](document-retention.md), review and Send use the earlier of the requested expiry and verified upload cutoff. An absent requested expiry uses that cutoff. Send freezes this effective UTC deadline atomically with its source, invitation, canonical retention evidence and expiry work; later configuration changes and retries cannot extend it. Existing historical signing evidence is not rewritten or silently enrolled.
+
 QUILS-57 adds a trusted finite `SigningExpiry` operation and `work expire` command. It records the terminal Expired state for a Sent request whose configured UTC signing deadline has elapsed. Existing signer and invitation checks continue rejecting new activity at the deadline even before maintenance records the terminal transition.
 
 ## Transition and recovery
