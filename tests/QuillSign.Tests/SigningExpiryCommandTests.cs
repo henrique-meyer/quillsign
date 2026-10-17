@@ -3,12 +3,37 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Signing;
+using QuillSign.Work;
 using Shared=QuillSign.Tests.SendDraftWorkflowTests.Harness;
 
 namespace QuillSign.Tests;
 
 public sealed class SigningExpiryCommandTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
+    [Fact]
+    public async Task Actual_resume_command_prepares_one_future_job_without_echoing_private_scope_or_enabling_mail()
+    {
+        await using var h=await Shared.Create(fixture);Assert.NotNull(await h.Send());await using var db=fixture.Open();
+        var name="expiry-cli-"+Guid.NewGuid().ToString("N");var connection=Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
+        var queue=new Azure.Storage.Queues.QueueClient(connection,name,new(Azure.Storage.Queues.QueueClientOptions.ServiceVersion.V2023_11_03));
+        var hints=new Azure.Storage.Blobs.BlobServiceClient(connection,new(Azure.Storage.Blobs.BlobClientOptions.ServiceVersion.V2023_11_03)).GetBlobContainerClient(name);
+        var root=Path.Combine(Path.GetTempPath(),name);Directory.CreateDirectory(root);
+        try {
+            for(var attempt=0;attempt<2;attempt++) {
+                var assembly=typeof(SigningExpiryCommandTests).Assembly.Location;
+                var start=new ProcessStartInfo("dotnet") {RedirectStandardOutput=true,RedirectStandardError=true,UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=root};
+                foreach(var arg in new[]{"exec","--runtimeconfig",Path.ChangeExtension(assembly,".runtimeconfig.json"),"--depsfile",Path.ChangeExtension(assembly,".deps.json"),typeof(SigningExpiry).Assembly.Location,"work","resume-signing-expiry",h.Envelope.Id.ToString("N")})start.ArgumentList.Add(arg);
+                start.Environment["ConnectionStrings__Database"]=db.Database.GetConnectionString();start.Environment["ASPNETCORE_ENVIRONMENT"]="Development";
+                start.Environment["Storage__Provider"]="Azurite";start.Environment["Storage__ConnectionString"]=connection;
+                start.Environment["Work__Enabled"]="true";start.Environment["Work__QueueName"]=name;start.Environment["Work__HintContainer"]=name;start.Environment["Email__Enabled"]="false";
+                using var process=Process.Start(start)!;var output=process.StandardOutput.ReadToEndAsync();var error=process.StandardError.ReadToEndAsync();
+                using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(45));try {await process.WaitForExitAsync(timeout.Token);}catch {if(!process.HasExited)process.Kill(entireProcessTree:true);throw;}
+                var text=await output;Assert.True(process.ExitCode==0,await error);Assert.DoesNotContain(h.Envelope.PublicId,text);Assert.DoesNotContain(h.Envelope.Id.ToString("N"),text);Assert.DoesNotContain(h.Envelope.SenderEmail,text);
+                using var json=JsonDocument.Parse(text);Assert.Equal("ok",json.RootElement.GetProperty("status").GetString());Assert.Equal(1,json.RootElement.GetProperty("count").GetInt32());
+            }
+            var row=Assert.Single(await db.WorkItems.AsNoTracking().Where(x=>x.EnvelopeId==h.Envelope.Id && x.Kind==WorkKind.Expiry).ToArrayAsync());Assert.Equal(0,row.Attempts);Assert.Equal(h.Envelope.ExpiresAt,row.AvailableAt);Assert.Equal(0,h.Sender.Calls);
+        } finally {await queue.DeleteIfExistsAsync();await hints.DeleteIfExistsAsync();Directory.Delete(root);}
+    }
     [Fact]
     public async Task Actual_finite_command_expires_once_with_work_email_and_storage_disabled_without_issuing_new_authority()
     {

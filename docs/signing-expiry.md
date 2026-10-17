@@ -25,3 +25,18 @@ One invocation examines at most 1–64 due records (default 32) within the exist
 The JSON output gives counts and optional continuation only. `Failed` records include unverifiable evidence or an uncertain write result and require inspection/retry; they do not stop later records in the same bounded pass. Partial results return exit code 1. An invalid command shape or batch count returns usage; an invalid continuation fails without echoing its value. SQL outages and cancellation stop processing without claiming unfinished work succeeded. Rollback/committed states remain safe for a later explicit retry.
 
 The command works with durable work disabled and performs no queue, storage, email, private-key or timestamp operation. It opens SQL only during the explicit invocation. This slice creates no background timer, recurring SQL discovery, delayed job, automatic expiry notification, reminder delivery, retention purge or cloud resource. Automatic scheduling and notices remain separate work; there is no claim that this command runs itself at the deadline. Operator retention/disclosure settings are unchanged.
+## Durable expiry work
+
+QUILS-58 adds a supported `Expiry` worker and trusted preparation/resume service. Apply the work-kind migration before using it. With existing durable-work storage configured and enabled, an operator can explicitly prepare a deadline job:
+
+```text
+dotnet run --project src/QuillSign -- work resume-signing-expiry <32-character-envelope-id>
+```
+
+The stable job binds the verified sent PDF, original source hash, disclosure, sent time and exact UTC deadline. Its recovery hint is written before the SQL transaction commits; queue publication follows commit. Repeated preparation reuses the same job and preserves a live lease. Failed or exhausted jobs require operator review; resume does not reset their attempts. A lost commit acknowledgement does not claim success; explicit resume or storage recovery resolves authoritative state.
+
+Before opening SQL, workers read bounded scheduling metadata from Blob Storage. A valid future hint postpones the queue delivery by at most seven days, repeating as necessary for longer deadlines. Empty queues and future waits do not query SQL. Transient hint-storage failures defer for fifteen minutes without replacing the hint. Missing or malformed metadata grants no execution authority: the SQL available-at and lease checks still gate all work.
+
+Once due, the handler verifies exact job, payload, source and lease ownership under the envelope-first lock order. It checks the lease again before committing expiry. Duplicate deliveries reuse canonical expiry evidence. Accepted unpublished Finish work uses bounded retries while its checkpoint is recovered; all-signed completion and other terminal outcomes are preserved. Expiry work never seals PDFs, deletes files or sends mail.
+
+This foundation does not yet join job preparation to public Send or automatically prepare jobs for existing requests. Those producers, reminders, expiry notices and retention purge remain dependent work. No new timer, recurring SQL query or cloud resource is introduced. Keep the existing storage-only recovery job available for lost wakeups; terminal retry exhaustion remains visible for operator intervention.

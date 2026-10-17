@@ -491,6 +491,7 @@ public sealed class SenderWorkflowTests(SqlDatabaseFixture fixture) : IClassFixt
         public Task<WorkDelivery?> ReceiveAsync(CancellationToken ct) => Task.FromResult(queue.TryDequeue(out var item) ? item : null);
         public Task DeferAsync(WorkDelivery delivery, TimeSpan delay, CancellationToken ct) => Task.CompletedTask;
         public Task AcknowledgeAsync(WorkDelivery delivery, CancellationToken ct) => Task.CompletedTask;
+        public Task<DateTimeOffset?> ReadDueAsync(Guid id,CancellationToken ct)=>Task.FromResult<DateTimeOffset?>(null);
         public async Task<int> RecoverAsync(DateTimeOffset now, CancellationToken ct)
         { foreach (var id in hints.Keys) await PublishAsync(id, TimeSpan.Zero, ct); return hints.Count; }
         public Task VerifyAsync(CancellationToken ct) => Task.CompletedTask;

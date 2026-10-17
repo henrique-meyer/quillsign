@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Sender;
+using QuillSign.Work;
 
 namespace QuillSign.Signing;
 
@@ -16,14 +17,22 @@ public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState ch
 {
     private sealed record Evidence(string Version,string BeforeVersion,DateTimeOffset Deadline,DateTimeOffset ExpiredAt,string SourceSha256);
     private sealed record Roster(Guid Id,int Order,string FullName,string Email,string? Role);
-    public async Task<SigningExpiryResult> ExpireAsync(Guid id,CancellationToken ct=default)
+    public Task<SigningExpiryResult> ExpireAsync(Guid id,CancellationToken ct=default)=>ExpireCoreAsync(id,null,null,ct);
+    internal Task<SigningExpiryResult> ExpireWorkAsync(Guid id,WorkLease lease,string payload,CancellationToken ct)
+        =>ExpireCoreAsync(id,lease,payload,ct);
+    private async Task<SigningExpiryResult> ExpireCoreAsync(Guid id,WorkLease? lease,string? payload,CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();OwnUnitOfWork();if(id==Guid.Empty)return new(SigningExpiryOutcome.Missing);
         try {
             await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
             await using var tx=await db.Database.BeginTransactionAsync(ct);
             var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct);
-            if(e is null)return new(SigningExpiryOutcome.Missing);
+            if(e is null) {if(lease is not null)throw Invalid();return new(SigningExpiryOutcome.Missing);}
+            if(lease is not null) {
+                if(lease.Id!=SigningExpiryJobs.WorkId(id) || payload!=SigningExpiryJobs.Bind(e))throw Invalid();
+                _=await SenderSentStatus.ReadSentAsync(db,e,null,ct);
+                await VerifyLease(e.Id,lease,payload!,ct);
+            }
             if(e.Status is not (EnvelopeStatus.Sent or EnvelopeStatus.Expired))return new(SigningExpiryOutcome.Closed);
             if(e.ExpiresAt is not DateTimeOffset deadline || deadline>time.GetUtcNow())return new(SigningExpiryOutcome.NotDue);
             if(e.SentAt is null || deadline<=e.SentAt || e.PurgeAfter<=time.GetUtcNow())throw Invalid();
@@ -44,6 +53,7 @@ public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState ch
                     saved.ExpiredAt.Offset!=TimeSpan.Zero || saved.ExpiredAt<saved.Deadline || row.At<saved.ExpiredAt || row.ActorType!=PartyType.System ||
                     row.ActorId is not null || row.ActorEmail is not null || row.Ip is not null || row.UserAgent is not null ||
                     row.DataJson!=JsonSerializer.Serialize(saved with {SourceSha256=binding}))throw Invalid();
+                if(lease is not null)await VerifyLease(e.Id,lease,payload!,ct);
                 await tx.CommitAsync(ct);return new(SigningExpiryOutcome.AlreadyExpired,saved.ExpiredAt);
             }
             if(existing.Length!=0 || events.Length>=512)throw Invalid();
@@ -61,8 +71,17 @@ public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState ch
             if(recorded.At<at || recorded.At>time.GetUtcNow())throw Invalid();
             // An unknown acknowledgement never claims success. A fresh explicit operation
             // verifies saved status/evidence and cannot append a second expiration.
+            if(lease is not null)await VerifyLease(e.Id,lease,payload!,ct);
             await tx.CommitAsync(ct);return new(SigningExpiryOutcome.Expired,at);
         } finally {db.ChangeTracker.Clear();}
+    }
+
+    private async Task VerifyLease(Guid envelope,WorkLease lease,string payload,CancellationToken ct)
+    {
+        var row=await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={lease.Id}").AsNoTracking().SingleOrDefaultAsync(ct);
+        if(row is null || row.EnvelopeId!=envelope || row.Kind!=WorkKind.Expiry || lease.Kind!=WorkKind.Expiry || row.Status!=WorkStatus.Leased ||
+            row.LeaseOwner!=lease.Owner || row.LeaseExpiresAt!=lease.Until || row.LeaseExpiresAt<=time.GetUtcNow() || row.Attempts!=lease.Attempt ||
+            row.AvailableAt>time.GetUtcNow() || lease.Attempt<1 || row.PayloadJson!=payload)throw Invalid();
     }
 
     public async Task<SigningExpiryBatch> RunBatchAsync(int maximum=32,string? cursor=null,CancellationToken ct=default)
