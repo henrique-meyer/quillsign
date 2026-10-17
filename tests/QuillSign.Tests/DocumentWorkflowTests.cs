@@ -200,13 +200,16 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
         }
         public async Task<Envelope> StateAsync()
         { await using var db = fixture.Open(); return await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == Id); }
-        public async Task<T> WithAsync<T>(Func<DocumentWorkflow, Task<T>> operation)
+        public Task<T> WithAsync<T>(Func<DocumentWorkflow, Task<T>> operation) => WithDatabaseAsync(db=> {
+            var options = new DocumentOptions();
+            return operation(new(db, Store, new(options), options, new(db, Time), Time, NullLogger<DocumentWorkflow>.Instance,Retention));
+        });
+        public async Task<T> WithDatabaseAsync<T>(Func<QuillSignDbContext,Task<T>> operation)
         {
             using var source = fixture.Open();
             await using var db = new QuillSignDbContext(new DbContextOptionsBuilder<QuillSignDbContext>()
                 .UseSqlServer(source.Database.GetDbConnection().ConnectionString).AddInterceptors(AuditFailure, CommitFailure).Options);
-            var options = new DocumentOptions();
-            return await operation(new(db, Store, new(options), options, new(db, Time), Time, NullLogger<DocumentWorkflow>.Instance,Retention));
+            return await operation(db);
         }
         public async Task<bool> UploadAsync(byte[] bytes, byte[]? version = null, string filename = "synthetic.pdf")
         {
