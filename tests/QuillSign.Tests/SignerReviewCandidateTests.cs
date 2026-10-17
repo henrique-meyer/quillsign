@@ -98,8 +98,8 @@ public sealed class SignerReviewCandidateTests(SqlDatabaseFixture fixture) : ICl
     [Fact]
     public async Task Prospective_server_date_expires_at_UTC_midnight_and_never_fills_Date_Signed()
     {
-        await using var r=await Run.Create(fixture,midnight:true); var before=r.H.Clock.GetUtcNow();var date=DateOnly.FromDateTime(before.UtcDateTime);var first=(await r.Prepare())!;
-        Assert.Equal(before.AddSeconds(10),first.ExpiresAt); Assert.Equal(date,first.ProspectiveDate);
+        await using var r=await Run.Create(fixture,midnight:true); var date=DateOnly.FromDateTime(r.H.Clock.GetUtcNow().UtcDateTime);var first=(await r.Prepare())!;
+        Assert.Equal(new DateTimeOffset(date.AddDays(1).ToDateTime(TimeOnly.MinValue),TimeSpan.Zero),first.ExpiresAt); Assert.Equal(date,first.ProspectiveDate);
         r.H.Clock.Advance(TimeSpan.FromSeconds(11)); Assert.Null(await r.Read(first.Receipt)); var second=(await r.Prepare())!; Assert.Equal(date.AddDays(1),second.ProspectiveDate);
         using var pdf=PigDocument.Open((await r.Read(second.Receipt))!.Pdf); Assert.Contains(date.AddDays(1).ToString("yyyy-MM-dd",System.Globalization.CultureInfo.InvariantCulture),pdf.GetPage(1).Text);
         await using var db=fixture.Open(); Assert.Null((await db.Fields.SingleAsync(x=>x.Id==r.H.Field(FieldType.DateSigned).Id)).FilledAt); Assert.Null((await db.Signers.SingleAsync(x=>x.Id==r.H.Signer.Id)).SignedAt);
