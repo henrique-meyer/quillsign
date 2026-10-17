@@ -14,6 +14,7 @@ public sealed class SigningExpiryCommandTests(SqlDatabaseFixture fixture) : ICla
     public async Task Actual_resume_command_prepares_one_future_job_without_echoing_private_scope_or_enabling_mail()
     {
         await using var h=await Shared.Create(fixture);Assert.NotNull(await h.Send());await using var db=fixture.Open();
+        await SigningExpiryWorkTests.LegacyAsync(h,fixture);
         var name="expiry-cli-"+Guid.NewGuid().ToString("N");var connection=Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
         var queue=new Azure.Storage.Queues.QueueClient(connection,name,new(Azure.Storage.Queues.QueueClientOptions.ServiceVersion.V2023_11_03));
         var hints=new Azure.Storage.Blobs.BlobServiceClient(connection,new(Azure.Storage.Blobs.BlobClientOptions.ServiceVersion.V2023_11_03)).GetBlobContainerClient(name);

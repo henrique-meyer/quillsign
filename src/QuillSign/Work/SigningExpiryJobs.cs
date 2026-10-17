@@ -24,6 +24,8 @@ public sealed class SigningExpiryJobs(QuillSignDbContext db,SignerCheckpointStat
         return JsonSerializer.Serialize(new SigningExpiryPayload(Version,e.Id,sent.ToUniversalTime(),deadline.ToUniversalTime(),e.SentPdfBlob,
             Convert.ToHexStringLower(e.SentPdfSha256),Convert.ToHexStringLower(e.PdfSha256),Convert.ToHexStringLower(e.ErsdSha256)));
     }
+    internal static bool Matches(Envelope e,WorkItem row)=>row.Id==WorkId(e.Id) && row.Kind==WorkKind.Expiry && row.EnvelopeId==e.Id &&
+        row.PayloadJson==Bind(e) && Enum.IsDefined(row.Status) && row.AvailableAt>=e.ExpiresAt && row.Attempts>=0;
 
     internal async Task<Guid?> PrepareAsync(Guid envelopeId,CancellationToken ct)
     {
@@ -31,23 +33,24 @@ public sealed class SigningExpiryJobs(QuillSignDbContext db,SignerCheckpointStat
         if(!options.Enabled)throw new InvalidOperationException("Expiry processing is disabled.");
         var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={envelopeId}").AsNoTracking().SingleOrDefaultAsync(ct);
         if(e is null || e.Status is not (EnvelopeStatus.Sent or EnvelopeStatus.Expired) || e.ExpiresAt is null)return null;
-        _=await new SenderVoidState(db,state,time).SourceLockedAsync(e,ct);
         var payload=Bind(e);var id=WorkId(e.Id);
         var row=await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct);
         if(row is null)
         {
-            if(e.Status!=EnvelopeStatus.Sent)return null;
+            if(e.Status!=EnvelopeStatus.Sent) {_=await new SenderVoidState(db,state,time).SourceLockedAsync(e,ct);return null;}
             row=new WorkItem {Id=id,EnvelopeId=e.Id,Kind=WorkKind.Expiry,PayloadJson=payload,AvailableAt=e.ExpiresAt.Value.ToUniversalTime()};
             db.WorkItems.Add(row);await db.SaveChangesAsync(ct);
         }
         else
         {
-            if(row.Kind!=WorkKind.Expiry || row.EnvelopeId!=e.Id || row.PayloadJson!=payload || !Enum.IsDefined(row.Status) ||
-                row.AvailableAt<e.ExpiresAt || row.Attempts<0 || row.Attempts>options.MaximumAttempts)throw Invalid();
-            if(row.Status==WorkStatus.Failed)throw new InvalidOperationException("Failed expiry work requires operator review; resume does not reset attempts.");
-            if(row.Status==WorkStatus.Completed)return id;
+            if(!Matches(e,row) || row.Attempts>options.MaximumAttempts)throw Invalid();
             if(row.Status==WorkStatus.Leased && (row.LeaseOwner is null || row.LeaseExpiresAt is null))throw Invalid();
         }
+        // New Send evidence binds this row. Insert within the parent's transaction
+        // before verifying that evidence; no hint or commit precedes verification.
+        _=await new SenderVoidState(db,state,time).SourceLockedAsync(e,ct);
+        if(row.Status==WorkStatus.Failed)throw new InvalidOperationException("Failed expiry work requires operator review; resume does not reset attempts.");
+        if(row.Status==WorkStatus.Completed)return id;
         await signals().PutHintAsync(id,row.Status==WorkStatus.Leased && row.LeaseExpiresAt>row.AvailableAt ? row.LeaseExpiresAt.Value : row.AvailableAt,ct);
         return id;
     }

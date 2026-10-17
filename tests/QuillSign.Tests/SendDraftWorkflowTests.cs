@@ -39,7 +39,8 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         Assert.True(ElectronicRecordDisclosure.Verify(new(envelope.ErsdVersion!,envelope.PublicId,envelope.Title!,envelope.SenderEmail,envelope.ErsdText!,envelope.ErsdSha256!)));
         Assert.Equal(sent.DisclosureHash,Convert.ToHexStringLower(envelope.ErsdSha256!)); Assert.False(await db.AuthTokens.AnyAsync(x => x.EnvelopeId == envelope.Id));
         var email = await db.EmailOutbox.SingleAsync(x => x.EnvelopeId == envelope.Id); Assert.Equal(run.First.Email,email.To); Assert.Equal("signer-invitation",email.Template);
-        Assert.Single(await db.WorkItems.Where(x => x.EnvelopeId == envelope.Id).ToArrayAsync()); Assert.Equal(1,run.Signals.Published);
+        var work=await db.WorkItems.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id).ToArrayAsync();Assert.Equal(2,work.Length);
+        Assert.Single(work,x=>x.Kind==WorkKind.Email);var expiry=Assert.Single(work,x=>x.Kind==WorkKind.Expiry);Assert.Equal(envelope.ExpiresAt,expiry.AvailableAt);Assert.Equal(0,expiry.Attempts);Assert.Equal(2,run.Signals.Published);
         var events = await db.AuditEvents.Where(x => x.EnvelopeId == envelope.Id).OrderBy(x => x.Sequence).ToArrayAsync();
         Assert.Equal(new[] { "fields_finalized","sent" },events.Select(x => x.Event)); Assert.All(events,x => Assert.Equal(AuditHash.Compute(x),x.Hash)); Assert.Equal(events[0].Hash,events[1].PrevHash);
         Assert.Contains("queued",events[1].DataJson); Assert.Null((await db.Signers.AsNoTracking().SingleAsync(x => x.Id == run.First.Id)).ConsentAt);
@@ -111,7 +112,7 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         await using var run = await Harness.Create(fixture); run.Faults.FailCommit = true;
         await Assert.ThrowsAsync<IOException>(() => run.Send()); Assert.Empty(run.Blobs.Deleted);
         await using var db = fixture.Open(); var e = await db.Envelopes.SingleAsync(x => x.Id == run.Envelope.Id); Assert.Equal(EnvelopeStatus.Sent,e.Status);
-        Assert.NotEmpty(await run.Read(Guid.Parse(e.SentPdfBlob!))); Assert.Single(await db.WorkItems.Where(x => x.EnvelopeId == e.Id).ToArrayAsync()); Assert.Equal(0,run.Signals.Published);
+        Assert.NotEmpty(await run.Read(Guid.Parse(e.SentPdfBlob!))); Assert.Equal(2,await db.WorkItems.CountAsync(x => x.EnvelopeId == e.Id)); Assert.Equal(0,run.Signals.Published);
     }
     [Fact]
     public async Task Queue_delay_does_not_consume_invitation_life_and_the_first_signer_can_redeem_frozen_context()
@@ -280,9 +281,9 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         }
     }
     internal sealed class Signals(IWorkSignals inner) : IWorkSignals
-    { public bool FailHint,FailPublish; public int Published;
-        public Task PutHintAsync(Guid id,DateTimeOffset due,CancellationToken ct) { if(FailHint)throw new IOException("Synthetic hint failure"); return inner.PutHintAsync(id,due,ct); }
-        public Task PublishAsync(Guid id,TimeSpan delay,CancellationToken ct) { Published++; if(FailPublish)throw new IOException("Synthetic completion notification failure"); return inner.PublishAsync(id,delay,ct); }
+    { public bool FailHint,FailPublish; public int Published,HintCalls,FailHintAfterWriteAt,FailPublishAt;
+        public async Task PutHintAsync(Guid id,DateTimeOffset due,CancellationToken ct) {var call=Interlocked.Increment(ref HintCalls);if(FailHint)throw new IOException("Synthetic hint failure");await inner.PutHintAsync(id,due,ct);if(FailHintAfterWriteAt==call)throw new IOException("Synthetic lost hint acknowledgement");}
+        public Task PublishAsync(Guid id,TimeSpan delay,CancellationToken ct) {var call=Interlocked.Increment(ref Published);if(FailPublish || FailPublishAt==call)throw new IOException("Synthetic queue publication failure");return inner.PublishAsync(id,delay,ct);}
         public Task RemoveHintAsync(Guid id,CancellationToken ct)=>inner.RemoveHintAsync(id,ct); public Task<WorkDelivery?> ReceiveAsync(CancellationToken ct)=>inner.ReceiveAsync(ct); public Task DeferAsync(WorkDelivery d,TimeSpan delay,CancellationToken ct)=>inner.DeferAsync(d,delay,ct); public Task AcknowledgeAsync(WorkDelivery d,CancellationToken ct)=>inner.AcknowledgeAsync(d,ct); public Task<DateTimeOffset?> ReadDueAsync(Guid id,CancellationToken ct)=>inner.ReadDueAsync(id,ct);
         public Task<int> RecoverAsync(DateTimeOffset now,CancellationToken ct)=>inner.RecoverAsync(now,ct); public Task VerifyAsync(CancellationToken ct)=>inner.VerifyAsync(ct); }
 }
