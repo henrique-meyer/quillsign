@@ -6,6 +6,7 @@ namespace QuillSign.Data;
 public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> options) : DbContext(options)
 {
     public DbSet<Envelope> Envelopes => Set<Envelope>();
+    public DbSet<DocumentRetentionSnapshot> DocumentRetentionSnapshots => Set<DocumentRetentionSnapshot>();
     public DbSet<Signer> Signers => Set<Signer>();
     public DbSet<SignaturePreview> SignaturePreviews => Set<SignaturePreview>();
     public DbSet<SignerReviewCandidate> SignerReviewCandidates => Set<SignerReviewCandidate>();
@@ -28,6 +29,13 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<Suppression>().HasKey(x => x.Email);
         model.Entity<Envelope>().HasIndex(x => x.PublicId).IsUnique();
         model.Entity<Envelope>().HasIndex(x => x.PurgeAfter);
+        model.Entity<DocumentRetentionSnapshot>().HasKey(x=>x.EnvelopeId);
+        model.Entity<DocumentRetentionSnapshot>().HasIndex(x=>new {x.DeleteAfter,x.EnvelopeId});
+        model.Entity<DocumentRetentionSnapshot>().ToTable(t=>
+        {
+            t.HasCheckConstraint("CK_DocumentRetentionSnapshot_Interval","[Days] BETWEEN 1 AND 36500 AND DATEPART(TZOFFSET,[StartedAt]) = 0 AND DATEPART(TZOFFSET,[DeleteAfter]) = 0 AND [DeleteAfter] = DATEADD(day,[Days],[StartedAt])");
+            t.HasCheckConstraint("CK_DocumentRetentionSnapshot_Objects","[OriginalObjectId] <> '00000000-0000-0000-0000-000000000000' AND [PdfObjectId] <> '00000000-0000-0000-0000-000000000000' AND [OriginalObjectId] <> [PdfObjectId]");
+        });
         model.Entity<Envelope>().HasIndex(x=>new {x.ExpiresAt,x.Id}).HasFilter("[Status] = 'Sent' AND [ExpiresAt] IS NOT NULL");
         model.Entity<Envelope>().HasIndex(x=>x.FinalSha256).HasFilter("[FinalSha256] IS NOT NULL");
         model.Entity<Envelope>().HasIndex(x=>x.CertificateSha256).HasFilter("[CertificateSha256] IS NOT NULL");
@@ -189,6 +197,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     private void GuardAuditMutations()
     {
         ChangeTracker.DetectChanges();
+        if(ChangeTracker.Entries<DocumentRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Document retention snapshots are immutable. Purge requires a separate privileged path.");
         if(ChangeTracker.Entries<AuthToken>().Any(x=>x.State==EntityState.Modified &&
             (x.Entity.Purpose==TokenPurpose.CompletionAccess || x.Property(t=>t.Purpose).OriginalValue==TokenPurpose.CompletionAccess) &&
             x.Properties.Any(p=>p.IsModified && p.Metadata.Name!=nameof(AuthToken.UsedAt))))

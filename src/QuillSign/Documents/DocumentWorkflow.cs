@@ -8,7 +8,7 @@ using QuillSign.Storage;
 namespace QuillSign.Documents;
 
 public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, PdfValidation pdf, DocumentOptions options,
-    AuditWriter audit, TimeProvider time, ILogger<DocumentWorkflow> logger)
+    AuditWriter audit, TimeProvider time, ILogger<DocumentWorkflow> logger,DemoRetentionOptions? retentionOptions=null)
 {
     public static FileStream TemporaryFile() => new(Path.Combine(Path.GetTempPath(), "quillsign-" + Guid.NewGuid().ToString("N")),
         FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
@@ -60,6 +60,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             var envelope = await DraftAsync(sender, publicId, true, ct);
             if (envelope is null) throw new DocumentConflictException();
             Version(envelope, expectedVersion);
+            var retention=await new UploadRetention(db,retentionOptions ?? new(),time).PrepareLockedAsync(envelope,originalBlob.ObjectId,originalHash,normalizedBlob.ObjectId,normalizedHash,ct);
             var previous = envelope.PdfBlob;
             envelope.Title = safeName;
             envelope.OriginalBlob = originalBlob.ObjectId.ToString("N"); envelope.OriginalSha256 = originalHash; envelope.OriginalMime = "application/pdf";
@@ -68,9 +69,11 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             envelope.PreviewConfirmedAt = null; envelope.AiRolesJson = null; envelope.AiModel = null;
             await db.Fields.Where(x => x.EnvelopeId == envelope.Id).ExecuteDeleteAsync(ct);
             var data = JsonSerializer.Serialize(new { filename = safeName, originalSha256 = Convert.ToHexStringLower(originalHash),
-                pdfSha256 = Convert.ToHexStringLower(normalizedHash), pageCount = pages.Count, previousDocument = previous });
+                pdfSha256 = Convert.ToHexStringLower(normalizedHash), pageCount = pages.Count, previousDocument = previous,
+                retentionSha256=retention is null ? null : UploadRetention.Digest(retention) });
             await audit.AppendAsync(envelope.Id, previous is null ? "document_uploaded" : "document_replaced", envelope.SenderEmail, ip, userAgent, ct, data);
             await db.SaveChangesAsync(ct);
+            UploadRetention.CheckDeadline(retention,time.GetUtcNow());
             commitStarted = true;
             await transaction.CommitAsync(ct);
         }
