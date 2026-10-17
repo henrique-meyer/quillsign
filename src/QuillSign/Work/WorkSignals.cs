@@ -23,6 +23,7 @@ public interface IWorkSignals
 {
     Task PutHintAsync(Guid id, DateTimeOffset due, CancellationToken cancellationToken);
     Task RemoveHintAsync(Guid id, CancellationToken cancellationToken);
+    Task<DateTimeOffset?> ReadDueAsync(Guid id, CancellationToken cancellationToken);
     Task PublishAsync(Guid id, TimeSpan delay, CancellationToken cancellationToken);
     Task<WorkDelivery?> ReceiveAsync(CancellationToken cancellationToken);
     Task DeferAsync(WorkDelivery delivery, TimeSpan delay, CancellationToken cancellationToken);
@@ -53,10 +54,25 @@ public sealed class AzureWorkSignals(QueueClient queue, BlobContainerClient hint
     public async Task RemoveHintAsync(Guid id, CancellationToken cancellationToken)
         => await hints.GetBlobClient(id.ToString("N")).DeleteIfExistsAsync(cancellationToken: cancellationToken);
 
+    public async Task<DateTimeOffset?> ReadDueAsync(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var properties = (await hints.GetBlobClient(id.ToString("N")).GetPropertiesAsync(cancellationToken: cancellationToken)).Value;
+            return properties.Metadata.TryGetValue("due", out var value) ? ParseDue(value) : null;
+        }
+        catch (RequestFailedException e) when (e.Status == 404) { return null; }
+    }
+
+    private static DateTimeOffset? ParseDue(string value)
+        => value.Length is > 0 and <= 19 && long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var ticks) &&
+            ticks >= 0 && ticks <= DateTimeOffset.MaxValue.Ticks && ticks.ToString(CultureInfo.InvariantCulture) == value
+            ? new DateTimeOffset(ticks, TimeSpan.Zero) : null;
+
     public async Task PublishAsync(Guid id, TimeSpan delay, CancellationToken cancellationToken)
     {
         await EnsureLocalAsync(cancellationToken);
-        await queue.SendMessageAsync(id.ToString("N"), delay, TimeSpan.FromSeconds(-1), cancellationToken);
+        await queue.SendMessageAsync(id.ToString("N"), BoundDelay(delay), TimeSpan.FromSeconds(-1), cancellationToken);
     }
 
     public async Task<WorkDelivery?> ReceiveAsync(CancellationToken cancellationToken)
@@ -69,7 +85,9 @@ public sealed class AzureWorkSignals(QueueClient queue, BlobContainerClient hint
 
     public async Task DeferAsync(WorkDelivery delivery, TimeSpan delay, CancellationToken cancellationToken)
         => await queue.UpdateMessageAsync(delivery.MessageId, delivery.PopReceipt,
-            delivery.WorkId?.ToString("N") ?? "invalid", delay, cancellationToken);
+            delivery.WorkId?.ToString("N") ?? "invalid", BoundDelay(delay), cancellationToken);
+
+    private static TimeSpan BoundDelay(TimeSpan delay) => TimeSpan.FromSeconds(Math.Clamp(delay.TotalSeconds, 0, 7 * 24 * 60 * 60));
 
     public async Task AcknowledgeAsync(WorkDelivery delivery, CancellationToken cancellationToken)
         => await queue.DeleteMessageAsync(delivery.MessageId, delivery.PopReceipt, cancellationToken);
@@ -90,7 +108,7 @@ public sealed class AzureWorkSignals(QueueClient queue, BlobContainerClient hint
             foreach (var hint in page.Values)
             {
                 if (!Guid.TryParseExact(hint.Name, "N", out var id)) continue;
-                if (!hint.Metadata.TryGetValue("due", out var due) || !long.TryParse(due, CultureInfo.InvariantCulture, out var ticks) || ticks <= now.UtcTicks)
+                if (!hint.Metadata.TryGetValue("due", out var due) || ParseDue(due) is not { } at || at <= now)
                 { await PublishAsync(id, TimeSpan.Zero, cancellationToken); count++; }
             }
             await cursorBlob.UploadAsync(BinaryData.FromString(page.ContinuationToken ?? ""), overwrite: true, cancellationToken);

@@ -14,11 +14,12 @@ public static class WorkCommands
         var republish = args.Length == 2 && args[0] == "publish-notification" && Guid.TryParseExact(args[1],"N",out _);
         var completion=args.Length==2 && args[0]=="resume-completion-notifications" && Guid.TryParseExact(args[1],"N",out _);
         var voids=args.Length==2 && args[0]=="resume-void-notifications" && Guid.TryParseExact(args[1],"N",out _);
+        var scheduleExpiry=args.Length==2 && args[0]=="resume-signing-expiry" && Guid.TryParseExact(args[1],"N",out _);
         var expiry=args.Length is >=1 and <=3 && args[0]=="expire";
         var batch=32;
         if(expiry && args.Length>=2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out batch) || batch is <1 or >64))expiry=false;
-        if (!republish && !completion && !voids && !expiry && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
-        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications <32-character-envelope-id>"); return 2; }
+        if (!republish && !completion && !voids && !expiry && !scheduleExpiry && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
+        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications|resume-signing-expiry <32-character-envelope-id>"); return 2; }
         try
         {
             var builder = WebApplication.CreateBuilder();
@@ -45,7 +46,11 @@ public static class WorkCommands
             }
             var signals = app.Services.GetRequiredService<IWorkSignals>();
             var count = 0;
-            if(voids) {
+            if(scheduleExpiry) {
+                await using var scope=app.Services.CreateAsyncScope();
+                count=await scope.ServiceProvider.GetRequiredService<SigningExpiryJobs>().ResumeAsync(Guid.ParseExact(args[1],"N"),timeout.Token) is null ? 0 : 1;
+            }
+            else if(voids) {
                 await using var scope=app.Services.CreateAsyncScope();
                 count=await scope.ServiceProvider.GetRequiredService<VoidNotificationJobs>().ResumeAsync(Guid.ParseExact(args[1],"N"),timeout.Token);
             }
