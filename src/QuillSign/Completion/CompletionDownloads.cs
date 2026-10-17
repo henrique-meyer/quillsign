@@ -11,6 +11,7 @@ using QuillSign.Data;
 using QuillSign.Sender;
 using QuillSign.Signing;
 using QuillSign.Storage;
+using QuillSign.Documents;
 
 namespace QuillSign.Completion;
 
@@ -34,7 +35,10 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
     {
         var actor=await Authenticate(http,publicId,party,ct); if(actor is null)return null;
         var saved=await CompletionDownloadState.ReadAsync(db,actor.EnvelopeId,time,ct);
-        return saved is null || saved.PurgeAfter<=time.GetUtcNow() ? null : new(saved.CompletedAt,saved.PurgeAfter);
+        if(saved is null || saved.PurgeAfter<=time.GetUtcNow())return null;
+        var retained=await RetainedCompleted(actor.EnvelopeId,publicId,party==PartyType.Sender ? actor.Email : null,ct);
+        if(retained is null || actor.Until<=time.GetUtcNow())return null;
+        return new(saved.CompletedAt,Earlier(saved.PurgeAfter,retained.Deadline));
     }
 
     public async Task<PreparedFinalDownload?> PrepareAsync(HttpContext http,string publicId,PartyType party,string kind,CancellationToken ct=default)
@@ -49,7 +53,7 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         var verified=await publication().ReadAsync(actor.EnvelopeId,ct); if(verified is null || !saved.Matches(verified))throw Invalid();
         var again=await Authenticate(http,publicId,party,ct,reader); if(!SameActor(actor,again))return null;
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
-        await Recheck(saved,actor,http,publicId,ct);
+        var deadline=await Recheck(saved,actor,http,publicId,ct);
         var now=time.GetUtcNow(); var until=new[]{now.AddMinutes(2),actor.Until,saved.PurgeAfter??DateTimeOffset.MaxValue}.Min();
         if(until<=now)return null;
         var file=selected==FinalDocumentKind.Executed ? saved.Executed : saved.Certificate;
@@ -60,6 +64,8 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
             version=Version,publicationId=saved.Id,kind,fileSha256=Convert.ToHexStringLower(file.Sha256),nonce=proof.Nonce,
             referenceSha256=Convert.ToHexStringLower(proof.Reference),expiresAt=until,meaning="Verified download prepared; receipt or saving is not confirmed."
         }),actor.Party,actor.PartyId);
+        DocumentRetentionAccess.Check(deadline,time);
+        if(actor.Until<=time.GetUtcNow() || saved.PurgeAfter<=time.GetUtcNow())throw Invalid();
         // An unknown commit outcome returns no grant. Retrying may record another explicit
         // preparation, but cannot regenerate or replace the immutable final packet.
         await transaction.CommitAsync(ct);
@@ -83,8 +89,9 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         var verified=await publication().ReadAsync(actor.EnvelopeId,ct); if(verified is null || !saved!.Matches(verified))throw Invalid();
         var again=await Authenticate(http,publicId,party,ct,reader); if(!Matches(proof,again) || !SameActor(actor,again))return null;
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
-        await Recheck(saved,actor,http,publicId,ct); if(proof.ExpiresAt<=time.GetUtcNow())return null;
+        var deadline=await Recheck(saved,actor,http,publicId,ct); if(proof.ExpiresAt<=time.GetUtcNow())return null;
         await transaction.CommitAsync(ct);
+        DocumentRetentionAccess.Check(deadline,time);if(proof.ExpiresAt<=time.GetUtcNow())return null;
         // Clearing is a convenience for this browser, not global replay prevention. An
         // authenticated clone can repeat this read until the original short expiry.
         http.Response.Cookies.Delete(Cookie(audience,selected),Options(http,publicId,audience));
@@ -108,28 +115,44 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         var session=Hash(raw);
         if(party==PartyType.Sender) {
             var identity=SendDraftWorkflow.Identity(authenticated.Principal,publicId); if(identity is null)return null;
-            var e=await db.Envelopes.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==identity.Value.Id,ct);
-            if(e?.PublicId!=publicId || e.SenderEmail!=identity.Value.Email || e.SenderVerifiedAt is null || e.Status!=EnvelopeStatus.Completed || e.PurgeAfter<=now)return null;
-            return new("draft",e.Id,party,null,e.SenderEmail,session,null,until);
+            var retained=await RetainedCompleted(identity.Value.Id,publicId,identity.Value.Email,ct);if(retained is null)return null;
+            until=new[]{until,retained.Deadline??DateTimeOffset.MaxValue}.Min();
+            return until<=time.GetUtcNow() ? null : new("draft",retained.Envelope.Id,party,null,retained.Envelope.SenderEmail,session,null,until);
         }
         var signer=SignerAccessConfiguration.ReadIdentity(authenticated.Principal,now); if(signer?.PublicId!=publicId)return null;
         var receipt=Get(http,SignerReviewBrowser.AcceptedCookie)??Get(http,SignerReviewBrowser.ReviewCookie); if(receipt is null)return null;
         if(await checkpoints.ConfirmAsync(authenticated.Principal,publicId,receipt,ct) is null)return null;
-        var envelope=await db.Envelopes.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==signer.EnvelopeId,ct);
-        if(envelope?.Status!=EnvelopeStatus.Completed || envelope.PurgeAfter<=time.GetUtcNow())return null;
-        until=new[]{until,signer.SessionExpiresAt,envelope.ExpiresAt??DateTimeOffset.MaxValue}.Min();
+        var completed=await RetainedCompleted(signer.EnvelopeId,publicId,null,ct);if(completed is null)return null;
+        until=new[]{until,signer.SessionExpiresAt,completed.Envelope.ExpiresAt??DateTimeOffset.MaxValue,completed.Deadline??DateTimeOffset.MaxValue}.Min();
         return until<=time.GetUtcNow() ? null : new("sign",signer.EnvelopeId,party,signer.SignerId,signer.Email,session,Hash(receipt),until);
     }
 
-    private async Task Recheck(DownloadPublication saved,Actor actor,HttpContext http,string publicId,CancellationToken ct)
+    // Called only after exact cookie/party authentication; owner checks precede policy reads.
+    private sealed record RetainedScope(Envelope Envelope,DateTimeOffset? Deadline);
+    private async Task<RetainedScope?> RetainedCompleted(Guid id,string publicId,string? sender,CancellationToken ct)
+    {
+        await using var owned=db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct);
+        if(e?.PublicId!=publicId || e.Status!=EnvelopeStatus.Completed || e.PurgeAfter<=time.GetUtcNow() ||
+            sender is not null && (e.SenderEmail!=sender || e.SenderVerifiedAt is null))return null;
+        var deadline=await SenderPreparationRetention.ReadAsync(db,e,time,ct);
+        if(owned is not null)await owned.CommitAsync(ct);
+        DocumentRetentionAccess.Check(deadline,time);return new(e,deadline);
+    }
+    private static DateTimeOffset? Earlier(DateTimeOffset? saved,DateTimeOffset? deadline)=>
+        deadline is null ? saved : saved is null || deadline<saved ? deadline : saved;
+
+    private async Task<DateTimeOffset?> Recheck(DownloadPublication saved,Actor actor,HttpContext http,string publicId,CancellationToken ct)
     {
         var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={saved.EnvelopeId}").AsNoTracking().SingleOrDefaultAsync(ct);
         if(e is null || actor.Until<=time.GetUtcNow() || e.PurgeAfter<=time.GetUtcNow())throw Invalid();
+        var deadline=await SenderPreparationRetention.ReadAsync(db,e,time,ct);
         var current=await CompletionDownloadState.ReadAsync(db,saved.EnvelopeId,time,ct);
         if(current is null || current.Id!=saved.Id || !Same(current.Recipe,saved.Recipe) || !current.Revision.AsSpan().SequenceEqual(saved.Revision))throw Invalid();
         await CompletionDownloadState.RecheckSourceAsync(collector,saved,ct);
         if(actor.Audience=="complete" && !SameActor(actor,await Authenticate(http,publicId,actor.Party,ct,true,true)))throw Invalid();
         if(actor.Until<=time.GetUtcNow() || e.PurgeAfter<=time.GetUtcNow())throw Invalid();
+        DocumentRetentionAccess.Check(deadline,time);return deadline;
     }
 
     private Proof? ReadProof(HttpContext http,string id,string audience,FinalDocumentKind kind)

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Signing;
 using QuillSign.Work;
+using QuillSign.Documents;
 
 namespace QuillSign.Sender;
 
@@ -48,9 +49,11 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         await using var tx=await db.Database.BeginTransactionAsync(ct);
         var envelope=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct);
         if(envelope is null || envelope.PublicId!=publicId || envelope.SenderEmail!=email || envelope.SenderVerifiedAt is null || until<=time.GetUtcNow())return new(SenderVoidOutcome.InvalidContext);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct);
         if(envelope.Status==EnvelopeStatus.Voided) {
             var recorded=await Recorded(envelope,version,reason,ct);if(recorded is null)return new(SenderVoidOutcome.Conflict);
             if(until<=time.GetUtcNow())return new(SenderVoidOutcome.InvalidContext);
+            DocumentRetentionAccess.Check(deadline,time);
             await tx.CommitAsync(ct);return new(SenderVoidOutcome.AlreadyVoided,recorded);
         }
         if(envelope.Status!=EnvelopeStatus.Sent || envelope.ExpiresAt<=time.GetUtcNow())return new(SenderVoidOutcome.Closed);
@@ -68,6 +71,7 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         var producer=notifications?.Invoke();
         var jobs=producer is null ? [] : await producer.PrepareLockedAsync(id,ct);
         if(until<=time.GetUtcNow())return new(SenderVoidOutcome.InvalidContext);
+        DocumentRetentionAccess.Check(deadline,time);
         if(envelope.ExpiresAt<=time.GetUtcNow())return new(SenderVoidOutcome.Closed);
         // A lost acknowledgement propagates. A later explicit saved-state read/repeat
         // can verify the existing action; it cannot create a second void record.
