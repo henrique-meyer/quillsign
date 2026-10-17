@@ -164,6 +164,9 @@ public sealed class SenderDocumentRetentionTests(SqlDatabaseFixture fixture):ICl
             builder.Services.AddQuillSignStorage(builder.Configuration,builder.Environment);builder.Services.AddQuillSignSender(builder.Configuration,builder.Environment);
             builder.Services.AddSingleton(new QuillSign.Email.EmailOptions());builder.Services.AddSingleton(new QuillSign.Work.WorkOptions());
             builder.Services.AddQuillSignFieldEditor(builder.Configuration);builder.Services.AddQuillSignDocuments(builder.Configuration);
+            builder.Services.AddQuillSignSignerSetup(builder.Configuration);builder.Services.AddScoped<SenderSendReadiness>();
+            builder.Services.AddScoped<Func<SendDraftWorkflow>>(sp=>()=>sp.GetRequiredService<SendDraftWorkflow>());
+            builder.Services.AddScoped<Func<SenderSentStatus>>(sp=>()=>sp.GetRequiredService<SenderSentStatus>());
             builder.Services.AddSingleton<TimeProvider>(b.run.Clock);builder.Services.AddSingleton<IBlobStore>(b.run.H.Store);builder.Services.AddSingleton(b.run.H.Retention);
             if(conversion is not null)builder.Services.AddSingleton(conversion);configure?.Invoke(builder.Services);
             if(port is { } number)builder.WebHost.UseUrls("http://127.0.0.1:"+number);else builder.WebHost.UseTestServer();
@@ -172,13 +175,20 @@ public sealed class SenderDocumentRetentionTests(SqlDatabaseFixture fixture):ICl
                 if(Microsoft.AspNetCore.Http.HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/draft") && context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is {IsReadOnly:false} body)body.MaxRequestBodySize=b.app.Services.GetRequiredService<DocumentOptions>().MaximumBytes+65536;
                 await next();});
             if(port is not null)b.app.UseStaticFiles();b.app.UseRouting();b.app.UseRateLimiter();b.app.UseAuthentication();b.app.UseAuthorization();b.app.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
+            b.app.MapFieldEditor();
             b.app.MapGet("/test-session",async(Microsoft.AspNetCore.Http.HttpContext context)=>{await context.SignInAsync(EnvelopeStorageAuthorization.SenderScheme,b.run.H.Sender,new AuthenticationProperties{ExpiresUtc=b.run.Clock.GetUtcNow().AddHours(2),AllowRefresh=false});return "ok";});
             b.key=new BlobServiceClient(storage,new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03)).GetBlobContainerClient("keys").GetBlobClient(name+".xml");
             await b.app.StartAsync();b.client=port is null ? b.app.GetTestClient() : new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){BaseAddress=new Uri("http://127.0.0.1:"+port)};return b;
             } catch {await b.DisposeAsync();throw;}
         }
-        internal Task<HttpResponseMessage> Get(string path)=>Request(new HttpRequestMessage(HttpMethod.Get,path));
+        internal Task<HttpResponseMessage> Get(string path,bool json=false)
+        {var request=new HttpRequestMessage(HttpMethod.Get,path);if(json)request.Headers.Accept.ParseAdd("application/json");return Request(request);}
         internal Task<HttpResponseMessage> Post(string path,Dictionary<string,string> form)=>Request(new HttpRequestMessage(HttpMethod.Post,path){Content=new FormUrlEncodedContent(form)});
+        internal Task<HttpResponseMessage> SaveFields(string page,FieldSave save,bool csrf=true)
+        {
+            var request=new HttpRequestMessage(HttpMethod.Patch,"/api/envelopes/"+run.H.PublicId+"/fields"){Content=System.Net.Http.Json.JsonContent.Create(save)};
+            if(csrf)request.Headers.Add("X-CSRF-TOKEN",SignaturePageTests.Browser.Token(page));return Request(request);
+        }
         internal Task<HttpResponseMessage> Upload(string page,byte[] bytes,string filename,string mime="application/octet-stream",bool csrf=true,string? version=null,bool extra=false,string? publicId=null,bool json=false,CancellationToken ct=default)
         {
             var form=new MultipartFormDataContent();form.Add(new StringContent(version??SenderSendPageTests.Flow.Value(page,"Version")),"Version");

@@ -6,6 +6,7 @@ using QuillSign.Data;
 using QuillSign.Sender;
 using QuillSign.Signing;
 using QuillSign.Storage;
+using QuillSign.Legal;
 
 namespace QuillSign.Documents;
 
@@ -19,6 +20,7 @@ public sealed record DraftReviewSnapshot(string PublicId, string Version, string
     public DateTimeOffset? ExpiresAt { get; init; }
     public DateTimeOffset? RetentionDeleteAfter {get;init;}
     public string? RetentionSha256 {get;init;}
+    internal DemoDisclosureContext? DemoDisclosure {get;init;}
 }
 
 public sealed class DraftReview(QuillSignDbContext db,TimeProvider? time=null)
@@ -35,6 +37,7 @@ public sealed class DraftReview(QuillSignDbContext db,TimeProvider? time=null)
             .AsNoTracking().SingleOrDefaultAsync(ct);
         if (envelope is null || envelope.PublicId != publicId || envelope.SenderVerifiedAt is null ||
             envelope.Status != EnvelopeStatus.Draft || !string.Equals(envelope.SenderEmail, identity.Value.Email, StringComparison.OrdinalIgnoreCase)) return null;
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time??TimeProvider.System,ct);
         var signers = await db.Signers.AsNoTracking().Where(x => x.EnvelopeId == envelope.Id).OrderBy(x => x.Order)
             .Select(x => new SignerListItem(x.Id, x.Order, x.FullName, x.Email, x.Role)).ToListAsync(ct);
         var fields = await db.Fields.AsNoTracking().Where(x => x.EnvelopeId == envelope.Id).OrderBy(x => x.Page).ThenBy(x => x.Id).ToListAsync(ct);
@@ -42,10 +45,11 @@ public sealed class DraftReview(QuillSignDbContext db,TimeProvider? time=null)
             .Select(x => new RecipientItem(x.Id, x.Name, x.Email)).ToListAsync(ct);
         var result = CheckPreparation(envelope, signers, fields, recipients);
         var limit=await RetentionSigningDeadline.ReadAsync(db,envelope,ct);
-        result=result with {ExpiresAt=limit.Effective,RetentionDeleteAfter=limit.Policy?.DeleteAfter,RetentionSha256=limit.Digest};
+        result=result with {ExpiresAt=limit.Effective,RetentionDeleteAfter=limit.Policy?.DeleteAfter,RetentionSha256=limit.Digest,
+            DemoDisclosure=DemoDisclosureContext.From(envelope.IsDemo,envelope.PublicId,limit.Policy)};
         if(limit.Policy is not null && limit.Effective<=(time ?? TimeProvider.System).GetUtcNow())
             result=result with {Errors=result.Errors.Append(new PreparationIssue("This demo document has reached its signing or retention deadline.","details")).ToArray()};
-        await transaction.CommitAsync(ct); return result;
+        DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);await transaction.CommitAsync(ct); return result;
     }
 
     // Pure preparation checks; this method grants no access and does not authorize sending.

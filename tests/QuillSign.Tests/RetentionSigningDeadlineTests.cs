@@ -60,7 +60,7 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
         if(crossing is "fields_finalized" or "sent") {run.H.Faults.Event=crossing;run.H.Faults.BeforeAudit=_=> {Cross();return Task.CompletedTask;};}
         await Assert.ThrowsAsync<DocumentRejectedException>(()=>run.H.Send(reviewedRetentionSha256:review.RetentionSha256));await run.Unsent(before);
         if(crossing!="before")Assert.Single(run.H.Blobs.Deleted);Assert.Equal(0,run.H.Sender.Calls);Assert.Equal(0,run.H.Signals.Published);
-        var expired=(await run.Review())!;Assert.False(expired.ChecksPassed);Assert.Contains(expired.Errors,x=>x.Message.Contains("retention deadline",StringComparison.Ordinal));
+        await Assert.ThrowsAsync<DocumentRetentionExpiredException>(()=>run.Review());
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
     {
         await using var run=await Retained.Create(fixture,"absent");var review=(await run.Review())!;
         await using(var db=fixture.Open())await db.DocumentRetentionSnapshots.Where(x=>x.EnvelopeId==run.H.Envelope.Id).ExecuteDeleteAsync();
-        await Assert.ThrowsAsync<InvalidDataException>(()=>run.Review());await Assert.ThrowsAsync<InvalidDataException>(()=>run.H.Send(reviewedRetentionSha256:review.RetentionSha256));Assert.Equal(0,run.H.Signals.HintCalls);
+        await Assert.ThrowsAsync<PreparationRetentionEvidenceException>(()=>run.Review());await Assert.ThrowsAsync<InvalidDataException>(()=>run.H.Send(reviewedRetentionSha256:review.RetentionSha256));Assert.Equal(0,run.H.Signals.HintCalls);
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
         }
         else
         {
-            Assert.Equal(outcome is "missing" or "forged" ? HttpStatusCode.Conflict : HttpStatusCode.BadRequest,result.StatusCode);await run.Unsent(before);Assert.Equal(0,run.H.Signals.HintCalls);
+            Assert.Equal(outcome is "missing" or "forged" ? HttpStatusCode.Conflict : outcome=="expired" ? HttpStatusCode.Gone : HttpStatusCode.BadRequest,result.StatusCode);await run.Unsent(before);Assert.Equal(0,run.H.Signals.HintCalls);
         }
     }
 
@@ -160,9 +160,9 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
     internal sealed class Retained:IAsyncDisposable
     {
         public Shared H=null!;public DocumentRetentionSnapshot Policy=null!;internal SqlDatabaseFixture fixture=null!;
-        public static async Task<Retained> Create(SqlDatabaseFixture fixture,string requested="later",int? browserPort=null,bool browser=false,Func<QuillSign.Signing.VerifiedSigner?>? syntheticSigner=null)
+        public static async Task<Retained> Create(SqlDatabaseFixture fixture,string requested="later",int? browserPort=null,bool browser=false,Func<QuillSign.Signing.VerifiedSigner?>? syntheticSigner=null,int retentionDays=7)
         {
-            var run=new Retained{fixture=fixture,H=await Shared.Create(fixture,browser:browser || browserPort is not null,browserPort:browserPort,syntheticSigner:syntheticSigner)};var h=run.H;var old=Guid.ParseExact(h.Envelope.PdfBlob!,"N");h.App.Services.GetRequiredService<DemoRetentionOptions>().PurgeAfterDays=7;
+            var run=new Retained{fixture=fixture,H=await Shared.Create(fixture,browser:browser || browserPort is not null,browserPort:browserPort,syntheticSigner:syntheticSigner)};var h=run.H;var old=Guid.ParseExact(h.Envelope.PdfBlob!,"N");h.App.Services.GetRequiredService<DemoRetentionOptions>().PurgeAfterDays=retentionDays;
             await using(var db=fixture.Open())
             {
                 var e=await db.Envelopes.SingleAsync(x=>x.Id==h.Envelope.Id);e.IsDemo=true;e.PdfBlob=null;e.PdfSha256=null;e.PageCount=null;e.PageSizesJson=null;e.PreviewConfirmedAt=null;
