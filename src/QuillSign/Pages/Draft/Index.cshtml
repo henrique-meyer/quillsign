@@ -1,6 +1,12 @@
 @page "/draft/{publicId}"
 @model QuillSign.Pages.Draft.IndexModel
 @{ ViewData["Title"] = "Your draft"; }
+@if(Model.RetentionExpired) {
+<h1>Document unavailable.</h1>
+<p class="document-error" role="status">This demo document has reached its retention deadline and is no longer available.</p>
+<p>Previously downloaded copies remain with their holders. This message does not confirm deletion of backup or recovery copies.</p>
+<p><a href="/">Start a new document</a></p>
+} else {
 <p class="eyebrow">YOUR DOCUMENT</p>
 <h1>Make it<br />your document.</h1>
 <p class="intro">Email verified for <strong>@Model.Draft.SenderEmail</strong>.</p>
@@ -53,8 +59,11 @@
     </section>
 }
 <p><a href="/">Start a new document</a></p>
+}
 @section Styles { <link rel="stylesheet" href="~/vendor/pdfjs/web/pdf_viewer.css" /> }
 @section Scripts {
+    @if(!Model.RetentionExpired) {
     <script type="module" src="~/js/document-upload.mjs"></script>
     <script type="module" src="~/js/pdf-preview.mjs"></script>
+    }
 }
