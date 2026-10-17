@@ -49,6 +49,41 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
         normalized.Position = 0;
         var normalizedHash = await SHA256.HashDataAsync(normalized, ct);
         original.Position = normalized.Position = 0;
+        return await PublishUploadAsync(sender,publicId,expectedVersion,before,new(safeName,"application/pdf",original,originalHash,
+            normalized,normalizedHash,pages,null),ip,userAgent,ct);
+    }
+
+    // Conversion runs outside a SQL transaction/connection. Recheck this after
+    // the slow external step, before writing any operation-owned objects.
+    internal async Task<Envelope?> CheckConvertedUploadAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is not null)throw new InvalidOperationException("Document conversion requires a standalone workflow.");
+        try
+        {
+            var before=await DraftAsync(sender,publicId,false,ct);if(before is null)return null;Version(before,expectedVersion);
+            var retention=await new UploadRetention(db,retentionOptions ?? new(),time).ReadAsync(before,ct);UploadRetention.CheckDeadline(retention,time.GetUtcNow());return before;
+        }
+        finally {await db.Database.CloseConnectionAsync();}
+    }
+
+    internal async Task<bool> StoreConvertedAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,string title,
+        ValidatedDocx source,DocxConversion converted,string? ip,string? userAgent,CancellationToken ct)
+    {
+        var before=await CheckConvertedUploadAsync(sender,publicId,expectedVersion,ct);if(before is null)return false;
+        using var original=source.OpenRead();using var normalized=new MemoryStream(converted.Pdf,false);
+        var provenance=new {version="docx-gotenberg-v1",originalFilename=title[..^4]+".docx",
+            originalMime=DocxDocumentWorkflow.Mime,originalBytes=source.Length,pdfBytes=converted.Pdf.LongLength};
+        return await PublishUploadAsync(sender,publicId,expectedVersion,before,new(title,DocxDocumentWorkflow.Mime,original,source.OriginalSha256,
+            normalized,converted.PdfSha256.ToArray(),converted.Pages,provenance),ip,userAgent,ct);
+    }
+
+    private sealed record PreparedUpload(string Filename,string Mime,Stream Original,byte[] OriginalHash,Stream Pdf,byte[] PdfHash,
+        IReadOnlyList<PageGeometry> Pages,object? Provenance);
+
+    private async Task<bool> PublishUploadAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,Envelope before,PreparedUpload upload,
+        string? ip,string? userAgent,CancellationToken ct)
+    {
+        var (safeName,originalMime,original,originalHash,normalized,normalizedHash,pages,provenance)=upload;
         var originalBlob = new DocumentBlob(before.Id, DocumentBlobKind.Original, Guid.NewGuid());
         var normalizedBlob = new DocumentBlob(before.Id, DocumentBlobKind.Normalized, Guid.NewGuid());
         var commitStarted = false;
@@ -63,14 +98,16 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             var retention=await new UploadRetention(db,retentionOptions ?? new(),time).PrepareLockedAsync(envelope,originalBlob.ObjectId,originalHash,normalizedBlob.ObjectId,normalizedHash,ct);
             var previous = envelope.PdfBlob;
             envelope.Title = safeName;
-            envelope.OriginalBlob = originalBlob.ObjectId.ToString("N"); envelope.OriginalSha256 = originalHash; envelope.OriginalMime = "application/pdf";
+            envelope.OriginalBlob = originalBlob.ObjectId.ToString("N"); envelope.OriginalSha256 = originalHash; envelope.OriginalMime = originalMime;
             envelope.PdfBlob = normalizedBlob.ObjectId.ToString("N"); envelope.PdfSha256 = normalizedHash;
             envelope.PageCount = pages.Count; envelope.PageSizesJson = JsonSerializer.Serialize(pages);
             envelope.PreviewConfirmedAt = null; envelope.AiRolesJson = null; envelope.AiModel = null;
             await db.Fields.Where(x => x.EnvelopeId == envelope.Id).ExecuteDeleteAsync(ct);
-            var data = JsonSerializer.Serialize(new { filename = safeName, originalSha256 = Convert.ToHexStringLower(originalHash),
+            var data = provenance is null ? JsonSerializer.Serialize(new { filename = safeName, originalSha256 = Convert.ToHexStringLower(originalHash),
                 pdfSha256 = Convert.ToHexStringLower(normalizedHash), pageCount = pages.Count, previousDocument = previous,
-                retentionSha256=retention is null ? null : UploadRetention.Digest(retention) });
+                retentionSha256=retention is null ? null : UploadRetention.Digest(retention) }) :
+                JsonSerializer.Serialize(new {filename=safeName,originalSha256=Convert.ToHexStringLower(originalHash),pdfSha256=Convert.ToHexStringLower(normalizedHash),
+                    pageCount=pages.Count,previousDocument=previous,retentionSha256=retention is null ? null : UploadRetention.Digest(retention),conversion=provenance});
             await audit.AppendAsync(envelope.Id, previous is null ? "document_uploaded" : "document_replaced", envelope.SenderEmail, ip, userAgent, ct, data);
             await db.SaveChangesAsync(ct);
             UploadRetention.CheckDeadline(retention,time.GetUtcNow());

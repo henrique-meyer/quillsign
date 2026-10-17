@@ -29,7 +29,7 @@ Synthetic end-to-end flows have local automated and browser coverage. Hosted com
 | Background work | SQL durable work/outbox records, Azure Storage Queues and Blob recovery hints; finite Container Apps jobs |
 | Email | Amazon SES v2 and SMTP/Mailpit; ACS remains a future optional adapter |
 | Hosting and delivery | Azure Container Apps Consumption, GitHub Actions, GHCR and Bicep; CloudFormation for AWS resources |
-| Office conversion | Gotenberg/LibreOffice sidecar and an internal DOCX client; public intake integration remains pending |
+| Office conversion | Gotenberg/LibreOffice sidecar, validated DOCX packages and an internal document workflow; public intake integration remains pending |
 | Image conversion | [Internal PNG/JPEG conversion](docs/image-conversion.md) with StbImageSharp (MIT) and PDFsharp; public intake integration remains pending |
 | Deferred enhancement | Azure OpenAI suggestions, after the remaining project work is complete |
 
