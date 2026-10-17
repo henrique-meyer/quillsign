@@ -25,6 +25,7 @@ internal sealed class SealFixtures : IAsyncDisposable
     public TimestampAuthority Timestamps=null!; public CountingProvider Certificates=null!; public PlatformPdfSeal Engine=null!;
     public X509Certificate2 Root=null!,Tsa=null!,Seal=null!,BadEku=null!; public RSA RootKey=null!,TsaKey=null!;
     public TimeStampTokenGenerator Tokens=null!; public string Mode="valid"; public int Requests,RedirectRequests,CookieRequests;
+    public Action? RequestObserved;
     private string directory="";
     public static async Task<SealFixtures> Create(string certificateKind="valid",string tsaKind="valid")
     {
@@ -63,6 +64,7 @@ internal sealed class SealFixtures : IAsyncDisposable
     }
     private async Task Handle(HttpContext context)
     {
+        RequestObserved?.Invoke();
         var serial=Interlocked.Increment(ref Requests); context.Response.ContentType="application/timestamp-reply";
         if(context.Request.Headers.Cookie.Count>0)Interlocked.Increment(ref CookieRequests);
         if(Mode=="cookie")context.Response.Cookies.Append("synthetic-tsa-session","synthetic-no-agreement");
