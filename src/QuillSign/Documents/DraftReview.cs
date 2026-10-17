@@ -17,9 +17,11 @@ public sealed record DraftReviewSnapshot(string PublicId, string Version, string
 {
     public bool ChecksPassed => Errors.Count == 0;
     public DateTimeOffset? ExpiresAt { get; init; }
+    public DateTimeOffset? RetentionDeleteAfter {get;init;}
+    public string? RetentionSha256 {get;init;}
 }
 
-public sealed class DraftReview(QuillSignDbContext db)
+public sealed class DraftReview(QuillSignDbContext db,TimeProvider? time=null)
 {
     public async Task<DraftReviewSnapshot?> GetAsync(ClaimsPrincipal sender, string publicId, CancellationToken ct = default)
     {
@@ -39,6 +41,10 @@ public sealed class DraftReview(QuillSignDbContext db)
         var recipients = await db.Recipients.AsNoTracking().Where(x => x.EnvelopeId == envelope.Id).OrderBy(x => x.Name).ThenBy(x => x.Id)
             .Select(x => new RecipientItem(x.Id, x.Name, x.Email)).ToListAsync(ct);
         var result = CheckPreparation(envelope, signers, fields, recipients);
+        var limit=await RetentionSigningDeadline.ReadAsync(db,envelope,ct);
+        result=result with {ExpiresAt=limit.Effective,RetentionDeleteAfter=limit.Policy?.DeleteAfter,RetentionSha256=limit.Digest};
+        if(limit.Policy is not null && limit.Effective<=(time ?? TimeProvider.System).GetUtcNow())
+            result=result with {Errors=result.Errors.Append(new PreparationIssue("This demo document has reached its signing or retention deadline.","details")).ToArray()};
         await transaction.CommitAsync(ct); return result;
     }
 

@@ -108,6 +108,7 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
                 }
                 else if(schedule.ValueKind!=JsonValueKind.Null || deadline.ValueKind!=JsonValueKind.Null)throw SigningExpiryJobs.Invalid();
             }
+            await RetentionSigningDeadline.VerifyEvidenceAsync(db,envelope,p,ct);
             return new(envelope.Id,envelope.PublicId,invitation,Convert.ToHexStringLower(envelope.SentPdfSha256),Convert.ToHexStringLower(envelope.ErsdSha256));
         }
         catch(Exception e) when(e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)

@@ -200,11 +200,12 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         public Clock Clock = new(); public Faults Faults = new(); public FakeSender Sender = new(); public FaultBlobs Blobs = null!; public Signals Signals = null!;
         private QueueClient queue = null!; private BlobContainerClient hints = null!; private BlobClient keyBlob = null!;
         public ClaimsPrincipal Principal => SenderConfiguration.Principal(new(Envelope.Id,Envelope.PublicId,Envelope.SenderEmail));
-        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false)
+        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false,int? browserPort=null)
         {
             var run = new Harness(); var name = "sendtest-" + Guid.NewGuid().ToString("N"); var storage = Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
             using var source = fixture.Open(); var connection = source.Database.GetConnectionString();
-            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ApplicationName = typeof(SendDraftWorkflow).Assembly.FullName,EnvironmentName = "Development",ContentRootPath = AppContext.BaseDirectory }); builder.Logging.ClearProviders();
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ApplicationName = typeof(SendDraftWorkflow).Assembly.FullName,EnvironmentName = "Development",ContentRootPath = AppContext.BaseDirectory,
+                WebRootPath=browserPort is null ? null : Path.GetFullPath("../../../../../src/QuillSign/wwwroot",AppContext.BaseDirectory) }); builder.Logging.ClearProviders();
             builder.Configuration.AddInMemoryCollection(new Dictionary<string,string?> {
                 ["Storage:Provider"]="Azurite",["Storage:ConnectionString"]=storage,["DataProtection:ApplicationName"]=name,["DataProtection:KeyRingBlobName"]=name+".xml",
                 ["Work:Enabled"]="true",["Work:QueueName"]=name,["Work:HintContainer"]=name,["Email:Enabled"]="true",["Email:Provider"]="Smtp",
@@ -218,7 +219,8 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
             run.Signals = new(new AzureWorkSignals(run.queue,run.hints,new() { Enabled=true,QueueName=name,HintContainer=name },true)); builder.Services.AddSingleton<IWorkSignals>(run.Signals);
             run.Blobs = new(new AzureBlobStore(service,25*1024*1024,true)); builder.Services.AddSingleton<IBlobStore>(run.Blobs);
             if(browser) {
-                builder.WebHost.UseTestServer(); builder.Configuration.AddInMemoryCollection(new Dictionary<string,string?> { ["ConnectionStrings:Database"]=connection });
+                if(browserPort is { } port) builder.WebHost.UseUrls("http://127.0.0.1:"+port); else builder.WebHost.UseTestServer();
+                builder.Configuration.AddInMemoryCollection(new Dictionary<string,string?> { ["ConnectionStrings:Database"]=connection });
                 builder.Services.AddScoped<SenderSentStatus>(); builder.Services.AddScoped<Func<SenderSentStatus>>(sp=>()=>sp.GetRequiredService<SenderSentStatus>());
                 builder.Services.AddScoped<Func<SendDraftWorkflow>>(sp=>()=>sp.GetRequiredService<SendDraftWorkflow>()); builder.Services.AddScoped<SenderSendReadiness>();
                 builder.Services.AddQuillSignSignerAccess(builder.Configuration,builder.Environment); builder.Services.AddQuillSignSignerConsent();
@@ -234,6 +236,7 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
                 new DocumentField { EnvelopeId=run.Envelope.Id,SignerId=run.First.Id,Type=FieldType.Signature,Page=1,X=.1m,Y=.5m,Width=.4m,Height=.1m }); await db.SaveChangesAsync(); run.Version=run.Envelope.RowVersion; }
             await run.Blobs.Inner.WriteAsync(run.Principal,new(run.Envelope.Id,DocumentBlobKind.Normalized,Guid.Parse(run.Envelope.PdfBlob)),new MemoryStream(run.Source),run.Source.Length);
             if(browser) {
+                if(browserPort is not null) run.App.UseStaticFiles();
                 run.App.UseRouting(); run.App.UseRateLimiter(); run.App.UseAuthentication(); run.App.UseAuthorization(); run.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
                 run.App.MapGet("/test-session",async (Microsoft.AspNetCore.Http.HttpContext context)=> {
                     await context.SignInAsync(EnvelopeStorageAuthorization.SenderScheme,run.Principal,new AuthenticationProperties { ExpiresUtc=run.Clock.GetUtcNow().AddHours(2),AllowRefresh=false }); return "ok";
@@ -241,7 +244,7 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
             }
             return run;
         }
-        public async Task<SentDraft?> Send(bool acknowledged = true) { using var scope = App.Services.CreateScope(); return await scope.ServiceProvider.GetRequiredService<SendDraftWorkflow>().SendAsync(Principal,Envelope.PublicId,Version,acknowledged,true,SenderSendStatement.Version,"127.0.0.1","synthetic-send-test"); }
+        public async Task<SentDraft?> Send(bool acknowledged = true,string? reviewedRetentionSha256=null) { using var scope = App.Services.CreateScope(); return await scope.ServiceProvider.GetRequiredService<SendDraftWorkflow>().SendAsync(Principal,Envelope.PublicId,Version,acknowledged,true,SenderSendStatement.Version,"127.0.0.1","synthetic-send-test",reviewedRetentionSha256:reviewedRetentionSha256); }
         public async Task<bool> Once() { using var scope = App.Services.CreateScope(); return await scope.ServiceProvider.GetRequiredService<WorkProcessor>().RunOnceAsync(default); }
         public async Task<byte[]> Read(Guid id) { using var result = new MemoryStream(); await Blobs.Inner.CopyToAsync(Principal,new(Envelope.Id,DocumentBlobKind.Normalized,id),result); return result.ToArray(); }
         public async Task AssertUnsent(SqlDatabaseFixture fixture) { await using var db = fixture.Open(); var e = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == Envelope.Id); Assert.Equal(EnvelopeStatus.Draft,e.Status); Assert.Null(e.SentPdfBlob); Assert.Null(e.ErsdText); Assert.False(await db.EmailOutbox.AnyAsync(x => x.EnvelopeId == e.Id)); Assert.False(await db.AuditEvents.AnyAsync(x => x.EnvelopeId == e.Id)); Assert.False(await db.AuthTokens.AnyAsync(x => x.EnvelopeId == e.Id)); }
