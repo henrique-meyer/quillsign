@@ -60,7 +60,8 @@ internal static class CompletionDownloadState
         if(documents.Executed is null || documents.Certificate is null)throw Invalid();
         Check(documents.Executed,id,intent.ExecutedObjectId,FinalDocumentKind.Executed,e.FinalBlob,e.FinalSha256);
         Check(documents.Certificate,id,intent.CertificateObjectId,FinalDocumentKind.Certificate,e.CertificateBlob,e.CertificateSha256);
-        var stages=JsonSerializer.Deserialize<Stages>(intent.StageBindingsJson) ?? throw Invalid();
+        if(CompletionRetentionBinding.FixedUntil(intent) is DateTimeOffset fixedUntil && e.PurgeAfter!=fixedUntil)throw Invalid();
+        var stages=JsonSerializer.Deserialize<Stages>(CompletionRetentionBinding.StagesJson(intent)) ?? throw Invalid();
         if(stages.Id!=intent.CandidateId || stages.EnvelopeId!=id || stages.RowVersion is not {Length:8} || stages.FrozenStateSha256 is not {Length:32} ||
             stages.AuditSequence is <1 or >512 || stages.AuditAnchor is not {Length:32} || stages.outputs is not {Length:2})throw Invalid();
         var candidate=await db.CompletionCandidates.AsNoTracking().Where(x=>x.Id==stages.Id && x.EnvelopeId==id)
