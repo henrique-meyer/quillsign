@@ -103,6 +103,17 @@ namespace QuillSign.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<byte[]>("CompletionPartySha256")
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid?>("CompletionPublicationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("CompletionRecipeSha256")
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
                     b.Property<byte[]>("DisclosureSha256")
                         .HasMaxLength(32)
                         .HasColumnType("varbinary(32)");
@@ -158,6 +169,8 @@ namespace QuillSign.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CompletionPublicationId");
+
                     b.HasIndex("EnvelopeId");
 
                     b.HasIndex("ExpiresAt");
@@ -167,15 +180,21 @@ namespace QuillSign.Data.Migrations
 
                     b.ToTable("AuthTokens", t =>
                         {
+                            t.HasCheckConstraint("CK_AuthToken_CompletionPartySha256", "[CompletionPartySha256] IS NULL OR DATALENGTH([CompletionPartySha256]) = 32");
+
+                            t.HasCheckConstraint("CK_AuthToken_CompletionRecipeSha256", "[CompletionRecipeSha256] IS NULL OR DATALENGTH([CompletionRecipeSha256]) = 32");
+
                             t.HasCheckConstraint("CK_AuthToken_DisclosureSha256", "[DisclosureSha256] IS NULL OR DATALENGTH([DisclosureSha256]) = 32");
 
                             t.HasCheckConstraint("CK_AuthToken_DocumentSha256", "[DocumentSha256] IS NULL OR DATALENGTH([DocumentSha256]) = 32");
 
                             t.HasCheckConstraint("CK_AuthToken_PartyType", "[PartyType] IS NULL OR [PartyType] IN ('Sender','Signer','Recipient','System')");
 
-                            t.HasCheckConstraint("CK_AuthToken_Purpose", "[Purpose] IS NULL OR [Purpose] IN ('SenderVerify','SenderStatus','SignerAccess','Lookup')");
+                            t.HasCheckConstraint("CK_AuthToken_Purpose", "[Purpose] IS NULL OR [Purpose] IN ('SenderVerify','SenderStatus','SignerAccess','Lookup','CompletionAccess')");
 
                             t.HasCheckConstraint("CK_AuthToken_TokenSha256", "[TokenSha256] IS NULL OR DATALENGTH([TokenSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_Token_CompletionBinding", "([Purpose] = 'CompletionAccess' AND [CompletionPublicationId] IS NOT NULL AND [CompletionRecipeSha256] IS NOT NULL AND [CompletionPartySha256] IS NOT NULL AND [DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL AND (([PartyType] = 'Sender' AND [PartyId] IS NULL) OR ([PartyType] IN ('Signer','Recipient') AND [PartyId] IS NOT NULL))) OR ([Purpose] <> 'CompletionAccess' AND [CompletionPublicationId] IS NULL AND [CompletionRecipeSha256] IS NULL AND [CompletionPartySha256] IS NULL)");
 
                             t.HasCheckConstraint("CK_Token_DocumentBinding", "([DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL) OR ([DocumentId] IS NOT NULL AND [DocumentSha256] IS NOT NULL AND [DisclosureSha256] IS NOT NULL)");
 
@@ -1606,6 +1625,11 @@ namespace QuillSign.Data.Migrations
 
             modelBuilder.Entity("QuillSign.Data.AuthToken", b =>
                 {
+                    b.HasOne("QuillSign.Data.CompletionPublicationResult", null)
+                        .WithMany()
+                        .HasForeignKey("CompletionPublicationId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
                     b.HasOne("QuillSign.Data.Envelope", null)
                         .WithMany()
                         .HasForeignKey("EnvelopeId")

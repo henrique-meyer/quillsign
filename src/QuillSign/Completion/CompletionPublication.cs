@@ -103,7 +103,7 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
                 PublicationId=result.Id,PublicationRecipeSha256=result.RecipeSha256.ToArray(),PublicationRowVersion=result.RowVersion.ToArray()};
         }
         catch(Azure.RequestFailedException) {throw new IOException("Final completion storage is unavailable.");}
-        catch(Exception error) when(error is JsonException or FormatException or InvalidOperationException or ArgumentException or UnauthorizedAccessException or KeyNotFoundException)
+        catch(Exception error) when(error is JsonException or FormatException or InvalidOperationException or ArgumentException or UnauthorizedAccessException or KeyNotFoundException or DocumentConflictException)
         {throw Invalid();}
     }
 

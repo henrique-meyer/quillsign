@@ -113,7 +113,7 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         if(e is null || actor.Until<=time.GetUtcNow() || e.PurgeAfter<=time.GetUtcNow())throw Invalid();
         var current=await CompletionDownloadState.ReadAsync(db,saved.EnvelopeId,time,ct);
         if(current is null || current.Id!=saved.Id || !Same(current.Recipe,saved.Recipe) || !current.Revision.AsSpan().SequenceEqual(saved.Revision))throw Invalid();
-        await collector.RecheckLockedAsync(saved.EnvelopeId,saved.FrozenState,ct,saved.AuditSequence,saved.AuditAnchor,saved.Source);
+        await CompletionDownloadState.RecheckSourceAsync(collector,saved,ct);
         if(actor.Until<=time.GetUtcNow() || e.PurgeAfter<=time.GetUtcNow())throw Invalid();
     }
 

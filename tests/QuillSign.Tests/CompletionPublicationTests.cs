@@ -164,7 +164,7 @@ public sealed class CompletionPublicationTests(SqlDatabaseFixture fixture) : ICl
             if(stage)await other.CompletionSealOutputs.Where(x=>x.EnvelopeId==target.EnvelopeId && x.Kind==CompletionSealKind.Executed).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.PageCount,1));
             else await other.CompletionCandidates.Where(x=>x.EnvelopeId==target.EnvelopeId).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.RendererVersion,"changed"));
         };
-        await Assert.ThrowsAsync<DocumentConflictException>(()=>Service(run,db,store).ReadAsync(saved.EnvelopeId)); Assert.True(changed); Assert.Equal(2,run.Seal.Requests);
+        await Assert.ThrowsAsync<InvalidDataException>(()=>Service(run,db,store).ReadAsync(saved.EnvelopeId)); Assert.True(changed); Assert.Equal(2,run.Seal.Requests);
     }
     [Fact]
     public async Task Cancellation_after_actual_completion_commit_preserves_the_exact_authoritative_result()
