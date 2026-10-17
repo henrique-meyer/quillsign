@@ -836,7 +836,7 @@ Validation: Release build succeeds with no warnings or errors. Actual browser ch
 
 ## QUILS-60: Schedule durable signing expiry atomically with reviewed Send
 
-Status: To Do. Depends on QUILS-58; planning only until that prerequisite merges.
+Status: In Progress. Depends on merged QUILS-58 (PR #64); current main is integrated.
 
 Depends on QUILS-58. Join supported durable signing-expiry preparation to each newly committed public Send with a finite frozen UTC signing deadline. Keep the current manual field workflow and sender review/affirmation unchanged. Requests without a finite deadline do not get an expiry job. Existing sent requests retain explicit trusted resume; no recurring SQL discovery or infrastructure is introduced.
 
@@ -846,9 +846,13 @@ Repeated Send and lost-acknowledgement recovery must reuse canonical saved Send 
 
 Update matching docs/plan.md before implementation; keep To Do until QUILS-58 merges, then integrate main and move In Progress. Test actual SQL/Azurite Send, exact deadline/source/job bindings, no-deadline requests, rollback/hint failures, queue outages, unknown commit/replay and due worker progression. Exercise the synthetic sender review/Send/private status flow in the real browser, including stale input and disabled delivery boundaries, and confirm no GET scheduling or new query-string action notices. Validate meaningful regression/model/vendor/license/vulnerability/secrets, commit/push/create/attach/pass checks/merge and move native Jira Done in the same pass. No resources, public email enablement, purchases, fabricated policies, AI, OTP or scope expansion.
 
+Implementation design: New Send audit evidence binds the stable expiry job identity and exact UTC deadline. Prepare the row and hint under the existing Send transaction after frozen source/disclosure evidence exists, then publish both wakeups after commit. Canonical reads verify recorded schedules without creating them. Replay reuses queued work and preserves live/terminal jobs; legacy records remain opt-in through trusted resume. Source verification runs after the new transaction-owned row exists to avoid a circular binding dependency. No GET creates or republishes work.
+
+Validation: Focused SQL/Azurite scheduling, Send, expiry and private-status cases pass, including rollback, lost acknowledgements, queued recovery and preservation of live/failed work. Real synthetic desktop/mobile Send flows pass with keyboard affirmation, stale-review reload, uncertain-commit confirmation, disabled delivery and clean private-status redirects. Storage recovery publishes only the three in-memory invitations; the worker expires all three requests once, with unchanged frozen PDF hashes. The mobile status has no horizontal overflow. Legacy regression fixtures now set deadlines before Send and allow the due expiry wake alongside recovered completion. Model, all 11 Node cases, pinned vendor/MIT distributions and 78 Markdown links pass; full regression, secret scans and exact-head CI gate merge.
+
 ## QUILS-61: Coordinate FreeTSA timestamp requests across workers
 
-Status: Implementation complete. Shared timestamp coordination uses the merged seal and storage foundations; hosted FreeTSA configuration remains separate rollout work.
+Status: Done. Merged as PR #65; native Jira Done. Hosted FreeTSA CA and runtime configuration remain separate rollout work.
 
 Implement the request coordination required before the approved low-volume FreeTSA demo provider can be enabled. Existing RFC3161 validation, configured CA trust, PDF seal evidence and certificate-provider behavior remain authoritative. This is independent of signing-expiry work and adds no SQL polling, cloud resource, purchase or public delivery enablement.
 
@@ -860,4 +864,4 @@ Create matching docs/plan.md before implementation, use a separate QUILS branch 
 
 Implementation design: Use a provider-scoped empty blob in the existing protected storage container with a finite 60-second lease. Renew ownership at the HTTP boundary, bound request time against the remaining lease and keep a monotonic cooldown even after cancellation. FreeTSA aliases share one scope; FreeTSA also requires explicit CA trust and enabled shared coordination. No document data or timestamps enter coordinator metadata, no idle SQL is queried and readonly seal verification does not resolve the adapter.
 
-Validation: All 132 focused coordinator, platform seal and certificate/provider cases pass, including actual independent Azurite clients, an abandoned finite lease, bounded contention, cancellation cooldown, lease loss, local HTTP spacing, invalid nonce rejection and offline verification. Full combined regression, model/vendor/license/vulnerability/link and secret checks plus exact-head CI gate merge.
+Validation: All 132 focused coordinator, platform seal and certificate/provider cases pass, including actual independent Azurite clients, an abandoned finite lease, bounded contention, cancellation cooldown, lease loss, local HTTP spacing, invalid nonce rejection and offline verification. Both complete CI runs and all 14 exact-head checks pass, including Windows/Linux seals. The local full suite passed 1,297 cases and one pre-existing rate-window test crossed its real one-minute window under load; its isolated retry passed. Model, Node, vendor/license, Markdown links and secret checks pass; dependencies are unchanged from the clean vulnerability scan. PR #65 merged and native Jira Done was verified in the same pass.

@@ -153,8 +153,13 @@ public sealed class CompletionWorkTests(SqlDatabaseFixture fixture) : IClassFixt
         run.Seal.Options.Pfx.Path="unavailable"; run.Signing.H.Clock.Advance(TimeSpan.FromHours(3)); run.Seal.Time.Advance(TimeSpan.FromHours(3));
         Assert.True(await run.Signing.H.Signals.RecoverAsync(run.Signing.H.Clock.GetUtcNow(),default)>0);
         await using var retry=fixture.Open(); var recovered=Build(run,retry,out var store);
-        var processor2=new WorkProcessor(new(retry,run.Signing.H.App.Services.GetRequiredService<WorkOptions>(),run.Signing.H.Clock),run.Signing.H.Signals,[recovered],run.Signing.H.Clock);
-        Assert.True(await processor2.RunOnceAsync(default)); var result=(await Publication(run,retry,store).ReadAsync(id))!;
+        var clock=run.Signing.H.Clock;var expiry=new SigningExpiryHandler(retry,new(retry,new(retry,clock),new(retry,clock),clock));
+        var processor2=new WorkProcessor(new(retry,run.Signing.H.App.Services.GetRequiredService<WorkOptions>(),clock),run.Signing.H.Signals,[recovered,expiry],clock);
+        // The now-due expiry wake can precede the recovered completion lease.
+        // Exercise both supported handlers instead of assuming a single queue message.
+        for(var attempt=0;attempt<8 && await retry.WorkItems.AsNoTracking().AnyAsync(x=>x.EnvelopeId==id && x.Kind==WorkKind.Sealing && x.Status!=WorkStatus.Completed);attempt++)
+            Assert.True(await processor2.RunOnceAsync(default));
+        var result=(await Publication(run,retry,store).ReadAsync(id))!;
         Assert.Equal(old.Id,(await retry.CompletionPublicationResults.AsNoTracking().SingleAsync(x=>x.EnvelopeId==id)).Id);
         Assert.Equal(WorkStatus.Completed,(await retry.WorkItems.AsNoTracking().SingleAsync(x=>x.EnvelopeId==id && x.Kind==WorkKind.Sealing)).Status);
         Assert.Equal(2,run.Seal.Requests); Assert.Equal(calls,run.Seal.Certificates.Calls); await DeleteFinal(run,result);

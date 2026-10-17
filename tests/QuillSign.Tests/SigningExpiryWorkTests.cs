@@ -95,6 +95,7 @@ public sealed class SigningExpiryWorkTests(SqlDatabaseFixture fixture) : IClassF
     public async Task Preparation_hint_failure_rolls_back_and_lost_commit_is_recovered_by_explicit_resume(bool lostCommit)
     {
         await using var h=await Shared.Create(fixture);Assert.NotNull(await h.Send());await using var signals=await SignalRun.Create();
+        await LegacyAsync(h,fixture);
         signals.FailAfterHint=!lostCommit;await using var db=Database(new PreparationFault(lostCommit));var jobs=Jobs(db,h,signals);
         await Assert.ThrowsAsync<IOException>(()=>jobs.ResumeAsync(h.Envelope.Id));Assert.Empty(db.ChangeTracker.Entries());
         var names=new List<string>();await foreach(var hint in signals.Hints.GetBlobsAsync())names.Add(hint.Name);
@@ -175,6 +176,17 @@ public sealed class SigningExpiryWorkTests(SqlDatabaseFixture fixture) : IClassF
     }
 
     private SigningExpiryJobs Jobs(QuillSignDbContext db,Shared h,IWorkSignals? signals=null)=>new(db,new(db,h.Clock),()=>signals??h.Signals,new(){Enabled=true},h.Clock);
+    // Model a retained pre-QUILS-60 request: its last Send audit had no expiry
+    // binding and no deadline job. This is fixture construction, never app repair.
+    internal static async Task LegacyAsync(Shared h,SqlDatabaseFixture fixture)
+    {
+        await using var db=fixture.Open();var sent=await db.AuditEvents.AsNoTracking().SingleAsync(x=>x.EnvelopeId==h.Envelope.Id && x.Event=="sent");
+        var data=System.Text.Json.Nodes.JsonNode.Parse(sent.DataJson)!.AsObject();var id=data["expiryWorkId"]!.GetValue<Guid>();
+        data.Remove("expiryWorkId");data.Remove("signingDeadline");sent.DataJson=data.ToJsonString();sent.Hash=AuditHash.Compute(sent);
+        await db.AuditEvents.Where(x=>x.Id==sent.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.DataJson,sent.DataJson).SetProperty(x=>x.Hash,sent.Hash));
+        await db.WorkItems.Where(x=>x.Id==id && x.EnvelopeId==h.Envelope.Id && x.Kind==WorkKind.Expiry).ExecuteDeleteAsync();
+        await h.Signals.RemoveHintAsync(id,default);
+    }
     private static WorkProcessor Processor(QuillSignDbContext db,Shared h,IWorkSignals signals)=>Processor(db,h.Clock,signals);
     private static WorkProcessor Processor(QuillSignDbContext db,TimeProvider clock,IWorkSignals signals)=>new(new(db,new(),clock),signals,
         [new SigningExpiryHandler(db,new(db,new(db,clock),new(db,clock),clock))],clock);
