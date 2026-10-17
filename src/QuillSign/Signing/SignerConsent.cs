@@ -88,7 +88,9 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
         await using (var transaction = await db.Database.BeginTransactionAsync(ct))
         {
             context = await access.GetLockedContextAsync(principal,publicId,ct);
-            if (context is null || context.ConsentAt is not null) return null;
+            // Current scope already rejects any accepted Finish under this parent lock.
+            // Electronic-record consent does not remove the signer's choice to refuse signing.
+            if (context is null) return null;
             await db.Signers.Where(x => x.Id == context.Identity.SignerId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status,SignerStatus.Declined)
                 .SetProperty(x => x.DeclineReason,reason),ct);
             await db.Envelopes.Where(x => x.Id == context.Identity.EnvelopeId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status,EnvelopeStatus.Declined),ct);

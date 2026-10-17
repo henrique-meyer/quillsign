@@ -17,6 +17,7 @@
     </p>
     <p><a class="button-link" asp-page="/Sign/Signature" asp-route-publicId="@Model.Context.Identity.PublicId">@(Model.Context.SignatureAdoptionId is null ? "Adopt your signature" : "Review or replace your adopted marks")</a></p>
     <p><a asp-page="/Sign/Fields" asp-route-publicId="@Model.Context.Identity.PublicId">Complete your fields</a> · <a asp-page="/Sign/Review" asp-route-publicId="@Model.Context.Identity.PublicId">Review saved entries</a></p>
+    <p><a asp-page="/Sign/Decline" asp-route-publicId="@Model.Context.Identity.PublicId">Decline to sign</a></p>
 }
 <h2>Electronic Record &amp; Signature Disclosure</h2>
 <p>Read the disclosure for this request. You may save it and the PDF before deciding.</p>

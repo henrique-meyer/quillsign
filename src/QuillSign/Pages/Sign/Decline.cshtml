@@ -1,0 +1,19 @@
+@page "/sign/{publicId}/decline"
+@model QuillSign.Pages.Sign.DeclineModel
+@{ ViewData["Title"]="Decline signing request"; }
+@section Styles { <link rel="stylesheet" href="~/signer.css" asp-append-version="true" /> }
+<section class="signer-flow">
+<h1>Decline signing request</h1>
+@if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p><p><a href="">Reload this page</a></p> }
+@if(Model.Context is { } context) {
+<p>@context.Title · For @context.SignerName</p>
+<p>Declining closes this request and queues a notification for the sender. Previously recorded consent and signing evidence remain recorded. You can return without declining.</p>
+<div asp-validation-summary="All" class="validation" role="alert"></div>
+<form method="post">
+<label asp-for="Reason">Reason (optional)</label><textarea asp-for="Reason" maxlength="512" rows="3"></textarea>
+<label class="check-label"><input type="checkbox" asp-for="ConfirmDecline" required /> I choose to decline this signing request.</label>
+<button type="submit" class="quiet-button">Decline to sign</button>
+</form>
+<p><a asp-page="/Sign/Index" asp-route-publicId="@context.Identity.PublicId">Return to the document without declining</a></p>
+}
+</section>
