@@ -164,7 +164,19 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
         Assert.Contains("preparing a new download",await limited.Content.ReadAsStringAsync()); Assert.Equal(before,await f.Count()); Assert.Equal(reads,f.Store.Reads);
     }
 
-    private sealed class Flow : IAsyncDisposable
+    [Fact]
+    public async Task A_completed_source_conflict_after_IO_returns_a_controlled_private_error_without_a_grant()
+    {
+        await using var f=await Flow.Create(fixture); await f.Session("sender"); var page=await f.Page(); var changed=false;
+        f.Store.AfterRead=async ()=> {if(changed)return;changed=true;await using var db=fixture.Open();await db.Signers.Where(x=>x.EnvelopeId==f.Id && x.Order==2)
+            .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Status,SignerStatus.Viewed));};
+        using var response=await f.Post(page,"executed"); Assert.Equal(HttpStatusCode.ServiceUnavailable,response.StatusCode);
+        var body=await response.Content.ReadAsStringAsync(); Assert.Contains("could not be verified",body); Assert.DoesNotContain("Stack Trace",body);
+        Assert.False(response.Headers.TryGetValues("Set-Cookie",out var values) && values.Any(x=>x.StartsWith("QuillSign.Final.")));
+        Assert.True(changed); Assert.Equal(0,await f.Count()); Assert.Equal(2,f.Store.Writes); Assert.Equal(2,f.Run.Seal.Requests);
+    }
+
+    internal sealed class Flow : IAsyncDisposable
     {
         public Run Run=null!; public WebApplication App=null!; public HttpClient Client=null!; public FinalStore Store=null!; public PublishedCompletion Published=null!;
         public Dictionary<string,string> Cookies=[]; public string Role="sender"; private SqlDatabaseFixture fixture=null!;
@@ -212,7 +224,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
         public void Set(string name,string? value) {if(string.IsNullOrEmpty(value))Cookies.Remove(name); else Cookies[name]=value; Client.DefaultRequestHeaders.Remove("Cookie"); Client.DefaultRequestHeaders.Add("Cookie",string.Join("; ",Cookies.Select(x=>x.Key+"="+x.Value)));}
         public async ValueTask DisposeAsync() {Client.Dispose(); await App.DisposeAsync(); await Run.DisposeAsync();}
     }
-    private sealed class FinalStore(TimeProvider time) : ICompletionFinalStore
+    internal sealed class FinalStore(TimeProvider time) : ICompletionFinalStore
     {
         private readonly Dictionary<FinalDocument,byte[]> files=[]; public int Writes,Reads; public string? Fault; public Func<Task>? AfterRead;
         public async Task<FinalStoredDocument> WriteAsync(ClaimsPrincipal p,FinalDocument target,Stream source,long length,byte[] hash,DateTimeOffset? until,CancellationToken ct=default) {
