@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Storage;
+using QuillSign.Work;
 
 namespace QuillSign.Completion;
 
@@ -17,10 +18,10 @@ public sealed record PublishedCompletion(Guid EnvelopeId,DateTimeOffset Complete
     public byte[] PublicationRowVersion {get;init;}=[];
 }
 
-// Internal workflow prerequisite. Callers must separately authorize public access. No job or mail producer.
+// Callers separately authorize public access. Notification intent joins the publication transaction.
 public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandidates candidates,CompletionSealOutputs seals,
     CompletionEvidenceCollector collector,ICompletionFinalStore final,AuditWriter audit,TimeProvider time,
-    CompletionPublicationOptions options,IHostEnvironment environment,CompletionCommitScope? scope=null)
+    CompletionPublicationOptions options,IHostEnvironment environment,CompletionCommitScope? scope=null,Func<CompletionNotificationJobs>? notifications=null)
 {
     public const string Version="completion-publication-v1";
     private sealed record Documents(FinalStoredDocument Executed,FinalStoredDocument Certificate);
@@ -37,7 +38,7 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
         var until=retention.RequiredUntil(time.GetUtcNow());
         var executed=await Upload(intent,FinalDocumentKind.Executed,pair.Executed.Pdf.Bytes,pair.Executed.Pdf.Sha256,until,ct);
         var certificate=await Upload(intent,FinalDocumentKind.Certificate,pair.Certificate.Pdf.Bytes,pair.Certificate.Pdf.Sha256,until,ct);
-        var commitStarted=false;
+        var commitStarted=false;Guid[] notificationIds=[];
         try
         {
             await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
@@ -59,6 +60,7 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
                     AfterEnvelopeSha256=PublishedCompletionSource.Digest(envelope!),IntentRecipeSha256=intent.RecipeSha256.ToArray()};
                 result.RecipeSha256=Recipe(result); db.CompletionPublicationResults.Add(result); await db.SaveChangesAsync(ct);
                 await audit.AppendAsync(id,"completed",null,null,null,ct,Evidence(result),PartyType.System);
+                if(notifications is not null)notificationIds=await notifications().PrepareLockedAsync(id,ct);
                 if(scope is not null)await scope.CheckLockedAsync(id,ct);
                 commitStarted=true;
             }
@@ -67,9 +69,11 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
         catch(Exception error) when(commitStarted && error is not OperationCanceledException && error is not OutOfMemoryException)
         {
             db.ChangeTracker.Clear(); if(await Result(id,ct) is null)throw;
+            if(notifications is not null)await notifications().PublishAsync(notificationIds,ct);
             return await ReadAsync(id,ct);
         }
         // No cleanup authority exists here, including rollback, cancellation or uncertain commit.
+        if(notifications is not null)await notifications().PublishAsync(notificationIds,ct);
         return await ReadAsync(id,ct);
     }
 

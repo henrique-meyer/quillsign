@@ -14,9 +14,8 @@ namespace QuillSign.Completion;
 public sealed record CompletionReaderView(CompletionReaderIdentity Identity,string Title,DateTimeOffset CompletedAt,DateTimeOffset? RetainedUntil);
 public sealed record CompletionReaderFile(byte[] Pdf,string Title,string Sha256,FinalDocumentKind Kind);
 
-// Trusted backend prerequisite only: no public issuer, redemption endpoint, cookie login
-// or email producer. A later HTTP flow must authenticate the dedicated scheme and keep
-// Receipt private; arbitrary supplied claims never replace its protected session proof.
+// Trusted issuance and readonly authentication. HTTP entry authenticates the dedicated
+// scheme and keeps Receipt private; arbitrary claims never replace its protected proof.
 public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState state,CompletionAccessProtection protection,
     CompletionAccessOptions options,AuditWriter audit,TimeProvider time,Func<CompletionPublication> publication)
 {
@@ -35,8 +34,8 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         await tx.CommitAsync(ct); return link;
     }
 
-    // Future delivery code obtains this verified context before opening its transaction,
-    // then protects the returned raw transport in its own outbox payload before commit.
+    // Delivery verifies before its transaction and returns raw transport only in memory.
+    // The caller owns issuance, submission-intent commit and uncertain-outcome recovery.
     internal Task<CompletionAccessPreparation?> PrepareAsync(Guid envelopeId,CancellationToken ct)=>state.PrepareAsync(envelopeId,ct);
     internal async Task<CompletionAccessLink?> PrepareLockedAsync(CompletionAccessPreparation prepared,PartyType party,Guid? partyId,CancellationToken ct)
     {
@@ -179,8 +178,8 @@ public static class CompletionAccessConfiguration
 {
     public static IServiceCollection AddCompletionAccess(this IServiceCollection services,IConfiguration config)
     {
-        var options=config.GetSection("CompletionAccess").Get<CompletionAccessOptions>()??new(); options.Validate(); services.AddSingleton(options);
-        services.AddScoped<CompletionAccessProtection>(); services.AddScoped<CompletionAccessState>(); services.AddScoped<CompletionAccess>();
+        var options=config.GetSection("CompletionAccess").Get<CompletionAccessOptions>()??new(); options.Validate(); services.TryAddSingleton(options);
+        services.TryAddScoped<CompletionAccessProtection>(); services.TryAddScoped<CompletionAccessState>(); services.TryAddScoped<CompletionAccess>();
         services.TryAddScoped<Func<CompletionPublication>>(sp=>()=>sp.GetRequiredService<CompletionPublication>()); return services;
     }
 }

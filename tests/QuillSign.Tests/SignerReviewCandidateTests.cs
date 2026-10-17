@@ -98,10 +98,10 @@ public sealed class SignerReviewCandidateTests(SqlDatabaseFixture fixture) : ICl
     [Fact]
     public async Task Prospective_server_date_expires_at_UTC_midnight_and_never_fills_Date_Signed()
     {
-        await using var r=await Run.Create(fixture,midnight:true); var first=(await r.Prepare())!;
-        Assert.Equal(new DateTimeOffset(2026,10,17,0,0,0,TimeSpan.Zero),first.ExpiresAt); Assert.Equal(new DateOnly(2026,10,16),first.ProspectiveDate);
-        r.H.Clock.Advance(TimeSpan.FromSeconds(11)); Assert.Null(await r.Read(first.Receipt)); var second=(await r.Prepare())!; Assert.Equal(new DateOnly(2026,10,17),second.ProspectiveDate);
-        using var pdf=PigDocument.Open((await r.Read(second.Receipt))!.Pdf); Assert.Contains("2026-10-17",pdf.GetPage(1).Text);
+        await using var r=await Run.Create(fixture,midnight:true); var before=r.H.Clock.GetUtcNow();var date=DateOnly.FromDateTime(before.UtcDateTime);var first=(await r.Prepare())!;
+        Assert.Equal(before.AddSeconds(10),first.ExpiresAt); Assert.Equal(date,first.ProspectiveDate);
+        r.H.Clock.Advance(TimeSpan.FromSeconds(11)); Assert.Null(await r.Read(first.Receipt)); var second=(await r.Prepare())!; Assert.Equal(date.AddDays(1),second.ProspectiveDate);
+        using var pdf=PigDocument.Open((await r.Read(second.Receipt))!.Pdf); Assert.Contains(date.AddDays(1).ToString("yyyy-MM-dd",System.Globalization.CultureInfo.InvariantCulture),pdf.GetPage(1).Text);
         await using var db=fixture.Open(); Assert.Null((await db.Fields.SingleAsync(x=>x.Id==r.H.Field(FieldType.DateSigned).Id)).FilledAt); Assert.Null((await db.Signers.SingleAsync(x=>x.Id==r.H.Signer.Id)).SignedAt);
     }
     [Theory]
@@ -208,7 +208,8 @@ public sealed class SignerReviewCandidateTests(SqlDatabaseFixture fixture) : ICl
         public static async Task<Run> Create(SqlDatabaseFixture fixture,bool midnight=false)
         {
             // Seed consent and all earlier evidence on the same clock; never rewind a live-date fixture.
-            var r=new Run { H=await SignerFieldTests.Harness.Create(fixture,midnight ? new DateTimeOffset(2026,10,16,23,59,50,TimeSpan.Zero) : null),fixture=fixture }; var h=r.H;
+            // Storage also checks wall-clock session expiry. Keep the synthetic midnight ahead of it.
+            var r=new Run { H=await SignerFieldTests.Harness.Create(fixture,midnight ? new DateTimeOffset(DateTime.UtcNow.Date.AddDays(1),TimeSpan.Zero).AddSeconds(-10) : null),fixture=fixture }; var h=r.H;
             using var input=new MemoryStream(PdfFixtures.Create(text:"Sender fixed synthetic - NO AGREEMENT")); using var normalized=new MemoryStream(); var pages=new PdfValidation(new()).Rewrite(input,normalized); var bytes=normalized.ToArray(); h.Blobs.SourceId=h.Identity.DocumentId;
             await h.Blobs.WriteAsync(BlobStorageTests.Sender(h.Envelope.Id),new(h.Envelope.Id,DocumentBlobKind.Normalized,h.Identity.DocumentId),new MemoryStream(bytes),bytes.Length);
             await using(var db=fixture.Open()) {

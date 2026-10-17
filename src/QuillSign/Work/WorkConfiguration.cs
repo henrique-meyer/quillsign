@@ -52,6 +52,7 @@ public static class WorkConfiguration
         else services.AddSingleton<IWorkSignals>(_ => throw new InvalidOperationException("Durable work is disabled."));
         if (registerHandlers)
         {
+            services.AddCompletionNotificationWork(config);
             services.AddQuillSignSignerAccessCore(config);
             services.AddScoped<SignerInvitationProtection>(); services.AddScoped<SignerInvitationOutbox>(); services.AddScoped<SignerInvitationDelivery>();
             services.AddScoped<DeclinePayloadProtection>();
@@ -89,5 +90,18 @@ public static class WorkConfiguration
             uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.AbsolutePath != "/")
             throw new InvalidOperationException("Work requires HTTPS service endpoints without credentials or paths.");
         return uri;
+    }
+}
+
+public static class CompletionNotificationWorkConfiguration
+{
+    public static IServiceCollection AddCompletionNotificationWork(this IServiceCollection services,IConfiguration config)
+    {
+        QuillSign.Completion.CompletionAccessConfiguration.AddCompletionAccess(services,config);
+        services.TryAddScoped<CompletionNotificationProtection>();services.TryAddScoped<CompletionNotificationJobs>();services.TryAddScoped<CompletionNotificationDelivery>();
+        services.TryAddScoped<Func<CompletionNotificationJobs>>(sp=>()=>sp.GetRequiredService<CompletionNotificationJobs>());
+        services.TryAddScoped<Func<CompletionNotificationDelivery>>(sp=>()=>sp.GetRequiredService<CompletionNotificationDelivery>());
+        services.TryAddScoped<Func<QuillSign.Email.CompletionEmailTemplate>>(sp=>()=>sp.GetRequiredService<QuillSign.Email.CompletionEmailTemplate>());
+        return services;
     }
 }

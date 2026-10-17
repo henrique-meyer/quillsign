@@ -141,7 +141,7 @@ public sealed class SignerFinishTests(SqlDatabaseFixture fixture) : IClassFixtur
     {
         await using var r=await Run.Create(fixture,midnight:true); var review=(await r.Prepare())!; r.H.Clock.Advance(TimeSpan.FromSeconds(11));
         Assert.Equal(SignerFinishOutcome.InvalidReview,(await r.Finish(review.Receipt)).Outcome); await NoAcceptance(r);
-        var current=(await r.Prepare())!; Assert.Equal(new DateOnly(2026,10,17),current.ProspectiveDate); Assert.Equal(SignerFinishOutcome.Accepted,(await r.Finish(current.Receipt)).Outcome);
+        var current=(await r.Prepare())!; Assert.Equal(DateOnly.FromDateTime(r.H.Clock.GetUtcNow().UtcDateTime),current.ProspectiveDate); Assert.Equal(SignerFinishOutcome.Accepted,(await r.Finish(current.Receipt)).Outcome);
     }
     [Fact]
     public async Task Accepted_replay_never_confirms_changed_checkpoint_bytes()
