@@ -200,12 +200,14 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         public Clock Clock = new(); public Faults Faults = new(); public FakeSender Sender = new(); public FaultBlobs Blobs = null!; public Signals Signals = null!;
         private QueueClient queue = null!; private BlobContainerClient hints = null!; private BlobClient keyBlob = null!;
         public ClaimsPrincipal Principal => SenderConfiguration.Principal(new(Envelope.Id,Envelope.PublicId,Envelope.SenderEmail));
-        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false,int? browserPort=null)
+        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false,int? browserPort=null,Func<VerifiedSigner?>? syntheticSigner=null)
         {
             var run = new Harness(); var name = "sendtest-" + Guid.NewGuid().ToString("N"); var storage = Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
             using var source = fixture.Open(); var connection = source.Database.GetConnectionString();
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ApplicationName = typeof(SendDraftWorkflow).Assembly.FullName,EnvironmentName = "Development",ContentRootPath = AppContext.BaseDirectory,
                 WebRootPath=browserPort is null ? null : Path.GetFullPath("../../../../../src/QuillSign/wwwroot",AppContext.BaseDirectory) }); builder.Logging.ClearProviders();
+            var outputRoot=Path.Combine(AppContext.BaseDirectory,"wwwroot");
+            if(browserPort is not null && Directory.Exists(outputRoot))builder.Environment.WebRootFileProvider=new Microsoft.Extensions.FileProviders.CompositeFileProvider(builder.Environment.WebRootFileProvider,new Microsoft.Extensions.FileProviders.PhysicalFileProvider(outputRoot));
             builder.Configuration.AddInMemoryCollection(new Dictionary<string,string?> {
                 ["Storage:Provider"]="Azurite",["Storage:ConnectionString"]=storage,["DataProtection:ApplicationName"]=name,["DataProtection:KeyRingBlobName"]=name+".xml",
                 ["Work:Enabled"]="true",["Work:QueueName"]=name,["Work:HintContainer"]=name,["Email:Enabled"]="true",["Email:Provider"]="Smtp",
@@ -236,11 +238,17 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
                 new DocumentField { EnvelopeId=run.Envelope.Id,SignerId=run.First.Id,Type=FieldType.Signature,Page=1,X=.1m,Y=.5m,Width=.4m,Height=.1m }); await db.SaveChangesAsync(); run.Version=run.Envelope.RowVersion; }
             await run.Blobs.Inner.WriteAsync(run.Principal,new(run.Envelope.Id,DocumentBlobKind.Normalized,Guid.Parse(run.Envelope.PdfBlob)),new MemoryStream(run.Source),run.Source.Length);
             if(browser) {
+                if(browserPort is not null)run.App.Use(async(context,next)=>{context.Response.Headers["X-Content-Type-Options"]="nosniff";context.Response.Headers["Referrer-Policy"]="no-referrer";context.Response.Headers["Content-Security-Policy"]="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";await next();});
                 if(browserPort is not null) run.App.UseStaticFiles();
                 run.App.UseRouting(); run.App.UseRateLimiter(); run.App.UseAuthentication(); run.App.UseAuthorization(); run.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
                 run.App.MapGet("/test-session",async (Microsoft.AspNetCore.Http.HttpContext context)=> {
                     await context.SignInAsync(EnvelopeStorageAuthorization.SenderScheme,run.Principal,new AuthenticationProperties { ExpiresUtc=run.Clock.GetUtcNow().AddHours(2),AllowRefresh=false }); return "ok";
-                }); await run.App.StartAsync();
+                });
+                if(syntheticSigner is not null)run.App.MapGet("/test-signer-session",async(Microsoft.AspNetCore.Http.HttpContext context)=>{
+                    var identity=syntheticSigner();if(identity is null)return Microsoft.AspNetCore.Http.Results.NotFound();
+                    await context.SignInAsync(SignerAccessConfiguration.Scheme,SignerAccessConfiguration.Principal(identity),SignerAccessConfiguration.Ticket(identity));return Microsoft.AspNetCore.Http.Results.Text("ok","text/plain");
+                });
+                await run.App.StartAsync();
             }
             return run;
         }
@@ -263,9 +271,9 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         public async Task<EmailDelivery> SendAsync(OutgoingEmail email,CancellationToken ct)
         { Calls++; Last=email; if(Failure is not null)throw Failure; if (BeforeReturn is not null) await BeforeReturn(); return new("Smtp","synthetic-receipt"); }
     }
-    internal sealed class FaultBlobs(IBlobStore inner) : IBlobStore { public IBlobStore Inner=>inner; public List<DocumentBlob> Created=[],Deleted=[]; public bool FailWrite; public Action? AfterWrite;
+    internal sealed class FaultBlobs(IBlobStore inner) : IBlobStore { public IBlobStore Inner=>inner; public List<DocumentBlob> Created=[],Deleted=[]; public bool FailWrite,FailRead; public int Reads; public Action? AfterWrite,AfterRead;
         public async Task WriteAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,long length,CancellationToken ct) { Created.Add(b); await inner.WriteAsync(p,b,s,length,ct); AfterWrite?.Invoke(); if(FailWrite)throw new IOException("Synthetic lost write response"); }
-        public Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct)=>inner.CopyToAsync(p,b,s,ct);
+        public async Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct) {Interlocked.Increment(ref Reads);if(FailRead)throw new IOException("Synthetic read failure.");var length=await inner.CopyToAsync(p,b,s,ct);AfterRead?.Invoke();return length;}
         public Task DeleteAsync(ClaimsPrincipal p,DocumentBlob b,CancellationToken ct) { Deleted.Add(b); return inner.DeleteAsync(p,b,ct); } }
     internal sealed class Faults : DbTransactionInterceptor, ISaveChangesInterceptor
     {

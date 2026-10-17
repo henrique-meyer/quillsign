@@ -16,6 +16,8 @@ public sealed class SignerReceiptProtection(IDataProtectionProvider provider,Tim
     private readonly IDataProtector protector = provider.CreateProtector("QuillSign.SignerPdfAccess.v1");
     public string Create(VerifiedSigner identity) => protector.Protect(JsonSerializer.Serialize(new PdfAccessReceipt(identity,Guid.NewGuid(),
         new[] { time.GetUtcNow().AddMinutes(10),identity.SessionExpiresAt }.Min())));
+    public string Create(SignerReadContext context)=>protector.Protect(JsonSerializer.Serialize(new PdfAccessReceipt(context.Identity,Guid.NewGuid(),
+        new[]{time.GetUtcNow().AddMinutes(10),context.AccessExpiresAt}.Min())));
     public PdfAccessReceipt? Read(string? value,VerifiedSigner identity)
     {
         if (value is null || value.Length > 8192) return null;
@@ -73,6 +75,7 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
             JsonSerializer.Serialize(new { disclosureVersion = context.Disclosure.Version,disclosureSha256 = context.Identity.DisclosureHash,
                 documentSha256 = context.Identity.DocumentHash,accessReceiptId = evidence.Id,accessMethod = method,agreement,canRetain,
                 serverEvidence = "hash_verified_pdf_prepared",clientEvidence = "signer_reported_access_and_retention" }),PartyType.Signer,context.Identity.SignerId);
+        if(!access.IsLive(context))return ConsentResult.InvalidContext;
         await transaction.CommitAsync(ct); return ConsentResult.Accepted;
     }
     public async Task<SignerReadContext?> DeclineAsync(ClaimsPrincipal principal,string publicId,string? reason,string? ip,string? ua,CancellationToken ct = default)
@@ -93,6 +96,7 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
             await audit.AppendAsync(context.Identity.EnvelopeId,"declined",context.Identity.Email,ip,ua,ct,
                 JsonSerializer.Serialize(new { reason,notificationId = notification,documentSha256 = context.Identity.DocumentHash,
                     disclosureSha256 = context.Identity.DisclosureHash }),PartyType.Signer,context.Identity.SignerId);
+            if(!access.IsLive(context))return null;
             await transaction.CommitAsync(ct);
         }
         await notifications.PublishAsync(notification,ct); return context;
