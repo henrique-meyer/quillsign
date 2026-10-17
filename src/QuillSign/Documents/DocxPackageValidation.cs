@@ -114,7 +114,7 @@ public sealed class DocxPackageValidation(DocumentOptions limits)
 
     private static void ValidateParts(Dictionary<string, byte[]> parts, CancellationToken ct)
     {
-        if (!parts.TryGetValue("[Content_Types].xml", out var content)) throw Rejected(); var types = Xml(content, ct);
+        if (!parts.TryGetValue("[Content_Types].xml", out var content)) throw Rejected(); var nodes = 0; var types = Xml(content, ct, ref nodes);
         if (types.Root?.Name != XName.Get("Types", ContentNamespace)) throw Rejected();
         var defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase); var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var element in types.Root.Elements())
@@ -125,7 +125,7 @@ public sealed class DocxPackageValidation(DocumentOptions limits)
             else throw Rejected();
         }
         if (!overrides.TryGetValue("word/document.xml", out var main) || main != MainType || overrides.Keys.Any(x => !parts.ContainsKey(x))) throw Rejected();
-        var mainLinks = 0; var nodes = 0;
+        var mainLinks = 0;
         foreach (var (name, bytes) in parts)
         {
             ct.ThrowIfCancellationRequested(); if (name.Equals("[Content_Types].xml", StringComparison.OrdinalIgnoreCase)) continue;
@@ -134,7 +134,7 @@ public sealed class DocxPackageValidation(DocumentOptions limits)
             if (extension.Equals("rels", StringComparison.OrdinalIgnoreCase) && type != "application/vnd.openxmlformats-package.relationships+xml") throw Rejected();
             if (extension.Equals("xml", StringComparison.OrdinalIgnoreCase) || extension.Equals("rels", StringComparison.OrdinalIgnoreCase) || type is "application/xml" or "text/xml" || type.EndsWith("+xml", StringComparison.OrdinalIgnoreCase))
             {
-                var xml = Xml(bytes, ct); nodes += xml.Descendants().Count(); if (nodes > 1000000) throw Rejected();
+                var xml = Xml(bytes, ct, ref nodes);
                 if (name.Equals("word/document.xml", StringComparison.OrdinalIgnoreCase) && (xml.Root?.Name.LocalName != "document" || !WordNamespaces.Contains(xml.Root.Name.NamespaceName) || xml.Root.Elements(xml.Root.Name.Namespace + "body").Count() != 1)) throw Rejected();
                 FieldsAndResources(xml, ct);
                 if (extension.Equals("rels", StringComparison.OrdinalIgnoreCase))
@@ -155,11 +155,11 @@ public sealed class DocxPackageValidation(DocumentOptions limits)
         if (mainLinks != 1 || !parts.ContainsKey("_rels/.rels")) throw Rejected();
     }
 
-    private static XDocument Xml(byte[] bytes, CancellationToken ct)
+    private static XDocument Xml(byte[] bytes, CancellationToken ct, ref int elements)
     {
         if (bytes.Length > MaximumXml) throw Rejected(); using var input = new MemoryStream(bytes, false);
         using (var reader = XmlReader.Create(input, new() { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = MaximumXml, IgnoreComments = true, CloseInput = false }))
-            while (reader.Read()) { ct.ThrowIfCancellationRequested(); if (reader.Depth > 64 || reader.NodeType == XmlNodeType.ProcessingInstruction) throw Rejected(); }
+            while (reader.Read()) { ct.ThrowIfCancellationRequested(); if (reader.Depth > 64 || reader.NodeType == XmlNodeType.ProcessingInstruction || reader.NodeType == XmlNodeType.Element && ++elements > 1000000) throw Rejected(); }
         input.Position = 0; using var safe = XmlReader.Create(input, new() { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = MaximumXml, IgnoreComments = true }); return XDocument.Load(safe);
     }
     private static void FieldsAndResources(XDocument document, CancellationToken ct)

@@ -145,6 +145,7 @@ public sealed class DocxPackageValidationTests
     [InlineData("xml")]
     [InlineData("total")]
     [InlineData("entries")]
+    [InlineData("elements")]
     public async Task Compressed_input_cannot_expand_beyond_the_explicit_package_limits(string kind)
     {
         var bytes = Edit(zip =>
@@ -153,6 +154,7 @@ public sealed class DocxPackageValidationTests
             if (kind == "xml") Put(zip, "word/large.xml", Encoding.UTF8.GetBytes("<root>" + new string('x', 8 * 1024 * 1024) + "</root>"), "application/xml");
             if (kind == "total") for (var i = 0; i < 4; i++) Put(zip, $"word/media/large{i}.bin", new byte[16 * 1024 * 1024], "application/octet-stream");
             if (kind == "entries") for (var i = 0; i < 2050; i++) Put(zip, $"word/media/{i}.bin", new byte[] { 1 });
+            if (kind == "elements") Put(zip, "word/document.xml", DocumentXml(string.Concat(Enumerable.Repeat("<w:p/>", 1000000))));
         });
         using var source = new MemoryStream(bytes); await Assert.ThrowsAsync<DocumentRejectedException>(() => new DocxPackageValidation(new()).ValidateAsync(source, bytes.Length));
     }
