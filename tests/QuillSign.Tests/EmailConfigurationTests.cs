@@ -46,6 +46,12 @@ public sealed class EmailConfigurationTests
     [InlineData("one@example.invalid, two@example.invalid")]
     public void Invalid_or_multiple_mailboxes_are_rejected(string address) => Assert.Throws<ArgumentException>(() => EmailAddress.Normalize(address));
 
+    [Theory]
+    [InlineData("MaximumDecodedBytes","0")][InlineData("MaximumDecodedBytes","26214401")]
+    [InlineData("MaximumMessageBytes","0")][InlineData("MaximumMessageBytes","33554433")]
+    public void Invalid_attachment_limits_are_rejected_without_credentials_or_database(string field,string value)
+        =>Assert.Throws<InvalidOperationException>(()=>Configure(new() {{"Email:Attachments:"+field,value}},"Production"));
+
     private sealed class TestEnvironment(string name) : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = name;
