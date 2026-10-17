@@ -181,14 +181,14 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
         public Run Run=null!; public WebApplication App=null!; public HttpClient Client=null!; public FinalStore Store=null!; public PublishedCompletion Published=null!;
         public Dictionary<string,string> Cookies=[]; public string Role="sender"; private SqlDatabaseFixture fixture=null!;
         public CompletionSealOutputTests.Faults Faults=new();
-        public bool PaddedSender;
+        public bool PaddedSender,CompletionNotifications;
         public SendDraftWorkflowTests.Clock Clock=>Run.Signing.H.Clock; public Guid Id=>Run.Signing.Envelope.Id; public string PublicId=>Run.Signing.Envelope.PublicId;
         public string PagePath=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+(Role=="sender" ? "/sent" : "/confirmed");
         public string Resource(string kind)=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+"/final"+(kind.Length==0 ? "" : "/"+kind);
-        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false)
+        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false,bool completionNotifications=false,bool publish=true,bool senderAlsoSigns=false)
         {
-            var f=new Flow {fixture=fixture,Run=await Run.Create(fixture)}; f.Store=new(f.Clock); _=await f.Run.Prepare();
-            await using var db=fixture.Open(); f.Published=(await f.Publication(db).PublishAsync(f.Id))!;
+            var f=new Flow {fixture=fixture,Run=await Run.Create(fixture,senderAlsoSigns:senderAlsoSigns),CompletionNotifications=completionNotifications}; f.Store=new(f.Clock); _=await f.Run.Prepare();
+            await using var db=fixture.Open(); if(publish)f.Published=(await f.Publication(db).PublishAsync(f.Id))!;
             var connection=db.Database.GetConnectionString();
             var builder=WebApplication.CreateBuilder(new WebApplicationOptions {ApplicationName=typeof(CompletionDownloads).Assembly.FullName,EnvironmentName="Development",ContentRootPath=AppContext.BaseDirectory});
             builder.Logging.ClearProviders(); builder.WebHost.UseTestServer(); builder.Services.AddRazorPages();
@@ -201,8 +201,15 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
             if(completionReaders) {builder.Services.AddCompletionAccess(builder.Configuration);builder.Services.AddCompletionReaderBrowser(builder.Environment);}
             if(chunkedReader)builder.Services.Configure<Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationOptions>(CompletionAccessProtection.Scheme,
                 o=> {o.Cookie.Name="QuillSign.CustomReader";o.CookieManager=new Microsoft.AspNetCore.Authentication.Cookies.ChunkingCookieManager {ChunkSize=900};});
+            if(completionNotifications)builder.Services.AddSingleton<IWorkSignals>(f.Run.Signing.H.Signals);
             builder.Services.AddScoped<CompletionPublication>(sp=>f.Publication(sp.GetRequiredService<QuillSignDbContext>()));
-            f.App=builder.Build(); f.App.UseRouting(); f.App.UseRateLimiter(); f.App.UseAuthentication(); f.App.UseAuthorization(); f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
+            f.App=builder.Build();
+            if(completionNotifications) {
+                f.App.Services.GetRequiredService<WorkOptions>().Enabled=true;
+                var email=f.App.Services.GetRequiredService<EmailOptions>();email.Enabled=true;email.Provider="Smtp";email.FromEmail="noreply@example.invalid";email.BaseUrl="https://example.invalid";
+                email.Smtp=new() {Host="127.0.0.1",Port=int.Parse(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_SMTP_PORT")!),UseStartTls=false};
+            }
+            f.App.UseRouting(); f.App.UseRateLimiter(); f.App.UseAuthentication(); f.App.UseAuthorization(); f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
             f.App.MapGet("/fixture/{role}",async (HttpContext http,string role,SignerReviewBrowser browser)=> {
                 if(role=="sender") {
                     var sender=f.Run.Signing.Sender.Clone(); if(f.PaddedSender)((ClaimsIdentity)sender.Identity!).AddClaim(new("synthetic-padding",new string('x',6000)));
@@ -213,8 +220,9 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
             });
             await f.App.StartAsync(); f.Client=f.App.GetTestClient(); return f;
         }
-        private CompletionPublication Publication(QuillSignDbContext db)=>new(db,Run.Candidates(db),Run.Service(db),Run.Collector(db),Store,new(db,Clock),Clock,
-            new() {DemoPurgeAfterDays=7,AllowDevelopmentWriteOnce=true},Run.Seal.App.Environment);
+        internal CompletionPublication Publication(QuillSignDbContext db)=>new(db,Run.Candidates(db),Run.Service(db),Run.Collector(db),Store,new(db,Clock),Clock,
+            new() {DemoPurgeAfterDays=7,AllowDevelopmentWriteOnce=true},Run.Seal.App.Environment,notifications:CompletionNotifications ? ()=>new(db,new(db,Run.Collector(db),()=>Publication(db),Clock),
+                new(Run.Signing.H.App.Services.GetRequiredService<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>()),()=>Run.Signing.H.Signals,new() {Enabled=true},new(db,Clock),Clock) : null);
         public async Task<int> Count() {await using var db=fixture.Open(); return await db.AuditEvents.CountAsync(x=>x.EnvelopeId==Id && x.Event=="final_download_prepared");}
         public async Task Session(string role) {Role=role; using var response=await Client.GetAsync("/fixture/"+role); Take(response); Assert.Equal(HttpStatusCode.OK,response.StatusCode);}
         public async Task<string> Page() {using var response=await Client.GetAsync(PagePath); Take(response); var body=await response.Content.ReadAsStringAsync(); Assert.True(response.StatusCode==HttpStatusCode.OK,$"{response.StatusCode}: {body.Split('\n')[0]}"); return body;}
@@ -229,10 +237,11 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
     }
     internal sealed class FinalStore(TimeProvider time) : ICompletionFinalStore
     {
-        private readonly Dictionary<FinalDocument,byte[]> files=[]; public int Writes,Reads; public string? Fault; public Func<Task>? AfterRead;
+        private readonly Dictionary<FinalDocument,byte[]> files=[]; private readonly Dictionary<FinalDocument,FinalStoredDocument> records=[]; public int Writes,Reads; public string? Fault; public Func<Task>? AfterRead;
         public async Task<FinalStoredDocument> WriteAsync(ClaimsPrincipal p,FinalDocument target,Stream source,long length,byte[] hash,DateTimeOffset? until,CancellationToken ct=default) {
-            Demand("DemandWrite",p,target,length,hash,until); Writes++; using var bytes=new MemoryStream(); await source.CopyToAsync(bytes,ct); files.Add(target,bytes.ToArray());
-            return new(target,length,hash,"synthetic-version","synthetic-etag",FinalProtection.DevelopmentWriteOnce,null,time.GetUtcNow());
+            Demand("DemandWrite",p,target,length,hash,until); using var bytes=new MemoryStream(); await source.CopyToAsync(bytes,ct);
+            if(records.TryGetValue(target,out var existing)) {Assert.Equal(files[target],bytes.ToArray());Assert.Equal(existing.Length,length);Assert.Equal(existing.Sha256,hash);return existing;}
+            Writes++;files.Add(target,bytes.ToArray());var record=new FinalStoredDocument(target,length,hash,"synthetic-version","synthetic-etag",FinalProtection.DevelopmentWriteOnce,null,time.GetUtcNow());records.Add(target,record);return record;
         }
         public async Task ReadAsync(ClaimsPrincipal p,FinalStoredDocument stored,Stream output,CancellationToken ct=default) {
             Demand("DemandRead",p,stored); Reads++; if(Fault=="missing")throw new IOException("Synthetic missing final file"); var bytes=files[stored.Document].ToArray();

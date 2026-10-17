@@ -11,8 +11,9 @@ public static class WorkCommands
     public static async Task<int> RunAsync(string[] args)
     {
         var republish = args.Length == 2 && args[0] == "publish-notification" && Guid.TryParseExact(args[1],"N",out _);
-        if (!republish && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
-        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work publish-notification <32-character-item-id>"); return 2; }
+        var completion=args.Length==2 && args[0]=="resume-completion-notifications" && Guid.TryParseExact(args[1],"N",out _);
+        if (!republish && !completion && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
+        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work publish-notification <32-character-item-id> OR work resume-completion-notifications <32-character-envelope-id>"); return 2; }
         try
         {
             var builder = WebApplication.CreateBuilder();
@@ -33,7 +34,11 @@ public static class WorkCommands
             Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; timeout.Cancel(); };
             var signals = app.Services.GetRequiredService<IWorkSignals>();
             var count = 0;
-            if (republish)
+            if(completion) {
+                await using var scope=app.Services.CreateAsyncScope();
+                count=await scope.ServiceProvider.GetRequiredService<CompletionNotificationJobs>().ResumeAsync(Guid.ParseExact(args[1],"N"),timeout.Token);
+            }
+            else if (republish)
             {
                 await using var scope = app.Services.CreateAsyncScope();
                 var writer = scope.ServiceProvider.GetRequiredService<DeclineNotificationWriter>();
