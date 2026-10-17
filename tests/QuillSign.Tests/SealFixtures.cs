@@ -27,9 +27,10 @@ internal sealed class SealFixtures : IAsyncDisposable
     public TimeStampTokenGenerator Tokens=null!; public string Mode="valid"; public int Requests,RedirectRequests,CookieRequests;
     public Action? RequestObserved;
     private string directory="";
-    public static async Task<SealFixtures> Create(string certificateKind="valid",string tsaKind="valid")
+    public static async Task<SealFixtures> Create(string certificateKind="valid",string tsaKind="valid",DateTimeOffset? initialTime=null)
     {
         var f=new SealFixtures(); f.directory=Path.Combine(Path.GetTempPath(),"quillsign-seal-test-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(f.directory);
+        if(initialTime is { } start)f.Time.Advance(start-f.Time.GetUtcNow());
         f.RootKey=RSA.Create(2048); f.TsaKey=RSA.Create(tsaKind=="weak" ? 1024 : 2048); using var sealKey=RSA.Create(certificateKind=="weak" ? 1024 : 2048);
         using var ecKey=certificateKind=="ec" ? ECDsa.Create(ECCurve.NamedCurves.nistP256) : null;
         var now=f.Time.GetUtcNow(); var rootRequest=new CertificateRequest("CN=QuillSign synthetic TSA root",f.RootKey,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);

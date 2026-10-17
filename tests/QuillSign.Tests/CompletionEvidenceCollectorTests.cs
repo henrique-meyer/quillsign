@@ -219,9 +219,23 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
         private SqlDatabaseFixture fixture=null!;
         public async Task<T> Use<S,T>(Func<S,Task<T>> action) where S:notnull {using var scope=H.App.Services.CreateScope(); return await action(scope.ServiceProvider.GetRequiredService<S>());}
         public async Task<Envelope> Refresh() {await using var db=fixture.Open(); return Envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==Envelope.Id);}
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DateTimeOffset? initialTime=null)
         {
             var run=new Run {fixture=fixture,H=await Shared.Create(fixture,browser:true)}; var email="completion-"+Guid.NewGuid().ToString("N")+"@example.invalid";
+            if(initialTime is { } start) {
+                run.H.Clock.Advance(start-run.H.Clock.GetUtcNow());
+                // The raw legacy signer reader uses wall-clock UTC. A historical
+                // synthetic pipeline needs a clock-aware test transport, not changed
+                // production authority or rewritten frozen enrollment evidence.
+                run.H.Blobs.SyntheticSignerRead=async (principal,blob,destination,ct)=> {
+                    var identity=SignerAccessConfiguration.ReadIdentity(principal,run.H.Clock.GetUtcNow());
+                    if(identity is null || blob.Kind!=DocumentBlobKind.Normalized || blob.EnvelopeId!=identity.EnvelopeId || blob.ObjectId!=identity.DocumentId)
+                        throw new UnauthorizedAccessException("A current synthetic signer read scope is required.");
+                    var source=DemoPurgeStorageTests.Service().GetBlobContainerClient("normalized").GetBlobClient($"{blob.EnvelopeId:N}/{blob.ObjectId:N}");
+                    var value=(await source.DownloadStreamingAsync(cancellationToken:ct)).Value;
+                    await using var input=value.Content;await input.CopyToAsync(destination,ct);return value.Details.ContentLength;
+                };
+            }
             run.H.App.Services.GetRequiredService<DemoRetentionOptions>().PurgeAfterDays=uploadRetentionDays;
             _=await run.Use((SenderWorkflow s)=>s.RequestAsync(email,"127.0.0.1","Synthetic sender")); Assert.True(await run.H.Once());
             var sender=(await run.Use((SenderWorkflow s)=>s.VerifyAsync(Token(run.H),"127.0.0.1","Synthetic sender")))!; Assert.NotNull(sender);

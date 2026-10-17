@@ -8,9 +8,9 @@ public static class DatabaseCommands
     public static async Task<int> RunAsync(string[] args)
     {
         IConfiguration? configuration = null;
-        if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "verify-runtime"))
+        if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "grant-demo-purge" or "verify-runtime"))
         {
-            Console.Error.WriteLine("Usage: database provision-identities|provision-worker|migrate|grant-runtime|verify-runtime");
+            Console.Error.WriteLine("Usage: database provision-identities|provision-worker|migrate|grant-runtime|grant-demo-purge|verify-runtime");
             return 2;
         }
         try
@@ -34,6 +34,7 @@ public static class DatabaseCommands
                         Guid.Parse(builder.Configuration["Database:MigrationClientId"] ?? ""));
                 else if (args[0] == "provision-worker")
                     await DatabasePermissions.ProvisionWorkerAsync(connection, Guid.Parse(builder.Configuration["Database:WorkerClientId"] ?? ""));
+                else if(args[0]=="grant-demo-purge")await DatabasePermissions.GrantDemoPurgeAsync(connection);
                 else await DatabasePermissions.GrantRuntimeAsync(connection);
             }
             Console.WriteLine($"{{\"operation\":\"{args[0]}\",\"status\":\"ok\"}}");
