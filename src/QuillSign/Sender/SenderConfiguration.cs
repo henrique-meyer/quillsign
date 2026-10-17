@@ -56,6 +56,12 @@ public static class SenderConfiguration
             limiter.OnRejected = async (rejected,ct) =>
             {
                 var context=rejected.HttpContext;
+                if(context.Request.Path.StartsWithSegments("/complete")) {
+                    context.Response.Headers.CacheControl="no-store"; context.Response.Headers["Referrer-Policy"]="no-referrer";
+                    const string message="Too many completed-record requests. Wait before retrying. If access was already opened, return to your saved records; do not assume the link is unused.";
+                    if(WantsJson(context))await context.Response.WriteAsJsonAsync(new {message},ct);
+                    else await context.Response.WriteAsync(message,ct); return;
+                }
                 if(IsFinalFile(context.Request.Path) || context.Request.Query["handler"]=="Download" &&
                     (context.Request.Path.StartsWithSegments("/draft") || context.Request.Path.StartsWithSegments("/sign"))) {
                     context.Response.Headers.CacheControl="no-store"; context.Response.Headers["Referrer-Policy"]="no-referrer";
@@ -91,6 +97,12 @@ public static class SenderConfiguration
                     (context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/review",StringComparison.Ordinal)==true && HttpMethods.IsPost(context.Request.Method)) ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(context.Request.Path=="/complete/access" && HttpMethods.IsPost(context.Request.Method))
+                    return RateLimitPartition.GetFixedWindowLimiter("completion-entry:"+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=options.RequestsPerWindow,Window=TimeSpan.FromMinutes(options.WindowMinutes),QueueLimit=0,AutoReplenishment=true });
+                if(context.Request.Path.StartsWithSegments("/complete") && context.Request.Path!="/complete/access")
+                    return RateLimitPartition.GetFixedWindowLimiter("completion-records:"+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=120,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });
                 if(IsFinalFile(context.Request.Path))return RateLimitPartition.GetFixedWindowLimiter("final-download:"+address,_=>new FixedWindowRateLimiterOptions {
                     PermitLimit=120,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });
                 if(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/sent",StringComparison.Ordinal)==true)
