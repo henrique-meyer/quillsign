@@ -273,7 +273,8 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
     }
     internal sealed class FaultBlobs(IBlobStore inner) : IBlobStore { public IBlobStore Inner=>inner; public List<DocumentBlob> Created=[],Deleted=[]; public bool FailWrite,FailRead; public int Reads; public Action? AfterWrite,AfterRead;
         public async Task WriteAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,long length,CancellationToken ct) { Created.Add(b); await inner.WriteAsync(p,b,s,length,ct); AfterWrite?.Invoke(); if(FailWrite)throw new IOException("Synthetic lost write response"); }
-        public async Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct) {Interlocked.Increment(ref Reads);if(FailRead)throw new IOException("Synthetic read failure.");var length=await inner.CopyToAsync(p,b,s,ct);AfterRead?.Invoke();return length;}
+        public Func<ClaimsPrincipal,DocumentBlob,Stream,CancellationToken,Task<long>>? SyntheticSignerRead;
+        public async Task<long> CopyToAsync(ClaimsPrincipal p,DocumentBlob b,Stream s,CancellationToken ct) {Interlocked.Increment(ref Reads);if(FailRead)throw new IOException("Synthetic read failure.");var length=SyntheticSignerRead is not null && p.Identities.Any(x=>x.AuthenticationType==SignerAccessConfiguration.Scheme) ? await SyntheticSignerRead(p,b,s,ct) : await inner.CopyToAsync(p,b,s,ct);AfterRead?.Invoke();return length;}
         public Task DeleteAsync(ClaimsPrincipal p,DocumentBlob b,CancellationToken ct) { Deleted.Add(b); return inner.DeleteAsync(p,b,ct); } }
     internal sealed class Faults : DbTransactionInterceptor, ISaveChangesInterceptor
     {

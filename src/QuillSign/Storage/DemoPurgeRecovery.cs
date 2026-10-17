@@ -44,6 +44,12 @@ public sealed class DemoPurgeRecovery
         var saved=await Read<Marker>(blob,markers,null,ct);Validate(saved.Value,marker.EnvelopeId);
         if(!SamePolicy(saved.Value,marker))throw Invalid();authority.Demand(ct);
     }
+    // Only the internal SQL-removal replay path uses this read. It grants no storage scope.
+    internal async Task VerifyRememberedAsync(Guid id,string digest,DateTimeOffset deadline,CancellationToken ct)
+    {
+        var saved=await Read<Marker>(hints.GetBlobClient(Prefix+id.ToString("N")),markers,null,ct);Validate(saved.Value,id);
+        if(saved.Value.PolicySha256!=digest || saved.Value.DeleteAfter!=deadline)throw Invalid();
+    }
     public async Task<PurgeRecoveryBatch> RecoverBatchAsync(int maximumMarkers=8,CancellationToken ct=default)
     {
         if(maximumMarkers is <1 or >32)throw new ArgumentOutOfRangeException(nameof(maximumMarkers));ct.ThrowIfCancellationRequested();

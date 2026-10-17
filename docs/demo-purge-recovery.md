@@ -1,6 +1,6 @@
 # Storage-only demo purge recovery
 
-This dependency keeps authorized cleanup retryable after private SQL records are eventually removed. It does not yet remove those records, create first-upload purge jobs, run on a timer or enable hosted maintenance. [Fixed retention](document-retention.md) and the [bounded storage capability](demo-purge-storage.md) remain its foundations.
+This dependency keeps authorized cleanup retryable after private SQL records are removed by the separate [guarded SQL operation](demo-purge-sql.md). It does not itself remove those records, create first-upload purge jobs, run on a timer or enable hosted maintenance. [Fixed retention](document-retention.md) and the [bounded storage capability](demo-purge-storage.md) remain its foundations.
 
 ## Durable marker
 
@@ -11,7 +11,7 @@ The dedicated persistent Data Protection purpose is bound to the exact configure
 ```mermaid
 flowchart TD
     A[Verified expired policy and current SQL purge lease] --> B[Conditional authenticated marker and exact readback]
-    B --> C[Future private SQL cleanup: separate slice]
+    B --> C[Separate guarded private SQL cleanup]
     B --> D[Explicit storage-only recovery]
     D --> E[Acquire finite lease on exact marker]
     E --> F[Short-lived internal envelope storage scope]

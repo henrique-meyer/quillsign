@@ -8,6 +8,28 @@ public static class DatabasePermissions
     public const string MigrationUser = "app_migrations";
     public const string WorkerUser = "app_worker";
 
+    // Explicit operator step after migration and approval, never part of ordinary startup.
+    public static async Task GrantDemoPurgeAsync(SqlConnection connection)
+    {
+        await using var command=connection.CreateCommand();
+        command.CommandText="""
+            IF DATABASE_PRINCIPAL_ID(N'app_worker') IS NULL
+                THROW 50001,'Provision the worker identity before granting demo cleanup.',1;
+            IF OBJECT_ID(N'dbo.RemoveExpiredDemoPrivateRecords',N'P') IS NULL
+                THROW 50001,'Apply the demo cleanup migration before granting execution.',1;
+            IF DATABASE_PRINCIPAL_ID(N'app_demo_purge_role') IS NULL CREATE ROLE [app_demo_purge_role] AUTHORIZATION [dbo];
+            IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name=N'app_demo_purge_role' AND type='R'
+                AND owning_principal_id=DATABASE_PRINCIPAL_ID(N'dbo'))
+                THROW 50001,'The existing demo cleanup role has unexpected ownership or type.',1;
+            IF EXISTS(SELECT 1 FROM sys.database_role_members WHERE role_principal_id=DATABASE_PRINCIPAL_ID(N'app_demo_purge_role')
+                AND member_principal_id<>DATABASE_PRINCIPAL_ID(N'app_worker'))
+                THROW 50001,'The demo cleanup role must contain only the worker.',1;
+            GRANT EXECUTE ON OBJECT::[dbo].[RemoveExpiredDemoPrivateRecords] TO [app_demo_purge_role];
+            ALTER ROLE [app_demo_purge_role] ADD MEMBER [app_worker];
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
     // A separate administrator provisions these contained users. Client IDs are used
     // for service principals/managed identities; no Graph directory grants are needed.
     public static async Task ProvisionIdentitiesAsync(SqlConnection connection, Guid runtimeClientId, Guid migrationClientId)
