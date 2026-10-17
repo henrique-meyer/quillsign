@@ -1,0 +1,35 @@
+@page "/draft/{publicId}/void"
+@model QuillSign.Pages.Draft.VoidModel
+@{ViewData["Title"]="Confirm void";}
+@section Styles {<link rel="stylesheet" href="~/review.css" asp-append-version="true" />}
+<section class="draft-review">
+<p class="eyebrow">Private sender action</p><h1>Confirm void</h1>
+@if(Model.ErrorMessage is not null) {<p class="document-error" role="alert">@Model.ErrorMessage</p>}
+@if(Model.Data is { } data) {
+<h2>@data.Title</h2><p>Sent at @data.SentAt.ToString("u") (UTC).</p>
+@if(data.Action is { } saved) {
+<h2>Request voided</h2><p>Voided at @saved.VoidedAt.ToString("u") (UTC). Further signing has stopped.</p>
+@if(saved.Reason is { } reason) {<h3>Recorded reason</h3><p class="document-message">@reason</p>}
+}
+else if(!data.CanVoid) {<p>This request is closed and cannot be voided.</p>}
+<h2>Saved signing progress</h2><ol class="signer-cards">@foreach(var signer in data.Signers) {
+<li class="signer-card" value="@signer.Order"><strong>@signer.Name</strong><span class="signer-email">@signer.Email</span><p>@signer.State</p>
+@if(signer.SignedAt is { } signed) {<p>Signed at @signed.ToString("u") (UTC).</p>}</li>
+}</ol>
+}
+@if(Model.Data?.CanVoid==true || Model.ReloadRequired) {
+<p>Voiding stops further signing. Earlier signatures and accepted actions remain part of the retained history. You cannot reopen this request.</p>
+<p>The sender and signers will have informative notices queued when durable work is enabled. Completion-only recipients are not notified. Queueing does not confirm email delivery.</p>
+<form method="post" asp-page="/Draft/Void" asp-page-handler="" asp-route-publicId="@RouteData.Values["publicId"]">
+<input type="hidden" asp-for="Version" /><input type="hidden" name="StatementVersion" value="@QuillSign.Sender.SenderVoidStatement.Version" />
+<label asp-for="Reason">Reason (optional, up to 512 characters)</label><textarea asp-for="Reason" rows="4" maxlength="512"></textarea>
+@if(Model.Data?.CanVoid==true && !Model.ReloadRequired) {
+<label class="send-check"><input asp-for="Confirmed" /> <span>@QuillSign.Sender.SenderVoidStatement.Text</span></label>
+<button type="submit">Confirm void</button>
+}
+@if(Model.ReloadRequired) {<p>Refresh saved details, then review and affirm again. Your attempted reason will be kept.</p>}
+<button type="submit" asp-page-handler="Refresh">Refresh saved details</button>
+</form>
+}
+<p><a asp-page="/Draft/Sent" asp-route-publicId="@RouteData.Values["publicId"]">Check saved request status</a></p>
+</section>

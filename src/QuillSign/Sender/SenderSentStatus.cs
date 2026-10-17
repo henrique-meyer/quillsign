@@ -46,11 +46,13 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
                 EmailStatus.Bounced=>"Invitation bounced; delivery needs attention",EmailStatus.Complained=>"Invitation complaint reported",
                 EmailStatus.Failed=>invitation.Ambiguous ? "Invitation submission not confirmed" : "Invitation not sent; delivery needs attention",
                 _=>invitation.SubmissionStartedAt is not null ? "Invitation submission not confirmed" : "Invitation queued" };
-            var state=signer.Status switch { SignerStatus.Viewed=>"Consent recorded; signing incomplete",
+            var state=signer.Status switch { SignerStatus.Viewed=>envelope.Status==EnvelopeStatus.Voided ? "Consent recorded before void" : "Consent recorded; signing incomplete",
                 SignerStatus.Signed=>"Signed",SignerStatus.Declined=>"Declined",_=>delivery };
+            if(envelope.Status==EnvelopeStatus.Voided && (signer.Status is SignerStatus.Pending or SignerStatus.Notified))state="Not signed; request voided";
             if(finishes.TryGetValue(signer.Id,out var finish) && finish.ProcessedAt is null) {
                 if(await checkpoints.AcceptanceAsync(finish,signer,ct) is null)throw new InvalidDataException("The saved Finish could not be verified.");
-                state="Finish accepted; signing copy processing";
+                state=envelope.Status==EnvelopeStatus.Voided ? "Finish accepted before void" :
+                    envelope.Status==EnvelopeStatus.Sent && (envelope.ExpiresAt is null || envelope.ExpiresAt>time.GetUtcNow()) ? "Finish accepted; signing copy processing" : "Finish accepted; request closed";
             }
             progress.Add(new(signer.Order,signer.FullName,signer.Email,signer.Role,state,signer.Status==SignerStatus.Signed ? signer.SignedAt : null));
         }

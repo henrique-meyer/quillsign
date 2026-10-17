@@ -4,3 +4,4 @@
 .send-disclosure { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 24rem; overflow: auto; }
 .send-check { display: flex; align-items: flex-start; gap: .65rem; margin: 1rem 0; }
 .send-check input[type="checkbox"] { width: 1.1rem; min-width: 1.1rem; margin-top: .25rem; }
+.draft-review textarea { box-sizing: border-box; width: 100%; max-width: 590px; padding: 12px 14px; border: 1px solid #83909a; border-radius: 5px; font: inherit; color: inherit; resize: vertical; }
