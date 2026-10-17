@@ -16,6 +16,7 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
     public DocumentOptions Limits => limits;
     public string? Notice { get; private set; }
     public string? Error { get; private set; }
+    public bool RetentionExpired {get;private set;}
     [BindProperty] public IFormFile? Upload { get; set; }
     [BindProperty] public string Version { get; set; } = "";
     [BindProperty] public string? DocumentId { get; set; }
@@ -24,7 +25,11 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
     public async Task<IActionResult> OnGetAsync(string publicId, CancellationToken cancellationToken)
     {
         Response.Headers.CacheControl = "no-store";
-        if (!await LoadAsync(publicId, cancellationToken)) return NotFound();
+        Response.Headers["Referrer-Policy"]="no-referrer";
+        try {if (!await LoadAsync(publicId,cancellationToken))return NotFound();}
+        catch(Exception error) when(error is InvalidDataException or IOException or Azure.RequestFailedException ||
+            error.GetBaseException() is Microsoft.Data.SqlClient.SqlException || SqlResume.IsUnavailable(error))
+        {return new ContentResult{Content="The saved document could not be verified. Retry later.",ContentType="text/plain",StatusCode=503};}
         Notice = notices.Take(HttpContext);
         return Page();
     }
@@ -49,7 +54,9 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
     }
     private async Task<bool> LoadAsync(string publicId, CancellationToken ct)
     {
-        var draft = await documents.GetAsync(User, publicId, ct);
+        Envelope? draft;
+        try {draft=await documents.GetAsync(User,publicId,ct);}
+        catch(DocumentRetentionExpiredException) {RetentionExpired=true;Response.StatusCode=410;return true;}
         if (draft is null) return false;
         Draft = draft; Version = Convert.ToBase64String(draft.RowVersion); DocumentId = draft.PdfBlob ?? "";
         return true;
@@ -65,11 +72,16 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
             notices.Set(HttpContext, notice);
             return Redirect("/draft/" + publicId);
         }
+        catch(DocumentRetentionExpiredException error)
+        {
+            if(SenderConfiguration.WantsJson(HttpContext))return new JsonResult(new{message=error.Message}){StatusCode=410};
+            RetentionExpired=true;Response.StatusCode=410;return Page();
+        }
         catch (DocumentRejectedException error) { Error = error.Message; }
         catch (DocumentConflictException error) { Error = error.Message; status = StatusCodes.Status409Conflict; }
         catch (DbUpdateConcurrencyException) { Error = "This draft changed. Reload it before trying again."; status = StatusCodes.Status409Conflict; }
         catch (Exception error) when (error.GetBaseException() is Microsoft.Data.SqlClient.SqlException ||
-            error is Azure.RequestFailedException or IOException || SqlResume.IsUnavailable(error))
+            error is Azure.RequestFailedException or IOException or InvalidDataException || SqlResume.IsUnavailable(error))
         {
             Error = "We couldn't verify that change right now. Reload the draft before trying again.";
             if (SenderConfiguration.WantsJson(HttpContext)) return new JsonResult(new { message = Error }) { StatusCode = 503 };
@@ -77,6 +89,7 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
         }
         if (SenderConfiguration.WantsJson(HttpContext)) return new JsonResult(new { message = Error }) { StatusCode = status };
         if (!await LoadAsync(publicId, ct)) return NotFound();
+        if(RetentionExpired)return Page();
         Response.StatusCode = status;
         ModelState.Clear();
         return Page();
