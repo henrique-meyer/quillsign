@@ -6,7 +6,7 @@ An open-source e-signature app being built around sequential signing, no account
 
 QuillSign is under active development. The application implements verified-sender PDF preparation, sequential signer setup, manual field placement and sender prefill, reviewed Send, electronic-record consent, signature capture, deliberate field application, exact PDF review and Finish. Durable workers publish signer checkpoints and prepare, seal and publish the completed PDF and certificate of completion. Private downloads, completion emails, sender voiding, public uploaded-PDF verification and finite expiry maintenance are also implemented.
 
-Synthetic end-to-end flows have local automated and browser coverage. Hosted completion still needs operator disclosures, retention settings, timestamp-provider trust and immutable final-storage configuration, followed by end-to-end validation. Public email delivery remains disabled until SES and feedback handling are ready. The `/health` endpoint returns `{"status":"ok"}` without querying the database. See the [cloud infrastructure guide](infra/README.md) for hosting setup.
+Synthetic end-to-end flows have local automated and browser coverage. Hosted completion still needs operator disclosures, retention settings, timestamp-provider trust and immutable final-storage configuration, followed by end-to-end validation. Public email delivery remains disabled until SES and feedback handling are ready. The `/health` endpoint returns `{"status":"ok"}` without querying the database. See the [cloud infrastructure guide](infra/README.md) for hosting setup. The [hosted demo rollout plan](docs/hosted-demo-rollout.md) lists approval, configuration and validation gates for activating the completed flow.
 
 ## Signing flow
 
