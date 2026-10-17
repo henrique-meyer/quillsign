@@ -1062,7 +1062,7 @@ Validation: 32 new SQL/Azurite/HTTP cases pass, including exact cutoff on all pr
 
 ## QUILS-75: Remove timing and queue-target assumptions from regression fixtures
 
-Status: In Progress. Test-only work required by the loaded QUILS-73 regression; independent of queued QUILS-74 product changes.
+Status: Done. Merged as PR #79; all ten exact-head checks passed and native Jira Done was verified. Production code and configuration are unchanged.
 
 Remove environment-dependent assumptions exposed by the loaded QUILS-73 local regression: the field interaction-rate test performs 120 SQL-backed requests and can cross its real one-minute window; the completion lease-expiry test assumes the next queue delivery always reaches its selected fault phase. Both checks pass in isolation and CI, but their fixtures must target the intended invariant deterministically. This is test-only regression work, independent of queued QUILS-74 product changes.
 
