@@ -82,7 +82,7 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
                 DocumentSha256 = Convert.FromHexString(context.Identity.DocumentHash),DisclosureSha256 = Convert.FromHexString(context.Identity.DisclosureHash),
                 SessionSha256 = SessionHash(context.Identity),BaselineSignerVersion = signer.RowVersion,Method = request.Method,TypedName = typedName,TypedInitials = typedInitials,
                 NormalizationVersion = SignaturePng.Version,AdoptionVersion = SignatureAdoptionStatement.Version,CreatedAt = now,
-                ExpiresAt = new[] { now.AddMinutes(PreviewMinutes),context.Identity.SessionExpiresAt }.Min() };
+                ExpiresAt = new[] { now.AddMinutes(PreviewMinutes),context.AccessExpiresAt }.Min() };
             foreach (var pair in new[] { (SignatureBlob(preview),signature.Bytes),(InitialsBlob(preview),initials.Bytes) })
             {
                 attempted.Add(pair.Item1);
@@ -152,6 +152,7 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
                 signatureSha256 = Convert.ToHexStringLower(preview.SignatureSha256),initialsSha256 = Convert.ToHexStringLower(preview.InitialsSha256),
                 documentSha256 = context.Identity.DocumentHash,disclosureSha256 = context.Identity.DisclosureHash,
                 serverEvidence = "previewed_assets_bound_to_explicit_adoption_request",identityEvidence = "email_link_session_with_prior_consent" }),PartyType.Signer,signer.Id);
+        if(!access.IsLive(context))return SignatureAdoptionResult.InvalidContext;
         await transaction.CommitAsync(ct); return SignatureAdoptionResult.Adopted;
     }
 

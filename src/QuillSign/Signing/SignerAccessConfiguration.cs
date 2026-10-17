@@ -41,6 +41,7 @@ public static class SignerAccessConfiguration
     public static IServiceCollection AddQuillSignSignerAccess(this IServiceCollection services,IConfiguration config,IHostEnvironment environment)
     {
         services.AddQuillSignSignerAccessCore(config);
+        services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(mvc=>mvc.Filters.Add<SignerRetentionExceptionFilter>());
         var options = config.GetSection("SignerAccess").Get<SignerAccessOptions>() ?? new();
         services.AddAuthentication().AddCookie(Scheme,cookie =>
         {

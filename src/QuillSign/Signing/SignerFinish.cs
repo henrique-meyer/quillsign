@@ -79,6 +79,7 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
         if(!Live(p,context.Identity,time.GetUtcNow()))return new(SignerFinishOutcome.InvalidReview);
         await jobs.PrepareAsync(accepted,ct);
         if(!Live(p,context.Identity,time.GetUtcNow()))return new(SignerFinishOutcome.InvalidReview);
+        if(!access.IsLive(context))return new(SignerFinishOutcome.InvalidContext);
         await transaction.CommitAsync(ct); await transaction.DisposeAsync(); await jobs.PublishAsync(accepted.Id,ct);
         return new(SignerFinishOutcome.Accepted,Result(accepted));
     }

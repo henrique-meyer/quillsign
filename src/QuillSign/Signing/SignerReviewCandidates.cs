@@ -76,7 +76,7 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
             if(await db.SignerReviewCandidates.CountAsync(x=>x.EnvelopeId==identity.EnvelopeId && x.SignerId==identity.SignerId && x.UsedAt==null && x.SupersededAt==null && x.ExpiresAt>now,ct)>=MaximumActiveCandidates)
                 throw new InvalidOperationException("Reuse a current review copy or wait for another review session to expire.");
             var midnight=new DateTimeOffset(now.UtcDateTime.Date.AddDays(1),TimeSpan.Zero);
-            var expires=new[]{now.AddMinutes(10),identity.SessionExpiresAt,state.Envelope.ExpiresAt??DateTimeOffset.MaxValue,midnight}.Min();
+            var expires=new[]{now.AddMinutes(10),state.Context.AccessExpiresAt,state.Envelope.ExpiresAt??DateTimeOffset.MaxValue,midnight}.Min();
             if(expires<=now)return null;
             var a=state.Assets; var marks=new SignerPdfMarks(a.Preview.Id,a.Preview.SignatureObjectId,a.Preview.InitialsObjectId,
                 a.Signature,a.Initials,a.Preview.SignatureSha256,a.Preview.InitialsSha256,a.Preview.NormalizationVersion);
