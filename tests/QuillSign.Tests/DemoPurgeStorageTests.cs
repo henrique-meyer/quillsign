@@ -87,9 +87,10 @@ public sealed class DemoPurgeStorageTests(SqlDatabaseFixture fixture):IClassFixt
     internal sealed class Run(SqlDatabaseFixture fixture,Shared harness):IAsyncDisposable
     {
         internal Shared H=harness;internal Clock Time=new();internal DocumentRetentionSnapshot Policy=null!;internal WorkLease Lease=null!;
-        internal static async Task<Run> Create(SqlDatabaseFixture fixture) {
-            var h=await Shared.CreateAsync(fixture,demo:true);var r=new Run(fixture,h);h.Time=r.Time;h.Retention.PurgeAfterDays=1;
+        internal static async Task<Run> Create(SqlDatabaseFixture fixture,DateTimeOffset? initialTime=null) {
+            var h=await Shared.CreateAsync(fixture,demo:true);var r=new Run(fixture,h);if(initialTime is { } start)r.Time.Now=start;h.Time=r.Time;h.Retention.PurgeAfterDays=1;
             try {
+                if(initialTime is not null) {await using var seed=fixture.Open();await seed.Envelopes.Where(x=>x.Id==h.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.CreatedAt,r.Time.Now).SetProperty(x=>x.SenderVerifiedAt,r.Time.Now));}
                 Assert.True(await h.UploadAsync(PdfFixtures.Create(text:"SYNTHETIC PURGE NO AGREEMENT")));
                 await using var db=fixture.Open();r.Policy=await db.DocumentRetentionSnapshots.AsNoTracking().SingleAsync(x=>x.EnvelopeId==h.Id);r.Time.Now=r.Policy.DeleteAfter;
                 var work=new WorkItem {EnvelopeId=h.Id,Kind=WorkKind.Purge,PayloadJson=DemoPurgeAuthority.Payload(r.Policy),AvailableAt=r.Time.Now};db.WorkItems.Add(work);await db.SaveChangesAsync();

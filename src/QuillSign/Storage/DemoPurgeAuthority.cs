@@ -21,6 +21,13 @@ public sealed class DemoPurgeAuthority
         EnvelopeId=policy.EnvelopeId;PolicySha256=UploadRetention.Digest(policy);DeleteAfter=policy.DeleteAfter;
         this.time=time;expires=new[]{leaseUntil,time.GetUtcNow().AddMinutes(2)}.Min();
     }
+    private DemoPurgeAuthority(DemoPurgeRecovery.VerifiedScope scope)
+    {
+        scope.Demand(default);EnvelopeId=scope.EnvelopeId;PolicySha256=scope.PolicySha256;DeleteAfter=scope.DeleteAfter;
+        time=scope.Time;expires=scope.Until;
+    }
+    // Only authenticated marker readback under its finite storage lease creates this internal scope.
+    internal static DemoPurgeAuthority Recovery(DemoPurgeRecovery.VerifiedScope scope)=>new(scope);
     // A scheduling description is not authority. Issuance verifies it against saved evidence.
     public static string Payload(DocumentRetentionSnapshot policy)=>JsonSerializer.Serialize(new {
         version=Version,envelopeId=policy.EnvelopeId,retentionSha256=UploadRetention.Digest(policy),deleteAfter=policy.DeleteAfter});
