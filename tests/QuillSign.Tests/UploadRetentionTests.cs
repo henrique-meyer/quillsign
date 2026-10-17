@@ -55,6 +55,16 @@ public sealed class UploadRetentionTests(SqlDatabaseFixture fixture) : IClassFix
     }
 
     [Fact]
+    public async Task Subsecond_and_non_UTC_clock_input_is_captured_once_at_whole_UTC_seconds()
+    {
+        await using var h=await Shared.CreateAsync(fixture,demo:true);var clock=new Clock {Now=new DateTimeOffset(2028,2,28,23,59,59,TimeSpan.FromHours(5.5)).AddTicks(1234567)};
+        h.Time=clock;h.Retention.PurgeAfterDays=7;Assert.True(await h.UploadAsync(PdfFixtures.Create()));var row=await Read(h);
+        Assert.Equal(TimeSpan.Zero,row.StartedAt.Offset);Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(clock.Now.ToUnixTimeSeconds()),row.StartedAt);
+        Assert.Equal(row.StartedAt.AddDays(7),row.DeleteAfter);Assert.Equal(0,row.DeleteAfter.Ticks%TimeSpan.TicksPerSecond);
+        await using var db=fixture.Open();Assert.Equal(clock.Now,(await db.AuditEvents.AsNoTracking().SingleAsync(x=>x.EnvelopeId==h.Id && x.Event=="document_uploaded")).At);
+    }
+
+    [Fact]
     public async Task Lost_commit_acknowledgement_keeps_the_committed_snapshot_and_readable_bytes()
     {
         await using var h=await Shared.CreateAsync(fixture,demo:true);var clock=new Clock();h.Time=clock;h.Retention.PurgeAfterDays=7;h.CommitFailure.Enabled=true;

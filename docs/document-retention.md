@@ -4,6 +4,8 @@
 
 For a stored demo envelope, the first successful upload freezes one immutable `DocumentRetentionSnapshot` in the upload transaction. It records the policy version, selected days, UTC start and exact deletion deadline, and the first original/normalized object identities and hashes. The first upload audit binds the complete snapshot. A failed upload starts no interval; a committed upload whose acknowledgement is lost retains its original snapshot and readable objects.
 
+The start uses whole UTC seconds, rounded down by less than one second at initial capture so the fixed deadline can be represented exactly by Blob Storage's RFC1123 retention timestamps. The audit keeps its actual event time. Publication and retries must not round or extend a frozen deadline.
+
 Replacements preserve the first snapshot even if configuration changes or becomes unset. Replacement at or after its deadline is rejected. Concurrent first uploads use the common envelope lock and reviewed row version, so only the winning upload can establish the snapshot. Runtime SQL permissions permit snapshot reads/inserts and deny updates/deletes; EF also rejects tracked mutations. A later privileged purge path must deliberately remove these records.
 
 Ordinary envelopes and unconfigured demo envelopes are not enrolled. Existing uploaded demo documents without a snapshot require an explicit migration decision before replacement after the setting is enabled. The application does not infer an earlier upload time, silently backfill them or reset their age. Reading a document does not create a snapshot.

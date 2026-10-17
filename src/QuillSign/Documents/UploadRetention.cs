@@ -52,7 +52,9 @@ public sealed class UploadRetention(QuillSignDbContext db,DemoRetentionOptions o
         if(!envelope.IsDemo || options.PurgeAfterDays is not int days)return null;
         if(envelope.PdfBlob is not null || envelope.OriginalBlob is not null || await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==envelope.Id && x.Event=="document_uploaded",ct))
             throw new DocumentRejectedException("This existing demo document needs an explicit retention migration before replacement.");
-        var at=time.GetUtcNow().ToUniversalTime();
+        // Blob retention uses RFC1123 seconds. Normalize once at first capture,
+        // never by rounding a saved deadline during later publication or retries.
+        var at=DateTimeOffset.FromUnixTimeSeconds(time.GetUtcNow().ToUnixTimeSeconds());
         var row=new DocumentRetentionSnapshot {EnvelopeId=envelope.Id,PolicyVersion=Version,Days=days,StartedAt=at,DeleteAfter=at.AddDays(days),
             OriginalObjectId=original,OriginalSha256=originalHash.ToArray(),PdfObjectId=pdf,PdfSha256=pdfHash.ToArray()};
         db.DocumentRetentionSnapshots.Add(row);return row;
