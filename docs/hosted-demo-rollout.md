@@ -6,7 +6,7 @@ This is an operator review and validation plan. It does not authorize resource c
 
 Read-only checks on 2026-10-17 found an earlier application image on the web app and both existing jobs. Email remained disabled. The web/dispatch environment did not include the new demo-retention, synthetic-disclosure or timestamp settings. Storage versioning, seven-day blob/container soft deletion and a seven-day document lifecycle rule were enabled. The final container reported no immutability policy or legal hold; version-level support was not demonstrated. A data-plane inventory could not be verified with the operator's current permissions. Do not assume the container is empty or grant access implicitly.
 
-These observations are a dated snapshot, not a continuous health check. Re-check the scoped resources before an approved rollout. Source/CI tests and local synthetic browser flows do not replace hosted provider, identity and storage validation.
+These observations are a dated snapshot, not a continuous health check. Re-check the scoped resources before an approved rollout. Source/CI tests and local synthetic browser flows do not replace hosted provider, identity and storage validation. The existing `work verify` command is a baseline check, not certification of the new purge grant, final-version protection or TSA readiness.
 
 | Gate | Required evidence before general demo sending |
 | --- | --- |
