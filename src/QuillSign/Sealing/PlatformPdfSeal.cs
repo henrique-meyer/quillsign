@@ -18,7 +18,7 @@ public sealed class PlatformPdfSeal(SealOptions options,ISealCertificateProvider
         =>SealCore(source,expectedSha256,expectedCertificateSha256 ?? throw new SealUnavailableException("A platform identity binding is required."),ct);
     private async Task<SealedPdf> SealCore(byte[] source,byte[] expectedSha256,byte[]? expectedCertificateSha256,CancellationToken ct)
     {
-        options.Validate(environment.IsDevelopment()); ct.ThrowIfCancellationRequested();
+        var address=options.Validate(environment.IsDevelopment());options.ValidateRequestCoordination(address);ct.ThrowIfCancellationRequested();
         if(expectedCertificateSha256 is not null && expectedCertificateSha256.Length!=32)throw new SealUnavailableException("Invalid platform identity binding.");
         var certificateBinding=expectedCertificateSha256?.ToArray();
         if(source is null || source.Length<16 || source.LongLength>options.MaximumBytes || expectedSha256 is not {Length:32})

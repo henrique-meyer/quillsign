@@ -35,7 +35,7 @@ There is no CAPTCHA. Verified email, request limits, daily caps and bounce/compl
 
 ### Timestamp, immutable storage and retention setup
 
-The seal engine requires an HTTPS RFC 3161 timestamp service and a trusted certificate chain. FreeTSA's public service has no subscription fee, permits application use, and allows at most one request per second per source IP. It is best-effort without an SLA. Before enabling it, configure its verified public CA and serialize timestamp requests across both final PDF seals and all workers sharing that IP. Provider rate coordination and hosted configuration remain rollout work; a timestamp outage can delay completion. See [FreeTSA's usage policy](https://www.freetsa.org/freetsa.html) and the [seal configuration guide](docs/platform-pdf-seals.md).
+The seal engine requires an HTTPS RFC 3161 timestamp service and a trusted certificate chain. FreeTSA's public service has no subscription fee, permits application use, and allows at most one request per second per source IP. It is best-effort without an SLA. The client supports shared Blob-lease coordination across both final PDF seals and all workers, with a cooldown after each attempt. Before enabling FreeTSA, configure its verified public CA and enable that coordinator against shared storage. Hosted configuration and end-to-end validation remain rollout work; a timestamp outage can delay completion. See [FreeTSA's usage policy](https://www.freetsa.org/freetsa.html) and the [seal configuration guide](docs/platform-pdf-seals.md).
 
 Immutable storage is a policy on ordinary Azure Blob Storage, not a separate compute or storage service. Hosted publication requires a private final-files container with version-level immutability enabled and actual blob protection covering the promised retention interval. Existing containers require migration; enabling support cannot be reversed, and locked retention cannot be shortened. Keep the deletion deadline and protection expiry aligned. The application verifies protection but does not provision or change hosted policies. See [Azure's version-level immutability documentation](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-version-level-worm-policies) and [final publication](docs/final-publication.md).
 
@@ -45,6 +45,7 @@ Configure these values through environment variables or private settings, using 
 | --- | --- |
 | `Seal__TsaUrl` | HTTPS RFC 3161 endpoint; FreeTSA publishes `https://freetsa.org/tsr` |
 | `Seal__TsaTrustedRootPaths__0` | Absolute runtime path to a verified public TSA root certificate; indexed entries support multiple roots |
+| `Seal__TimestampCoordination__Enabled` | Enable shared Blob-lease request coordination; required for FreeTSA |
 | `Retention__CompletedDays` | Retention interval for completed ordinary requests |
 | `Demo__PurgeAfterDays` | Positive retention interval for completed demo requests |
 
