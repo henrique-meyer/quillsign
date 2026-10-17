@@ -1613,7 +1613,7 @@ namespace QuillSign.Data.Migrations
 
                     b.ToTable("WorkItems", t =>
                         {
-                            t.HasCheckConstraint("CK_WorkItem_Kind", "[Kind] IS NULL OR [Kind] IN ('Conversion','Ai','Rendering','Sealing','Email','Purge')");
+                            t.HasCheckConstraint("CK_WorkItem_Kind", "[Kind] IS NULL OR [Kind] IN ('Conversion','Ai','Rendering','Sealing','Email','Purge','Expiry')");
 
                             t.HasCheckConstraint("CK_WorkItem_PayloadJson", "[PayloadJson] IS NULL OR ISJSON([PayloadJson]) = 1");
 

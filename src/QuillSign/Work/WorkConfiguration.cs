@@ -65,6 +65,7 @@ public static class WorkConfiguration
             services.AddScoped<IWorkHandler, EmailWorkHandler>();
             services.AddScoped<SignerCheckpointJobs>(); services.AddScoped<SignerCheckpointState>(); services.AddScoped<SignerCheckpointBlobs>();
             services.AddScoped<SigningExpiry>();
+            services.AddScoped<SigningExpiryJobs>();services.AddScoped<IWorkHandler,SigningExpiryHandler>();
             services.AddScoped<QuillSign.Completion.CompletionCommitScope>();
             services.AddScoped<CompletionJobs>(); services.AddScoped<CompletionPipeline>();
             services.AddScoped<Func<CompletionPipeline>>(sp=>()=>sp.GetRequiredService<CompletionPipeline>());

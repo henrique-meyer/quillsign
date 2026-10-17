@@ -10,6 +10,21 @@ public sealed class WorkProcessor(WorkStore store, IWorkSignals signals, IEnumer
         if (delivery is null) return false; // Empty queue must never open SQL.
         if (delivery.WorkId is not { } id)
         { await signals.AcknowledgeAsync(delivery, cancellationToken); return true; }
+        // A storage hint can postpone a wake, never authorize execution. Missing or
+        // malformed hints still require SQL's authoritative available-at/lease gate.
+        DateTimeOffset? scheduled;
+        try { scheduled = await signals.ReadDueAsync(id, cancellationToken); }
+        catch (Exception e) when (!cancellationToken.IsCancellationRequested &&
+            e is Azure.RequestFailedException or IOException or HttpRequestException or TimeoutException or OperationCanceledException)
+        {
+            await signals.DeferAsync(delivery, TimeSpan.FromMinutes(15), cancellationToken);
+            return true; // Preserve the hint and avoid SQL during a storage outage.
+        }
+        if (scheduled > time.GetUtcNow())
+        {
+            await signals.DeferAsync(delivery, Delay(scheduled.Value), cancellationToken);
+            return true;
+        }
         WorkClaim claim;
         try { claim = await store.ClaimAsync(id, cancellationToken); }
         catch (Exception e) when (SqlResume.IsUnavailable(e))

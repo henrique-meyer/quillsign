@@ -301,6 +301,7 @@ public sealed class SignerCheckpointTests(SqlDatabaseFixture fixture) : IClassFi
         public Task<WorkDelivery?> ReceiveAsync(CancellationToken ct)=>inner.ReceiveAsync(ct);
         public Task DeferAsync(WorkDelivery delivery,TimeSpan delay,CancellationToken ct)=>inner.DeferAsync(delivery,delay,ct);
         public Task AcknowledgeAsync(WorkDelivery delivery,CancellationToken ct)=>inner.AcknowledgeAsync(delivery,ct);
+        public Task<DateTimeOffset?> ReadDueAsync(Guid id,CancellationToken ct)=>inner.ReadDueAsync(id,ct);
         public Task<int> RecoverAsync(DateTimeOffset now,CancellationToken ct)=>inner.RecoverAsync(now,ct);
         public Task VerifyAsync(CancellationToken ct)=>inner.VerifyAsync(ct);
     }

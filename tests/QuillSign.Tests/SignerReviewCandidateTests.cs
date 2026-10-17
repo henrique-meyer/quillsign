@@ -245,6 +245,7 @@ public sealed class SignerReviewCandidateTests(SqlDatabaseFixture fixture) : ICl
         public Task<WorkDelivery?> ReceiveAsync(CancellationToken ct)=>Task.FromResult<WorkDelivery?>(null);
         public Task DeferAsync(WorkDelivery delivery,TimeSpan delay,CancellationToken ct)=>Task.CompletedTask;
         public Task AcknowledgeAsync(WorkDelivery delivery,CancellationToken ct)=>Task.CompletedTask;
+        public Task<DateTimeOffset?> ReadDueAsync(Guid id,CancellationToken ct)=>Task.FromResult<DateTimeOffset?>(null);
         public Task<int> RecoverAsync(DateTimeOffset now,CancellationToken ct)=>Task.FromResult(0);
         public Task VerifyAsync(CancellationToken ct)=>Task.CompletedTask;
     }

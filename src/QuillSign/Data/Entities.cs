@@ -9,7 +9,7 @@ public enum PartyType { Sender, Signer, Recipient, System }
 public enum TokenPurpose { SenderVerify, SenderStatus, SignerAccess, Lookup, CompletionAccess }
 public enum EmailStatus { Queued, Sent, Failed, Bounced, Complained }
 public enum WorkStatus { Queued, Leased, Completed, Failed }
-public enum WorkKind { Conversion, Ai, Rendering, Sealing, Email, Purge }
+public enum WorkKind { Conversion, Ai, Rendering, Sealing, Email, Purge, Expiry }
 public enum SuppressionReason { Bounce, Complaint, Unsubscribe, BlockedSender }
 public enum CompletionSealKind { Executed, Certificate }
 
