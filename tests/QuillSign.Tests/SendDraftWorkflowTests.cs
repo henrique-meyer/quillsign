@@ -264,7 +264,14 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
             await queue.DeleteIfExistsAsync(); await hints.DeleteIfExistsAsync(); await keyBlob.DeleteIfExistsAsync();
         }
     }
-    internal sealed class Clock : TimeProvider { private DateTimeOffset now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public override DateTimeOffset GetUtcNow()=>now; public void Advance(TimeSpan value)=>now+=value; }
+    internal sealed class Clock : TimeProvider
+    {
+        private DateTimeOffset now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        private global::System.Diagnostics.Stopwatch? elapsed;
+        public override DateTimeOffset GetUtcNow()=>now+(elapsed?.Elapsed??TimeSpan.Zero);
+        public void Advance(TimeSpan value)=>now+=value;
+        public void TrackElapsed()=>elapsed??=global::System.Diagnostics.Stopwatch.StartNew();
+    }
     internal sealed class FakeSender : IEmailSender
     {
         public int Calls; public OutgoingEmail? Last; public Exception? Failure; public Func<Task>? BeforeReturn;

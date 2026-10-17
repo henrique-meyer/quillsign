@@ -19,6 +19,7 @@
     <Using Include="Xunit" />
     <None Update="Fixtures/synthetic-conversion.docx" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Fixtures/synthetic-conversion.pdf" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/historical-synthetic-demo-disclosure-v1.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

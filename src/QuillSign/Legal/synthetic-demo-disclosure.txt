@@ -15,7 +15,7 @@ You need an internet connection and a current browser supporting JavaScript, coo
 
 Fixed demo retention
 The configured retention period for this document is {{days}} days from its first successful upload at {{started_at}}. Its fixed deadline is {{delete_after}}. Replacing the source, sending, signing or completing does not extend this deadline. Download completed copies before the deadline and keep your own copies.
-Automatic physical deletion is not implemented yet. Stored content may remain until the operator deletes it. This instance does not promise immediate erasure of backups, soft-deleted objects, versions or service logs. Do not rely on this demo to retain records for you.
+Automatic cleanup is queued for the fixed deadline. Service failures and storage protection can delay physical deletion. This instance does not promise immediate erasure of backups, soft-deleted objects, versions or service logs. Do not rely on this demo to retain records for you.
 Retention policy reference: {{retention_digest}}
 
 Before agreeing

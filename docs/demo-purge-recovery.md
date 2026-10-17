@@ -35,7 +35,7 @@ The default batch examines up to eight markers. It uses configured persistent st
 
 Output contains only operation/status and counts: examined, swept, busy, failed, deleted, protected, changed and pending, plus whether another marker page remains. `More` refers only to the marker-page cursor. `Pending` includes unfinished object inventory or held/changed objects; busy leases and failures retain their markers. Exit success means the bounded command ran without recorded failures, not that all envelope data has been permanently erased. A subsequent explicit batch can continue progress without waking SQL. There is no automatic schedule in this slice.
 
-Legal holds and unexpired object protection are never weakened. Recovery does not promise immediate removal of soft-deleted versions, backups, uncommitted provider blocks or logs. A later coordinator must require durable marker readback before private SQL deletion, schedule real enrolled records, preserve per-envelope ownership and handle partial/unknown commits. Hosted scheduling, permissions, physical-purge disclosure claims and rollout require their own supported work and owner-approved infrastructure.
+Legal holds and unexpired object protection are never weakened. Recovery does not promise immediate removal of soft-deleted versions, backups, uncommitted provider blocks or logs. The [coordinator](demo-purge-coordinator.md) requires durable marker readback before private SQL deletion, schedules enrolled records, preserves per-envelope ownership and handles partial/unknown commits. Hosted scheduling, permissions and rollout require operational validation and owner-approved infrastructure.
 
 ## Validation boundaries
 

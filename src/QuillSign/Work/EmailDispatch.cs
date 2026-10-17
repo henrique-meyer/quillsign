@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Email;
+using QuillSign.Documents;
 
 namespace QuillSign.Work;
 
@@ -107,14 +108,23 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
         if (email.EnvelopeId is null || (!isDecline && payload.TokenId == Guid.Empty)) return new(WorkOutcome.Failed, "invalid-token-scope");
         if (await db.Suppressions.AnyAsync(x => x.Email == email.To, cancellationToken)) return new(WorkOutcome.Failed, "recipient-suppressed");
         var at = time.GetUtcNow();
+        DateTimeOffset? retentionDeadline=null;
         await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
         {
-            // Lock the work row through token activation and submission intent. Other
-            // owners cannot submit; after expiry the persisted intent forbids resending.
+            // Common parent-before-work order also fences expiry cleanup. No new
+            // submission intent may outlive an enrolled document's access deadline.
+            var parent=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={email.EnvelopeId.Value}")
+                .AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+            if(parent is null)return new(WorkOutcome.Failed,"email-parent-unavailable");
             var owned = await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {lease.Id}")
                 .AsNoTracking().SingleAsync(cancellationToken);
-            if (owned.Status != WorkStatus.Leased || owned.LeaseOwner != lease.Owner || owned.LeaseExpiresAt <= at)
+            at=time.GetUtcNow();
+            if (owned.Kind!=WorkKind.Email || owned.EnvelopeId!=parent.Id || owned.Attempts!=lease.Attempt ||
+                owned.Status != WorkStatus.Leased || owned.LeaseOwner != lease.Owner || owned.LeaseExpiresAt!=lease.Until || owned.LeaseExpiresAt <= at)
                 throw new InvalidOperationException("Work lease is no longer owned.");
+            try{retentionDeadline=await DocumentRetentionAccess.ReadAsync(db,parent,cancellationToken);}
+            catch(InvalidDataException){return new(WorkOutcome.Retry,"email-retention-unavailable");}
+            if(retentionDeadline<=time.GetUtcNow())return new(WorkOutcome.Failed,"email-retention-expired");
             var changed = await db.EmailOutbox.Where(x => x.Id == lease.Id && x.Status == EmailStatus.Queued && x.SubmissionStartedAt == null)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.SubmissionStartedAt, at).SetProperty(x => x.Attempts, lease.Attempt), cancellationToken);
             if (changed != 1) throw new InvalidOperationException("Email submission is no longer available.");
@@ -135,7 +145,13 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
                     await db.AuthTokens.Where(x => x.Id == token.Id).ExecuteUpdateAsync(set => set.SetProperty(x => x.ExpiresAt, at.AddMinutes(15)), cancellationToken);
                 }
             }
+            if(retentionDeadline<=time.GetUtcNow())return new(WorkOutcome.Failed,"email-retention-expired");
+            if(lease.Until<=time.GetUtcNow())throw new InvalidOperationException("Work lease is no longer owned.");
             await transaction.CommitAsync(cancellationToken);
+        }
+        if(retentionDeadline<=time.GetUtcNow()) {
+            await ClearSubmissionAsync(email.Id,payload.TokenId,cancellationToken);
+            return new(WorkOutcome.Failed,"email-retention-expired");
         }
         try
         {
@@ -164,7 +180,7 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         await db.EmailOutbox.Where(x => x.Id == id).ExecuteUpdateAsync(set => set.SetProperty(x => x.SubmissionStartedAt, (DateTimeOffset?)null), cancellationToken);
-        await db.AuthTokens.Where(x => x.Id == tokenId && x.UsedAt == null).ExecuteUpdateAsync(set => set.SetProperty(x => x.ExpiresAt, time.GetUtcNow()), cancellationToken);
+        if(tokenId!=Guid.Empty)await db.AuthTokens.Where(x => x.Id == tokenId && x.UsedAt == null).ExecuteUpdateAsync(set => set.SetProperty(x => x.ExpiresAt, time.GetUtcNow()), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 }

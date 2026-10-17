@@ -58,6 +58,8 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             envelope.ExpiresAt=retention.Effective;
             if(!workOptions.Enabled || !emailOptions.Enabled)throw new EmailDisabledException();
+            if(retention.Policy is not null && !await DemoPurgeJobs.IsPreparedLockedAsync(db,retention.Policy,ct))
+                throw new DocumentRejectedException("This demo document's retention service needs attention before sending.");
             if (envelope.ExpiresAt <= time.GetUtcNow()) throw new DocumentRejectedException("This draft has expired.");
             var signers = await db.Signers.AsNoTracking().Where(x => x.EnvelopeId == envelope.Id).OrderBy(x => x.Order).ToListAsync(ct);
             var fields = await db.Fields.AsNoTracking().Where(x => x.EnvelopeId == envelope.Id).OrderBy(x => x.Id).ToListAsync(ct);

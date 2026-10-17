@@ -7,6 +7,7 @@ using QuillSign.Sender;
 using QuillSign.Signing;
 using QuillSign.Storage;
 using QuillSign.Legal;
+using QuillSign.Work;
 
 namespace QuillSign.Documents;
 
@@ -45,8 +46,10 @@ public sealed class DraftReview(QuillSignDbContext db,TimeProvider? time=null)
             .Select(x => new RecipientItem(x.Id, x.Name, x.Email)).ToListAsync(ct);
         var result = CheckPreparation(envelope, signers, fields, recipients);
         var limit=await RetentionSigningDeadline.ReadAsync(db,envelope,ct);
+        var purgePrepared=limit.Policy is null || await DemoPurgeJobs.IsPreparedLockedAsync(db,limit.Policy,ct);
         result=result with {ExpiresAt=limit.Effective,RetentionDeleteAfter=limit.Policy?.DeleteAfter,RetentionSha256=limit.Digest,
-            DemoDisclosure=DemoDisclosureContext.From(envelope.IsDemo,envelope.PublicId,limit.Policy)};
+            DemoDisclosure=purgePrepared ? DemoDisclosureContext.From(envelope.IsDemo,envelope.PublicId,limit.Policy) : null};
+        if(!purgePrepared)result=result with {Errors=result.Errors.Append(new PreparationIssue("This demo document's retention service needs attention before sending.","details")).ToArray()};
         if(limit.Policy is not null && limit.Effective<=(time ?? TimeProvider.System).GetUtcNow())
             result=result with {Errors=result.Errors.Append(new PreparationIssue("This demo document has reached its signing or retention deadline.","details")).ToArray()};
         DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);await transaction.CommitAsync(ct); return result;

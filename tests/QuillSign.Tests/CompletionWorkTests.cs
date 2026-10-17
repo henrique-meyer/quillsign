@@ -78,6 +78,10 @@ public sealed class CompletionWorkTests(SqlDatabaseFixture fixture) : IClassFixt
     private CompletionWorkHandler Build(Run run,QuillSignDbContext db,out ICompletionFinalStore final)
     {
         var clock=run.Signing.H.Clock; var delta=DateTimeOffset.UtcNow-clock.GetUtcNow(); if(delta>TimeSpan.Zero) {clock.Advance(delta); run.Seal.Time.Advance(delta);}
+        // Azurite records wall time throughout the real operation, including slow
+        // sealing. Keep these integration clocks moving while retaining Advance
+        // for deliberate lease/session expiry; other fixture users stay frozen.
+        clock.TrackElapsed(); run.Seal.Time.TrackElapsed();
         var store=new AzureCompletionFinalStore(run.Signing.H.App.Services.GetRequiredService<BlobServiceClient>(),clock,run.Seal.App.Environment,true); final=store;
         var scope=new CompletionCommitScope(db,clock);
         return new(db,new(db,clock),scope,()=>new(run.Candidates(db,scope),run.Service(db,scope),Publication(run,db,store,scope)),clock);

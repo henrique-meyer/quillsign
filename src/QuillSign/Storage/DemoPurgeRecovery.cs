@@ -79,6 +79,7 @@ public sealed class DemoPurgeRecovery
         catch(RequestFailedException error) when(error.Status==412 || error.Status==409 && error.ErrorCode=="BlobAlreadyExists") { }
         return new(examined,swept,busy,failed,deleted,held,changed,pending,next.Token is not null);
     }
+    internal Task<PurgeStorageBatch?> RecoverEnvelopeAsync(Guid id,CancellationToken ct)=>RecoverOne(id,ct);
     private async Task<PurgeStorageBatch?> RecoverOne(Guid id,CancellationToken ct)
     {
         var blob=hints.GetBlobClient(Prefix+id.ToString("N"));var saved=await Read<Marker>(blob,markers,null,ct);Validate(saved.Value,id);

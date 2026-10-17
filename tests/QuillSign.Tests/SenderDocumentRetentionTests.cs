@@ -164,6 +164,7 @@ public sealed class SenderDocumentRetentionTests(SqlDatabaseFixture fixture):ICl
             builder.Services.AddQuillSignStorage(builder.Configuration,builder.Environment);builder.Services.AddQuillSignSender(builder.Configuration,builder.Environment);
             builder.Services.AddSingleton(new QuillSign.Email.EmailOptions());builder.Services.AddSingleton(new QuillSign.Work.WorkOptions());
             builder.Services.AddQuillSignFieldEditor(builder.Configuration);builder.Services.AddQuillSignDocuments(builder.Configuration);
+            builder.Services.AddScoped<QuillSign.Work.DemoPurgeJobs>(sp=>b.run.H.PurgeJobs(sp.GetRequiredService<QuillSignDbContext>()));
             builder.Services.AddQuillSignSignerSetup(builder.Configuration);builder.Services.AddScoped<SenderSendReadiness>();
             builder.Services.AddScoped<Func<SendDraftWorkflow>>(sp=>()=>sp.GetRequiredService<SendDraftWorkflow>());
             builder.Services.AddScoped<Func<SenderSentStatus>>(sp=>()=>sp.GetRequiredService<SenderSentStatus>());
