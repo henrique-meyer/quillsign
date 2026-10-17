@@ -114,15 +114,27 @@ public sealed class CompletionWorkTests(SqlDatabaseFixture fixture) : IClassFixt
     public async Task An_expired_worker_cannot_commit_and_reconstruction_resumes_only_committed_stages(string phase)
     {
         await using var run=await Run.Create(fixture,prepareCandidate:false); var id=run.Signing.Envelope.Id;
-        var changed=false;
-        void Expire() {if(changed)return; changed=true; run.Signing.H.Clock.Advance(TimeSpan.FromMinutes(6)); run.Seal.Time.Advance(TimeSpan.FromMinutes(6));}
+        var changed=false;DateTimeOffset? leaseUntil=null;
+        void Expire() {
+            if(changed)return;changed=true;
+            var delta=(leaseUntil??throw new InvalidOperationException("Claim the target lease before injecting expiry."))-run.Signing.H.Clock.GetUtcNow()+TimeSpan.FromSeconds(1);
+            if(delta<TimeSpan.Zero)delta=TimeSpan.Zero;run.Signing.H.Clock.Advance(delta);run.Seal.Time.Advance(delta);
+        }
         if(phase is "candidate" or "executed")run.Storage.AfterWrite=b=> {if(b.Kind==(phase=="candidate" ? DocumentBlobKind.CompletionCandidate : DocumentBlobKind.CompletionExecutedSeal))Expire(); return Task.CompletedTask;};
         await using var baseline=fixture.Open();
+        var target=await baseline.WorkItems.AsNoTracking().SingleAsync(x=>x.EnvelopeId==id && x.Kind==WorkKind.Sealing);
         var options=new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer(baseline.Database.GetConnectionString());
         if(phase is "intent" or "completed")options.AddInterceptors(new Expiry(phase=="intent" ? "completion_publication_prepared" : "completed",Expire));
         await using(var db=new QuillSignDbContext(options.Options)) {
-            var handler=Build(run,db,out _); var processor=new WorkProcessor(new(db,run.Signing.H.App.Services.GetRequiredService<WorkOptions>(),run.Signing.H.Clock),run.Signing.H.Signals,[handler],run.Signing.H.Clock);
-            await Assert.ThrowsAsync<InvalidOperationException>(()=>processor.RunOnceAsync(default)); Assert.True(changed);
+            // This case targets a lease boundary, independently of queue ordering.
+            // The separate processor tests cover transport/wakeup integration.
+            var handler=Build(run,db,out _);var workStore=new WorkStore(db,run.Signing.H.App.Services.GetRequiredService<WorkOptions>(),run.Signing.H.Clock);
+            var lease=Assert.IsType<WorkLease>((await workStore.ClaimAsync(target.Id,default)).Lease);WorkResult? outcome=null;
+            leaseUntil=lease.Until;
+            var error=await Record.ExceptionAsync(async()=>{outcome=await handler.ExecuteAsync(lease,default);await workStore.FinishAsync(lease,outcome,default);});
+            Assert.True(changed,$"The injected {phase} phase was not reached; handler outcome: {outcome}.");
+            Assert.True(run.Signing.H.Clock.GetUtcNow()>lease.Until);
+            Assert.IsType<InvalidOperationException>(error);
         }
         Assert.Equal(EnvelopeStatus.Sent,(await run.Signing.Refresh()).Status); Assert.False(await baseline.CompletionPublicationResults.AnyAsync(x=>x.EnvelopeId==id));
         if(phase=="candidate")Assert.False(await baseline.CompletionCandidates.AnyAsync(x=>x.EnvelopeId==id));
@@ -130,8 +142,11 @@ public sealed class CompletionWorkTests(SqlDatabaseFixture fixture) : IClassFixt
         if(phase=="intent")Assert.False(await baseline.CompletionPublicationIntents.AnyAsync(x=>x.EnvelopeId==id));
         run.Storage.AfterWrite=null; Assert.True(await run.Signing.H.Signals.RecoverAsync(run.Signing.H.Clock.GetUtcNow(),default)>0);
         await using var retry=fixture.Open(); var recovered=Build(run,retry,out var store);
-        var processor2=new WorkProcessor(new(retry,run.Signing.H.App.Services.GetRequiredService<WorkOptions>(),run.Signing.H.Clock),run.Signing.H.Signals,[recovered],run.Signing.H.Clock);
-        Assert.True(await processor2.RunOnceAsync(default)); var result=(await Publication(run,retry,store).ReadAsync(id))!; Assert.NotNull(result);
+        var retryWork=new WorkStore(retry,run.Signing.H.App.Services.GetRequiredService<WorkOptions>(),run.Signing.H.Clock);
+        var nextLease=Assert.IsType<WorkLease>((await retryWork.ClaimAsync(target.Id,default)).Lease);var completed=await recovered.ExecuteAsync(nextLease,default);
+        Assert.Equal(WorkOutcome.Completed,completed.Outcome);Assert.Null(await retryWork.FinishAsync(nextLease,completed,default));
+        Assert.Equal(WorkStatus.Completed,(await retry.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==target.Id)).Status);
+        var result=(await Publication(run,retry,store).ReadAsync(id))!; Assert.NotNull(result);
         Assert.Equal(phase=="executed" ? 3 : 2,run.Seal.Requests); Assert.Equal(1,await retry.CompletionPublicationResults.CountAsync(x=>x.EnvelopeId==id)); await DeleteFinal(run,result);
     }
     private sealed class Expiry(string kind,Action expire) : SaveChangesInterceptor

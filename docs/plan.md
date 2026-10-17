@@ -1026,7 +1026,7 @@ Validation in progress: all 25 image workflow cases pass, alongside the 45 conve
 
 ## QUILS-71: Integrate public PDF, DOCX and image upload with exact preview confirmation
 
-Status: In Progress. QUILS-69 and QUILS-70 are merged; integrate supported public source formats without hosted enablement.
+Status: Done. Merged as PR #78; native Jira Done. All ten exact-head CI checks passed. DOCX browser transport uses the documented recorded-pair boundary; no hosted enablement.
 
 Connect the public verified-sender upload and preview flow to the supported PDF, DOCX and PNG/JPEG document workflows after QUILS-69 and QUILS-70 merge. This is a dependent integration slice: keep it To Do and perform planning only until both prerequisites are merged. Preserve other active branches and shared plan entries. Other agreed Office formats remain future validated conversion slices, and AI remains deferred.
 
@@ -1041,6 +1041,20 @@ No Azure/AWS resources or permissions, hosted format/retention enablement, live 
 Validation approach after the local bridge rejection: use the captured real synthetic DOCX/PDF fixture through the actual public handler, package validator, PDF normalization, SQL/Azurite persistence, preview/download and deliberate confirmation. Only the external converter response is replayed, after exact original-byte verification. This is a complete visible browser flow with a controlled transport boundary; do not claim a combined live converter/SQL/browser flow. Earlier isolated live conversion and actual persistence evidence remain valid at their separate boundaries. Automatic approval review rejected the temporary local Nginx bridge before and after owner approval, giving only blocked by policy. No bridge started; the unused owned converter and internal network were removed. No hosted settings or resources changed.
 
 Validation: all 24 new HTTP intake cases pass, and the current merged-prerequisite regression passes 101 upload/sender/signer/retention cases. The broader pre-final-integration local suite passed 1,624 tests; current exact-head CI must pass before merge. Real synthetic desktop/mobile/keyboard PDF and rotated PNG/JPEG flows passed preview/download/confirmation, rejected replacement preservation, stale revision/retry and cutoff denial. The two-page DOCX flow also passed both pages, zoom, exact persisted-hash download, explicit confirmation, converter failure preserving the confirmed document and fresh recovery, using the recorded real converter pair with exact source verification. Actual package validation, normalization and SQL/Azurite persistence ran normally. The downloaded PDF was independently rendered and inspected. No combined live converter/browser/SQL or hosted-flow success is claimed. Model, 11 Node tests, pinned vendors/licenses, links and secrets are checked before push.
+
+## QUILS-75: Remove timing and queue-target assumptions from regression fixtures
+
+Status: Done. Merged as PR #79; all ten exact-head checks passed and native Jira Done was verified. Production code and configuration are unchanged.
+
+Remove environment-dependent assumptions exposed by the loaded QUILS-73 local regression: the field interaction-rate test performs 120 SQL-backed requests and can cross its real one-minute window; the completion lease-expiry test assumes the next queue delivery always reaches its selected fault phase. Both checks pass in isolation and CI, but their fixtures must target the intended invariant deterministically. This is test-only regression work, independent of queued QUILS-74 product changes.
+
+Exercise the real signer-interaction limiter and private handlers while using a valid snapshot and fast wrong-scope requests in the same actual rate bucket, followed by a valid request receiving 429 with recoverable JSON and a signature request proving its separate limit. Retain the actual configured permit count and all security assertions; do not widen, disable or replace production rate limits or depend on completing many database reads before a wall-clock reset.
+
+For candidate/executed/intent/completed expiry cases, claim the exact genuine queued sealing work through the actual SQL WorkStore, execute the real completion handler with its lease and require that the injected target phase was reached. Preserve strict expired-lease rejection, rollback/no-publication assertions and reconstruction/reuse of committed stages under a new genuine claim. Keep separate real queue/processor integration tests unchanged. Improve pre-phase outcome diagnostics rather than accepting unrelated deliveries, silent retries or arbitrary exceptions as successful expiry evidence. Investigate any remaining dependency failure instead of weakening assertions.
+
+Change only test fixtures/assertions and matching plan documentation; no production behavior, schema, dependency, hosted setting, cloud resource/permission, live email/TSA, purchase, operator policy, OTP or AI change. Verify real SQL/Azurite focused cases and relevant sibling rate/worker cases, then full exact-head CI and secret scan, commit/push/open/attach/check/merge and native Jira Done. Reconcile the held QUILS-73 validation results honestly: its loaded run was 1648/1650, five focused rechecks passed and both CI stacks passed; do not claim that loaded local run passed.
+
+Validation: all 28 targeted field-page and lease-expiry/real-processor cases pass against local SQL/Azurite. Each of the four injected expiry phases now advances beyond its actual claimed lease deadline, requires that the phase was reached, rejects the expired commit and reconstructs exactly one publication under a fresh claim. The real interaction bucket still rejects request 121 and remains separate from signature access. Production code and configuration are unchanged. Exact-head CI and staged/full-history secret scans are required before merge.
 
 ## QUILS-77: Provide explicitly configured synthetic-demo electronic-record disclosures
 

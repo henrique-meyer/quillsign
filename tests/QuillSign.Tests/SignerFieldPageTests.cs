@@ -114,7 +114,11 @@ public sealed class SignerFieldPageTests(SqlDatabaseFixture fixture) : IClassFix
     public async Task Interaction_limit_is_separate_from_signature_limit_and_returns_recoverable_JSON()
     {
         await using var r=await Create(); r.Client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-        for(var i=0;i<120;i++) { using var response=await r.Client.GetAsync(Path(r)+"?handler=Snapshot"); Assert.Equal(HttpStatusCode.OK,response.StatusCode); }
+        using(var valid=await r.Client.GetAsync(Path(r)+"?handler=Snapshot"))Assert.Equal(HttpStatusCode.OK,valid.StatusCode);
+        // Wrong scopes hit the same real IP/interaction bucket without 119 SQL
+        // snapshots whose elapsed time could replenish the one-minute window.
+        var unknown="/sign/"+Guid.NewGuid().ToString("N")+"/fields?handler=Snapshot";
+        for(var i=1;i<120;i++) {using var response=await r.Client.GetAsync(unknown);Assert.Equal(HttpStatusCode.NotFound,response.StatusCode);}
         using var limited=await r.Client.GetAsync(Path(r)+"?handler=Snapshot"); Assert.Equal(HttpStatusCode.TooManyRequests,limited.StatusCode); Assert.Contains("saving has not been confirmed",await limited.Content.ReadAsStringAsync());
         using var signature=await r.Client.GetAsync(r.Path); Assert.Equal(HttpStatusCode.OK,signature.StatusCode);
     }
