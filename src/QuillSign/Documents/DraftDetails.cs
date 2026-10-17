@@ -19,7 +19,7 @@ public sealed record DetailsChange(DetailsChangeKind Kind, string Version, Guid?
 public enum DetailsError { None, NotFound, PreviewRequired, Conflict, Invalid, Duplicate, Limit }
 public sealed record DetailsResult(DetailsError Error, string? Message = null, string? Field = null);
 
-public sealed class DraftDetails(QuillSignDbContext db, AuditWriter audit, PreparationOptions options)
+public sealed class DraftDetails(QuillSignDbContext db, AuditWriter audit, PreparationOptions options,TimeProvider? time=null)
 {
     public async Task<DraftDetailsSnapshot?> GetAsync(ClaimsPrincipal sender, string publicId, CancellationToken ct = default)
     {
@@ -28,11 +28,12 @@ public sealed class DraftDetails(QuillSignDbContext db, AuditWriter audit, Prepa
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var envelope = await Locked(identity.Value.Id).AsNoTracking().SingleOrDefaultAsync(ct);
         if (!Owns(envelope, identity.Value.Email, publicId)) return null;
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope!,time??TimeProvider.System,ct);
         var recipients = await db.Recipients.AsNoTracking().Where(x => x.EnvelopeId == envelope!.Id).OrderBy(x => x.Name).ThenBy(x => x.Id)
             .Select(x => new RecipientItem(x.Id, x.Name, x.Email)).ToListAsync(ct);
         var snapshot = new DraftDetailsSnapshot(publicId, Convert.ToBase64String(envelope!.RowVersion), Confirmed(envelope),
             envelope.Title, envelope.Message, recipients);
-        await transaction.CommitAsync(ct); return snapshot;
+        DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);await transaction.CommitAsync(ct); return snapshot;
     }
 
     public async Task<DetailsResult> ChangeAsync(ClaimsPrincipal sender, string publicId, DetailsChange change,
@@ -43,6 +44,7 @@ public sealed class DraftDetails(QuillSignDbContext db, AuditWriter audit, Prepa
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var envelope = await Locked(identity.Value.Id).SingleOrDefaultAsync(ct);
         if (!Owns(envelope, identity.Value.Email, publicId)) return new(DetailsError.NotFound);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope!,time??TimeProvider.System,ct);
         if (!Confirmed(envelope!)) return new(DetailsError.PreviewRequired, "Confirm the current PDF before editing document details.");
         if (!Matches(change.Version, envelope!.RowVersion)) return new(DetailsError.Conflict, "This draft changed. Review the saved details and your attempted edits before trying again.");
         string eventName; object data;
@@ -87,6 +89,7 @@ public sealed class DraftDetails(QuillSignDbContext db, AuditWriter audit, Prepa
         else return new(DetailsError.Invalid, "Choose a valid preparation action.");
         db.Entry(envelope).Property(x => x.Status).IsModified = true;
         await audit.AppendAsync(envelope.Id, eventName, identity.Value.Email, ip, userAgent, ct, JsonSerializer.Serialize(data));
+        DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);
         await transaction.CommitAsync(ct); return new(DetailsError.None);
     }
     private IQueryable<Envelope> Locked(Guid id) => db.Envelopes.FromSqlInterpolated(
