@@ -23,7 +23,7 @@ public sealed class SenderSendReadiness(SenderAvailability availability,Electron
         if(identity is null)return new(false,"This verified sender session is unavailable.",null);
         if(draft.ExpiresAt<=time.GetUtcNow())return new(false,"This draft has expired. Start a new request.",null);
         DisclosureSnapshot snapshot;
-        try { snapshot=disclosures.Build(draft.PublicId,draft.Title,identity.Value.Email); }
+        try { snapshot=disclosures.Build(draft.PublicId,draft.Title,identity.Value.Email,draft.DemoDisclosure); }
         catch(DisclosureRejectedException) { return new(false,"Electronic-record disclosure settings or document details are incomplete. Check the draft or contact this instance's operator.",null); }
         return availability.CanSend ? new(true,null,snapshot) : new(false,"Invitation sending is unavailable right now. Your document remains a draft.",snapshot);
     }

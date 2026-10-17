@@ -73,7 +73,8 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
                 throw new DocumentRejectedException("The draft's party or field details are invalid.");
             var emails = signers.Select(x => x.Email).Concat(recipients.Select(x => x.Email)).Append(envelope.SenderEmail).Distinct().ToArray();
             if (await db.Suppressions.AnyAsync(x => emails.Contains(x.Email),ct)) throw new RecipientSuppressedException();
-            var disclosure = disclosures.Build(envelope.PublicId,envelope.Title!,envelope.SenderEmail);
+            var disclosure = disclosures.Build(envelope.PublicId,envelope.Title!,envelope.SenderEmail,
+                DemoDisclosureContext.From(envelope.IsDemo,envelope.PublicId,retention.Policy));
             envelope.Title = disclosure.Title; // Keep the persisted context identical to the canonical snapshot header.
             if (!Guid.TryParseExact(envelope.PdfBlob,"N",out var originalId) || originalId == Guid.Empty) throw new DocumentRejectedException("The confirmed PDF is unavailable.");
             using var source = new MemoryStream(); using var bounded = new BoundedDocumentStream(source,Math.Min(documents.MaximumBytes,64 * 1024 * 1024));
