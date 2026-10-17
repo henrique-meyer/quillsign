@@ -784,7 +784,7 @@ Validation: All 19 new boundary/HTTP/cancellation cases and two entry regression
 
 ## QUILS-57: Record expired signing requests through bounded durable maintenance
 
-Status: In Progress. Depends on merged QUILS-53/54 and signing/checkpoint/completion work. Independent of QUILS-56 upload verification; separate branch/worktree.
+Status: Done. Merged as PR #60; native Jira Done. Depends on merged QUILS-53/54 and signing/checkpoint/completion work.
 
 Depends on merged QUILS-53/54 and the current signing/checkpoint/completion work. Add the internal expiry transition for a sent sequential request whose frozen UTC signing deadline has elapsed. This slice supplies a supported finite trusted maintenance/work path; public notices, automatic scheduling, reminder delivery, purge and lookup/resend remain separate stories.
 
@@ -799,3 +799,11 @@ Create matching docs/plan.md and this native Jira story before implementation. T
 Implementation design: use a finite trusted expiry batch command with at most 64 discovered records and explicit keyset continuation, rather than adding an unused durable handler or automatic timer. Existing user-facing deadline checks remain immediate. Verify each transition under the common envelope lock, skip accepted unpublished checkpoints and all-signed completion, and resolve replay from one canonical System expiry audit. Publish an on-time accepted checkpoint after the signing deadline without generating a next invitation; preserve the final signer completion path. Tests cover continuation/failure isolation and no queue/cloud calls; no worker lease is manufactured for direct trusted batch execution.
 
 Validation: Focused runs pass all 18 new expiry/command/late-publication cases and 55 checkpoint regressions. They cover exact UTC boundaries, concurrent/idempotent transitions, unused invitation invalidation, canonical source/audit checks, terminal protection, rollback/lost acknowledgement, bounded keyset continuation past a bad record, runtime permissions and cancellation/argument rejection before SQL. The actual separate-process command runs with work/email/storage disabled and creates no new jobs or authority. Genuine intermediate/final accepted signing work publishes after the deadline; the final packet passes candidate preparation, both seals, immutable publication and exact reread. A filtered due-discovery index is included. Main/Q56 is integrated; all 11 Node cases, model, 75 local Markdown links, pinned vendor/MIT notices and vulnerability checks pass. Full combined regression, staged/full-history secret scans and exact-head CI gate merge; native Jira moves Done immediately afterward.
+
+## QUILS-59: Remove demo title label and add creator/source footer attribution
+
+Status: Implementation complete; awaiting PR checks and merge.
+
+Remove the Demo label from the browser title, using QuillSign for the home title and retaining meaningful titles on other pages. Replace the shared footer copyright attribution with: Designed & built by Henrique Meyer (https://www.hmeyer.com) · Source on GitHub (https://github.com/henrique-meyer/quillsign). Use the QuillSign repository rather than the DocPilot example. Preserve existing operational demo/purge and suitability disclosures separately. Verify actual desktop/mobile browser title, footer layout and link destinations. Build and scan secrets, commit/push/open/attach/pass checks/merge, transition native Jira Done immediately and deploy to the existing approved environment without cloud configuration or email changes.
+
+Validation: Release build succeeds with no warnings or errors. Actual browser checks confirm home title QuillSign, retained Verify a PDF title, both exact footer link destinations, keyboard reachability and mobile wrapping without horizontal overflow. The original purge/suitability disclosure remains below the attribution. No new tests are needed for this text/link-only change; existing CI and staged/full-history secret scans gate merge. Deploy and verify the merged image in the existing environment.
