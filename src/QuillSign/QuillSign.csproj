@@ -14,6 +14,7 @@
     <Content Include="../../licenses/PDFsharp-MIT.txt" Link="licenses/PDFsharp-MIT.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../licenses/PdfPig-LICENSE.txt" Link="licenses/PdfPig-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../licenses/PdfPig-NOTICES.txt" Link="licenses/PdfPig-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../licenses/StbImageSharp-MIT.txt" Link="licenses/StbImageSharp-MIT.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../licenses/Azure-SDK-MIT.txt" Link="licenses/Azure-SDK-MIT.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
@@ -36,6 +37,7 @@
     <PackageReference Include="PDFsharp-MigraDoc" Version="6.2.4" />
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" GeneratePathProperty="true" />
     <PackageReference Include="PdfPig" Version="0.1.16" />
+    <PackageReference Include="StbImageSharp" Version="2.30.16" GeneratePathProperty="true" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
   <ItemGroup>
