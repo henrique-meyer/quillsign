@@ -149,15 +149,17 @@ public sealed class SenderSendPageTests(SqlDatabaseFixture fixture) : IClassFixt
     [InlineData("foreign")][InlineData("audit")][InlineData("completion")][InlineData("expiry")][InlineData("session")]
     public async Task Private_status_is_scoped_verified_and_truthful(string kind)
     {
-        await using var f=await Flow.Create(fixture); var page=await f.Page(); using(var sent=await f.Send(page))Assert.Equal(HttpStatusCode.Redirect,sent.StatusCode);
+        await using var f=await Flow.Create(fixture);
+        if(kind=="expiry") {await using var draft=fixture.Open();await draft.Envelopes.Where(x=>x.Id==f.H.Envelope.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.ExpiresAt,f.H.Clock.GetUtcNow().AddMinutes(1)));}
+        var page=await f.Page(); using(var sent=await f.Send(page))Assert.Equal(HttpStatusCode.Redirect,sent.StatusCode);
         var path=f.Status;
         await using(var db=fixture.Open()) {
             if(kind=="foreign")path="/draft/"+Guid.NewGuid().ToString("N")+"/sent";
             if(kind=="audit")await db.AuditEvents.Where(x=>x.EnvelopeId==f.H.Envelope.Id && x.Event=="sent").ExecuteUpdateAsync(s=>s.SetProperty(x=>x.DataJson,"{}"));
             if(kind=="completion")await db.Envelopes.Where(x=>x.Id==f.H.Envelope.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Status,EnvelopeStatus.Completed));
-            if(kind=="expiry")await db.Envelopes.Where(x=>x.Id==f.H.Envelope.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.ExpiresAt,f.H.Clock.GetUtcNow()));
         }
         if(kind=="session") { f.H.Clock.Advance(TimeSpan.FromHours(3)); f.Client.DefaultRequestHeaders.Accept.ParseAdd("application/json"); }
+        if(kind=="expiry")f.H.Clock.Advance(TimeSpan.FromMinutes(2));
         using var response=await f.Client.GetAsync(path);
         if(kind=="foreign")Assert.Equal(HttpStatusCode.NotFound,response.StatusCode);
         else if(kind=="session")Assert.Equal(HttpStatusCode.Unauthorized,response.StatusCode);

@@ -836,7 +836,7 @@ Validation: Release build succeeds with no warnings or errors. Actual browser ch
 
 ## QUILS-60: Schedule durable signing expiry atomically with reviewed Send
 
-Status: To Do. Depends on QUILS-58; planning only until that prerequisite merges.
+Status: Done. Merged as PR #66; native Jira Done. Depends on merged QUILS-58 (PR #64).
 
 Depends on QUILS-58. Join supported durable signing-expiry preparation to each newly committed public Send with a finite frozen UTC signing deadline. Keep the current manual field workflow and sender review/affirmation unchanged. Requests without a finite deadline do not get an expiry job. Existing sent requests retain explicit trusted resume; no recurring SQL discovery or infrastructure is introduced.
 
@@ -846,9 +846,13 @@ Repeated Send and lost-acknowledgement recovery must reuse canonical saved Send 
 
 Update matching docs/plan.md before implementation; keep To Do until QUILS-58 merges, then integrate main and move In Progress. Test actual SQL/Azurite Send, exact deadline/source/job bindings, no-deadline requests, rollback/hint failures, queue outages, unknown commit/replay and due worker progression. Exercise the synthetic sender review/Send/private status flow in the real browser, including stale input and disabled delivery boundaries, and confirm no GET scheduling or new query-string action notices. Validate meaningful regression/model/vendor/license/vulnerability/secrets, commit/push/create/attach/pass checks/merge and move native Jira Done in the same pass. No resources, public email enablement, purchases, fabricated policies, AI, OTP or scope expansion.
 
+Implementation design: New Send audit evidence binds the stable expiry job identity and exact UTC deadline. Prepare the row and hint under the existing Send transaction after frozen source/disclosure evidence exists, then publish both wakeups after commit. Canonical reads verify recorded schedules without creating them. Replay reuses queued work and preserves live/terminal jobs; legacy records remain opt-in through trusted resume. Source verification runs after the new transaction-owned row exists to avoid a circular binding dependency. No GET creates or republishes work.
+
+Validation: Focused SQL/Azurite scheduling, Send, expiry and private-status cases pass, including rollback, lost acknowledgements, queued recovery and preservation of live/failed work. Real synthetic desktop/mobile Send flows pass with keyboard affirmation, stale-review reload, uncertain-commit confirmation, disabled delivery and clean private-status redirects. Storage recovery publishes only the three in-memory invitations; the worker expires all three requests once, with unchanged frozen PDF hashes. The mobile status has no horizontal overflow. Legacy regression fixtures now set deadlines before Send and allow the due expiry wake alongside recovered completion. Model, all 11 Node cases, pinned vendor/MIT distributions and 78 Markdown links pass; All 1,310 local .NET tests, staged/full-history secret scans and all 12 exact-head CI checks pass. PR #66 merged; native Jira Done verified in the same pass.
+
 ## QUILS-61: Coordinate FreeTSA timestamp requests across workers
 
-Status: Implementation complete. Shared timestamp coordination uses the merged seal and storage foundations; hosted FreeTSA configuration remains separate rollout work.
+Status: Done. Merged as PR #65; native Jira Done. Hosted FreeTSA CA and runtime configuration remain separate rollout work.
 
 Implement the request coordination required before the approved low-volume FreeTSA demo provider can be enabled. Existing RFC3161 validation, configured CA trust, PDF seal evidence and certificate-provider behavior remain authoritative. This is independent of signing-expiry work and adds no SQL polling, cloud resource, purchase or public delivery enablement.
 
@@ -860,14 +864,34 @@ Create matching docs/plan.md before implementation, use a separate QUILS branch 
 
 Implementation design: Use a provider-scoped empty blob in the existing protected storage container with a finite 60-second lease. Renew ownership at the HTTP boundary, bound request time against the remaining lease and keep a monotonic cooldown even after cancellation. FreeTSA aliases share one scope; FreeTSA also requires explicit CA trust and enabled shared coordination. No document data or timestamps enter coordinator metadata, no idle SQL is queried and readonly seal verification does not resolve the adapter.
 
-Validation: All 132 focused coordinator, platform seal and certificate/provider cases pass, including actual independent Azurite clients, an abandoned finite lease, bounded contention, cancellation cooldown, lease loss, local HTTP spacing, invalid nonce rejection and offline verification. Full combined regression, model/vendor/license/vulnerability/link and secret checks plus exact-head CI gate merge.
+Validation: All 132 focused coordinator, platform seal and certificate/provider cases pass, including actual independent Azurite clients, an abandoned finite lease, bounded contention, cancellation cooldown, lease loss, local HTTP spacing, invalid nonce rejection and offline verification. Both complete CI runs and all 14 exact-head checks pass, including Windows/Linux seals. The local full suite passed 1,297 cases and one pre-existing rate-window test crossed its real one-minute window under load; its isolated retry passed. Model, Node, vendor/license, Markdown links and secret checks pass; dependencies are unchanged from the clean vulnerability scan. PR #65 merged and native Jira Done was verified in the same pass.
+
+## QUILS-62: Freeze configurable demo retention at the first document upload
+
+Status: Done. Merged as PR #67; native Jira Done. Hosted retention remains unset; automatic deletion remains dependent work.
+
+Add the fixed per-document retention foundation for the approved synthetic demo policy. Retention days are configurable through the environment; the demo selection is seven days from the first successful document upload, with one deadline throughout preparation, document replacement, signing and completion. Do not silently add days at completion.
+
+Introduce validated explicit demo retention configuration and immutable per-envelope retention snapshot metadata. Freeze the selected positive day count, UTC start and deletion deadline atomically with the first successful upload. Failed uploads must not start or extend retention; document replacements and later configuration changes must not reset it. Preserve ordinary self-hosted behavior and provide an explicit safe legacy/migration policy rather than fabricating upload times or silently enrolling old documents.
+
+Purge orchestration, final-object protection alignment, detailed disclosures and hosted runtime rollout remain dependent slices. This work does not enable the hosted policy, delete records or change Azure/AWS resources. No public email, live TSA, purchases, fabricated operator settings or deferred AI.
+
+Test configuration boundaries, exact UTC/fixed deadline, successful first upload and replacement, storage/SQL rollback and unknown commit recovery, concurrency and legacy/ordinary boundaries with local SQL/Azurite. Validate meaningful regression/model/vendor/license/secrets, commit/push/create/attach/pass exact-head checks/merge and move native Jira Done in the same pass. Preserve permissive dependencies and PDFsharp/MigraDoc MIT 6.2.4.
+
+Implementation design: Use an immutable one-per-envelope document retention snapshot, bound to the first successful upload audit and original/normalized object hashes. Reuse the existing Demo:PurgeAfterDays environment setting; unset means no new enrollment, and only stored demo envelopes qualify. Existing uploaded documents are not silently backfilled. Preserve snapshots across replacement and setting changes, reject replacement at/after the frozen deadline, and guard EF/runtime SQL mutations. Leave legacy completed-retention metadata unchanged in this slice. Publication of newly enrolled snapshots fails closed until the next final-protection alignment slice; do not claim purge/read-expiry or enable hosted settings yet.
+
+Timestamp precision clarification: capture the upload retention start at canonical whole UTC seconds, preserving one exact fixed deadline that the Azure Blob immutability API can represent in RFC1123 format. Round down less than one second at initial capture only; never round or extend an already frozen deadline during publication or retry. Audit evidence retains its actual event time. Add coverage for subsecond and non-UTC input clock normalization.
+
+Validation: All 1,332 combined local .NET tests and all exact-head CI checks pass. The 54 focused retention/upload/persistence/permission cases cover subsecond and non-UTC capture, concurrent uploads, audit-boundary expiry, lost acknowledgements and recomputed-evidence tampering. Real synthetic desktop upload/replacement, keyboard preview confirmation and mobile deadline rejection pass with fixed snapshots, preserved saved content/confirmation and no horizontal overflow. Model, Node, pinned vendor/MIT distributions, 79 Markdown links and staged/full-history secrets pass. PR #67 merged and native Jira Done was verified in the same pass. Hosted settings and resources remain unchanged.
 
 ## QUILS-63: Align final packet retention with the frozen upload deadline
 
-Status: To Do. Depends on QUILS-62 merging; planning only until then.
+Status: In Progress. Depends on merged QUILS-62 (PR #67); merged Send/expiry scheduling is integrated.
 
 Verify the immutable upload retention snapshot and first-upload audit provenance, then bind the exact policy and UTC deletion deadline into a versioned immutable final-publication intent. Preserve historical recipes, ordinary/legacy retention and exact accepted/sealed bytes. Required protection must use the same absolute deadline on every upload, retry, completion commit and readonly verification. Refuse new publication at or beyond that deadline; slow operations and retries must not extend it.
 
 Support exact per-version protection on only operation-owned newly created final blobs, using conditional creation and actual readback evidence. Fail closed when protection is missing, inconsistent or would silently retain demo content beyond its fixed deletion deadline. Preserve explicit Development synthetic write-once behavior. Implement and test with local SQL/Azurite and fake Azure SDK transports only; do not provision or change hosted containers, default policies, locks, identities or Azure/AWS resources.
 
 Test genuine two-signer candidate/seal/publication, both exact final files, UTC boundaries, retries, uncertain storage/SQL acknowledgements, recorded policy tampering, historical compatibility, runtime permissions and narrow storage capabilities. Signing/read expiry, purge orchestration, disclosures and approved hosted rollout remain separate dependent slices. No live email/TSA, purchases, fabricated policies, public enablement or deferred AI. Validate meaningful regression/model/vendor/license/secrets, commit/push/create/attach/pass exact-head checks/merge and move native Jira Done in the same pass.
+
+Implementation design: Bind the complete canonical upload retention snapshot in a versioned StageBindingsJson wrapper; retain exact legacy serialization and recipe computation for unenrolled records. Derive one fixed absolute retention-until through new writes, retries, completion and historical verification; reject fractional unsupported deadlines and new publication at/after the cutoff. Add distinctly named private fixed-deadline capability factories without changing existing factory signatures or the final-store interface. Only those narrow capabilities may request protection on their owned new conditional final targets, verify/lock the exact version if needed, and re-read actual bytes/properties. Never extend, shorten, delete or change a mismatched existing/default policy. Actual cloud operations and permission rollout remain out of scope; use fake SDK transports and local development write-once tests.
