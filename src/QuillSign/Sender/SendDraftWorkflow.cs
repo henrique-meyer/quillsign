@@ -18,7 +18,7 @@ public sealed record SentDraft(Guid EnvelopeId,string PublicId,Guid InvitationWo
 public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,DocumentOptions documents,
     SignerSetupOptions signerOptions,FieldEditorOptions fieldOptions,PreparationOptions preparation,SenderPdfRenderer renderer,
     ElectronicRecordDisclosure disclosures,SignerInvitationOutbox outbox,WorkOptions workOptions,EmailOptions emailOptions,
-    AuditWriter audit,TimeProvider time,ILogger<SendDraftWorkflow> logger)
+    AuditWriter audit,TimeProvider time,ILogger<SendDraftWorkflow> logger,SigningExpiryJobs expiry)
 {
     public async Task<SentDraft?> SendAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,bool exclusionsAcknowledged,
         bool sendAcknowledged,string? statementVersion,string? ip,string? userAgent,CancellationToken ct = default)
@@ -28,7 +28,7 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
         if(!sendAcknowledged || statementVersion!=SenderSendStatement.Version)throw new DocumentRejectedException("Confirm the reviewed Send statement.");
         if (expectedVersion is not { Length: 8 }) throw new DocumentConflictException();
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
-        DocumentBlob? created = null; var commitStarted = false; SentDraft? result = null;
+        DocumentBlob? created = null; var commitStarted = false; SentDraft? result = null;Guid? expiryId=null;DateTimeOffset? expiryDue=null;
         try
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -39,8 +39,18 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
                 var existing=await SenderSentStatus.ReadSentAsync(db,envelope,expectedVersion,ct);
                 var queued=workOptions.Enabled && envelope.Status==EnvelopeStatus.Sent && (envelope.ExpiresAt is null || envelope.ExpiresAt>time.GetUtcNow()) &&
                     await db.WorkItems.AnyAsync(x=>x.Id==existing.InvitationWorkId && x.Status==WorkStatus.Queued,ct);
+                if(workOptions.Enabled && envelope.Status==EnvelopeStatus.Sent && envelope.ExpiresAt is not null)
+                {
+                    var workId=SigningExpiryJobs.WorkId(envelope.Id);
+                    var job=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==workId,ct);
+                    if(job is not null) {
+                        if(!SigningExpiryJobs.Matches(envelope,job))throw SigningExpiryJobs.Invalid();
+                        if(job.Status==WorkStatus.Queued) {expiryId=job.Id;expiryDue=job.AvailableAt;}
+                    }
+                }
                 await transaction.CommitAsync(ct); await transaction.DisposeAsync();
-                if(queued)await outbox.PublishAsync(existing.InvitationWorkId,ct); return existing;
+                if(queued)await outbox.PublishAsync(existing.InvitationWorkId,ct);
+                if(expiryId is Guid pending)await expiry.PublishAsync(pending,expiryDue!.Value,ct);return existing;
             }
             if(!envelope.RowVersion.AsSpan().SequenceEqual(expectedVersion))throw new DocumentConflictException();
             if(!workOptions.Enabled || !emailOptions.Enabled)throw new EmailDisabledException();
@@ -88,8 +98,10 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             await audit.AppendAsync(envelope.Id,"sent",envelope.SenderEmail,ip,userAgent,ct,JsonSerializer.Serialize(new {
                 documentSha256 = documentHash,sourceSha256 = Convert.ToHexStringLower(rendered.SourceSha256),disclosureVersion = disclosure.Version,
                 disclosureSha256 = disclosureHash,invitationWorkId = invitation,dispatch = "queued",exclusionsAcknowledged,
+                expiryWorkId=envelope.ExpiresAt is null ? (Guid?)null : SigningExpiryJobs.WorkId(envelope.Id),signingDeadline=envelope.ExpiresAt?.ToUniversalTime(),
                 reviewedVersion=Convert.ToBase64String(expectedVersion),senderConfirmed=sendAcknowledged,
                 senderStatementVersion=SenderSendStatement.Version,senderStatement=SenderSendStatement.Text,senderStatementSha256=SenderSendStatement.Sha256 }));
+            expiryId=await expiry.PrepareAsync(envelope.Id,ct);expiryDue=envelope.ExpiresAt;
             result = new(envelope.Id,envelope.PublicId,invitation,documentHash,disclosureHash);
             commitStarted = true; await transaction.CommitAsync(ct);
         }
@@ -105,7 +117,8 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             }
             throw;
         }
-        await outbox.PublishAsync(result!.InvitationWorkId,ct); return result;
+        await outbox.PublishAsync(result!.InvitationWorkId,ct);
+        if(expiryId is Guid scheduled)await expiry.PublishAsync(scheduled,expiryDue!.Value,ct);return result;
     }
     private static bool Name(string value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 512 && !value.Any(char.IsControl);
     private static bool Address(string value) { try { return EmailAddress.Normalize(value) == value; } catch (ArgumentException) { return false; } }

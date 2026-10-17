@@ -6,6 +6,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Legal;
 using QuillSign.Signing;
+using QuillSign.Work;
 
 namespace QuillSign.Sender;
 
@@ -94,6 +95,19 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
             var invitation=p.GetProperty("invitationWorkId").GetGuid();
             if(invitation==Guid.Empty || !await db.EmailOutbox.AnyAsync(x=>x.Id==invitation && x.EnvelopeId==envelope.Id && x.Template=="signer-invitation",ct))
                 throw new InvalidDataException("The queued invitation could not be verified.");
+            var hasSchedule=p.TryGetProperty("expiryWorkId",out var schedule);var hasDeadline=p.TryGetProperty("signingDeadline",out var deadline);
+            if(hasSchedule || hasDeadline)
+            {
+                if(!hasSchedule || !hasDeadline)throw SigningExpiryJobs.Invalid();
+                if(envelope.ExpiresAt is DateTimeOffset due)
+                {
+                    var at=deadline.GetDateTimeOffset();var scheduled=schedule.GetGuid();
+                    if(scheduled!=SigningExpiryJobs.WorkId(envelope.Id) || at.Offset!=TimeSpan.Zero || at!=due.ToUniversalTime())throw SigningExpiryJobs.Invalid();
+                    var job=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==scheduled,ct);
+                    if(job is null || !SigningExpiryJobs.Matches(envelope,job))throw SigningExpiryJobs.Invalid();
+                }
+                else if(schedule.ValueKind!=JsonValueKind.Null || deadline.ValueKind!=JsonValueKind.Null)throw SigningExpiryJobs.Invalid();
+            }
             return new(envelope.Id,envelope.PublicId,invitation,Convert.ToHexStringLower(envelope.SentPdfSha256),Convert.ToHexStringLower(envelope.ErsdSha256));
         }
         catch(Exception e) when(e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)

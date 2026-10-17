@@ -160,8 +160,9 @@ public sealed class SenderVoidTests(SqlDatabaseFixture fixture) : IClassFixture<
     [InlineData(false)][InlineData(true)]
     public async Task Ticket_or_envelope_expiry_during_audit_storage_rolls_back_without_pending_entities(bool ticket)
     {
-        await using var h=await Shared.Create(fixture,browser:true);Assert.NotNull(await h.Send());
-        if(!ticket) {await using var update=fixture.Open();await update.Envelopes.Where(x=>x.Id==h.Envelope.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.ExpiresAt,h.Clock.GetUtcNow().AddSeconds(2)));}
+        await using var h=await Shared.Create(fixture,browser:true);
+        if(!ticket) {await using var update=fixture.Open();var draft=await update.Envelopes.SingleAsync(x=>x.Id==h.Envelope.Id);draft.ExpiresAt=h.Clock.GetUtcNow().AddSeconds(2);await update.SaveChangesAsync();h.Version=draft.RowVersion;}
+        Assert.NotNull(await h.Send());
         var e=await Load(h.Envelope.Id);await using var baseline=fixture.Open();
         var options=new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer(baseline.Database.GetConnectionString()).AddInterceptors(new AuditExpiry(h.Clock));await using var db=new QuillSignDbContext(options.Options);
         var service=new SenderVoid(db,new(db,h.Clock),new(db,h.Clock),h.Clock);
