@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Email;
 using QuillSign.Storage;
+using QuillSign.Signing;
 
 namespace QuillSign.Work;
 
@@ -13,8 +14,11 @@ public static class WorkCommands
         var republish = args.Length == 2 && args[0] == "publish-notification" && Guid.TryParseExact(args[1],"N",out _);
         var completion=args.Length==2 && args[0]=="resume-completion-notifications" && Guid.TryParseExact(args[1],"N",out _);
         var voids=args.Length==2 && args[0]=="resume-void-notifications" && Guid.TryParseExact(args[1],"N",out _);
-        if (!republish && !completion && !voids && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
-        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications <32-character-envelope-id>"); return 2; }
+        var expiry=args.Length is >=1 and <=3 && args[0]=="expire";
+        var batch=32;
+        if(expiry && args.Length>=2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out batch) || batch is <1 or >64))expiry=false;
+        if (!republish && !completion && !voids && !expiry && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
+        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications <32-character-envelope-id>"); return 2; }
         try
         {
             var builder = WebApplication.CreateBuilder();
@@ -29,10 +33,16 @@ public static class WorkCommands
             }
             if (args[0] == "listen" && !builder.Environment.IsDevelopment()) throw new InvalidOperationException("Listen is Development-only.");
             using var app = builder.Build();
-            if (!app.Services.GetRequiredService<WorkOptions>().Enabled) throw new InvalidOperationException("Durable work is disabled.");
+            if (!expiry && !app.Services.GetRequiredService<WorkOptions>().Enabled) throw new InvalidOperationException("Durable work is disabled.");
             using var timeout = new CancellationTokenSource(args[0] == "recover" ? TimeSpan.FromSeconds(50) : TimeSpan.FromSeconds(240));
             if (args[0] == "listen") timeout.CancelAfter(Timeout.InfiniteTimeSpan);
             Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; timeout.Cancel(); };
+            if(expiry) {
+                await using var scope=app.Services.CreateAsyncScope();
+                var result=await scope.ServiceProvider.GetRequiredService<SigningExpiry>().RunBatchAsync(batch,args.Length==3 ? args[2] : null,timeout.Token);
+                Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new {operation="work-expire",status=result.Failed==0 ? "ok" : "partial",result.Examined,result.Expired,result.AlreadyExpired,result.Skipped,result.Failed,result.NextCursor}));
+                return result.Failed==0 ? 0 : 1;
+            }
             var signals = app.Services.GetRequiredService<IWorkSignals>();
             var count = 0;
             if(voids) {
