@@ -11,18 +11,23 @@ namespace QuillSign.Sealing;
 
 public sealed record VerifiedTimestamp(byte[] Encoded,DateTimeOffset At,string CertificateSha256,string Policy);
 
-public sealed class TimestampAuthority(SealOptions options,IHostEnvironment environment,TimeProvider time) : IDisposable
+public sealed class TimestampAuthority(SealOptions options,IHostEnvironment environment,TimeProvider time,Func<ITimestampRequestCoordinator>? coordinator=null) : IDisposable
 {
     private readonly HttpClient http=new(new HttpClientHandler { AllowAutoRedirect=false,UseCookies=false }) { Timeout=Timeout.InfiniteTimeSpan };
     public async Task<VerifiedTimestamp> RequestAsync(SignerInfo signature,DateTimeOffset startedAt,CancellationToken ct)
     {
         var address=options.Validate(environment.IsDevelopment());
+        options.ValidateRequestCoordination(address);
         var request=Rfc3161TimestampRequest.CreateFromSignerInfo(signature,HashAlgorithmName.SHA256,
             nonce:RandomNumberGenerator.GetBytes(16),requestSignerCertificates:true);
-        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct); timeout.CancelAfter(TimeSpan.FromSeconds(options.TsaTimeoutSeconds));
+        await using var lease=options.TimestampCoordination.Enabled
+            ? await (coordinator?.Invoke() ?? throw new SealUnavailableException("Shared timestamp coordination is not configured.")).AcquireAsync(address,ct) : null;
+        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct,lease?.Token ?? CancellationToken.None);timeout.CancelAfter(TimeSpan.FromSeconds(options.TsaTimeoutSeconds));
         try {
             using var body=new ByteArrayContent(request.Encode()); body.Headers.ContentType=new MediaTypeHeaderValue("application/timestamp-query");
             using var message=new HttpRequestMessage(HttpMethod.Post,address) { Content=body };
+            if(lease is not null)await lease.EnsureOwnedAsync(timeout.Token);
+            timeout.Token.ThrowIfCancellationRequested();
             using var response=await http.SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
             if(response.StatusCode!=System.Net.HttpStatusCode.OK || !string.Equals(response.Content.Headers.ContentType?.MediaType,"application/timestamp-reply",StringComparison.OrdinalIgnoreCase) ||
                 response.Content.Headers.ContentEncoding.Count!=0 || response.Content.Headers.ContentLength>options.TsaMaximumResponseBytes)

@@ -12,6 +12,7 @@ public sealed class SealOptions
     public int TsaMaximumResponseBytes { get; set; } = 64 * 1024;
     public int TsaMaximumClockSkewSeconds { get; set; } = 120;
     public string[] TsaTrustedRootPaths { get; set; } = [];
+    public TimestampCoordinationOptions TimestampCoordination { get; set; }=new();
     public PfxSealOptions Pfx { get; set; } = new();
     public string Provider { get; set; }="Auto";
     public KeyVaultSealOptions KeyVault { get; set; }=new();
@@ -21,10 +22,19 @@ public sealed class SealOptions
         if(MaximumBytes is <1024 or >64*1024*1024 || MaximumPages is <1 or >200 || SignatureCapacityBytes is <32*1024 or >256*1024 ||
             TsaTimeoutSeconds is <1 or >60 || TsaMaximumResponseBytes is <1024 or >128*1024 || TsaMaximumClockSkewSeconds is <0 or >300 ||
             TsaTrustedRootPaths is null || TsaTrustedRootPaths.Length>8 || TsaTrustedRootPaths.Any(x=>string.IsNullOrWhiteSpace(x) || !Path.IsPathFullyQualified(x)) ||
+            TimestampCoordination is null || TimestampCoordination.Enabled && (TimestampCoordination.MinimumIntervalMilliseconds is <1000 or >10000 ||
+                TimestampCoordination.AcquireTimeoutSeconds is <1 or >60 || TsaTimeoutSeconds>30) ||
             !Uri.TryCreate(TsaUrl,UriKind.Absolute,out var uri) || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment) ||
             !(uri.Scheme=="https" || development && uri.Scheme=="http" && uri.IsLoopback))
             throw new SealUnavailableException("Configure valid seal limits and a timestamp service before sealing.");
         return uri;
+    }
+    internal static bool IsFreeTsa(Uri address)=>address.IdnHost.TrimEnd('.').Equals("freetsa.org",StringComparison.OrdinalIgnoreCase) ||
+        address.IdnHost.TrimEnd('.').EndsWith(".freetsa.org",StringComparison.OrdinalIgnoreCase);
+    internal void ValidateRequestCoordination(Uri address)
+    {
+        if(IsFreeTsa(address) && (!TimestampCoordination.Enabled || TsaTrustedRootPaths.Length==0))
+            throw new SealUnavailableException("Configure shared timestamp coordination and explicit CA trust before using FreeTSA.");
     }
 }
 public sealed class PfxSealOptions { public string Path { get; set; }=""; public string Password { get; set; }=""; }
@@ -55,6 +65,13 @@ public static class SealConfiguration
             return new BlobProtectedSealStore(client,provider=="Azurite",sp.GetRequiredService<SealOptions>().SelfSigned.BlobName);
         });
         services.TryAddSingleton<Func<IProtectedSealStore>>(sp=>()=>sp.GetRequiredService<IProtectedSealStore>());
+        services.TryAddSingleton<ITimestampRequestCoordinator>(sp=> {
+            var provider=config["Storage:Provider"];
+            if(provider is not ("Azure" or "Azurite") || sp.GetService<Azure.Storage.Blobs.BlobServiceClient>() is not {} client)
+                throw new SealUnavailableException("Configure persistent shared storage for timestamp coordination.");
+            return new BlobTimestampRequestCoordinator(client.GetBlobContainerClient("keys"),sp.GetRequiredService<SealOptions>().TimestampCoordination,provider=="Azurite");
+        });
+        services.TryAddSingleton<Func<ITimestampRequestCoordinator>>(sp=>()=>sp.GetRequiredService<ITimestampRequestCoordinator>());
         services.TryAddSingleton<TimestampAuthority>(); services.TryAddSingleton<PlatformPdfSeal>(); services.TryAddSingleton<SealCms>(); return services;
     }
 }
