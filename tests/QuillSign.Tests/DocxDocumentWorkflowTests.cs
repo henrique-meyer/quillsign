@@ -202,7 +202,7 @@ public sealed class DocxDocumentWorkflowTests(SqlDatabaseFixture fixture) : ICla
     }
     private static async Task<byte[]> Original(Harness run, Envelope state)
     { using var bytes = new MemoryStream(); await run.Store.Inner.CopyToAsync(run.Sender, new(run.Id, DocumentBlobKind.Original, Guid.ParseExact(state.OriginalBlob!, "N")), bytes); return bytes.ToArray(); }
-    private static async Task<bool> Upload(Harness run, Provider provider, byte[]? bytes = null, string filename = "synthetic.docx", byte[]? version = null, long? declared = null, bool enabled = true, MemoryStream? source = null, ClaimsPrincipal? sender = null)
+    internal static async Task<bool> Upload(Harness run, Provider provider, byte[]? bytes = null, string filename = "synthetic.docx", byte[]? version = null, long? declared = null, bool enabled = true, MemoryStream? source = null, ClaimsPrincipal? sender = null)
     {
         version ??= (await run.StateAsync()).RowVersion; bytes ??= GotenbergDocxConverterTests.Docx(); using var owned = source is null ? new MemoryStream(bytes) : null; var input = source ?? owned!;
         return await run.WithDatabaseAsync(db => Service(run, db, provider, enabled).UploadAsync(sender ?? run.Sender, run.PublicId, version, filename, input, declared ?? input.Length, null, null));
@@ -213,7 +213,7 @@ public sealed class DocxDocumentWorkflowTests(SqlDatabaseFixture fixture) : ICla
         var converter = new GotenbergDocxConverter(new HttpClient(provider, false), new() { Enabled = enabled, BaseUrl = "https://converter.example.invalid" }, options, new(options), new EnvironmentStub());
         return new(documents, new(options), converter);
     }
-    private sealed class Provider : HttpMessageHandler
+    internal sealed class Provider : HttpMessageHandler
     {
         private int calls; public int Calls => calls; public byte[]? LastOriginal { get; private set; }
         public Func<Task>? Before { get; set; }
