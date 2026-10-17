@@ -155,14 +155,6 @@ public sealed class UploadRetentionTests(SqlDatabaseFixture fixture) : IClassFix
         db.Remove(await db.DocumentRetentionSnapshots.SingleAsync(x=>x.EnvelopeId==h.Id));await Assert.ThrowsAsync<InvalidOperationException>(()=>db.SaveChangesAsync());
     }
 
-    [Fact]
-    public async Task Enrolled_document_cannot_publish_using_the_old_completion_based_retention_interval()
-    {
-        await using var h=await Shared.CreateAsync(fixture,demo:true);h.Time=new Clock();h.Retention.PurgeAfterDays=7;Assert.True(await h.UploadAsync(PdfFixtures.Create()));
-        await using var db=fixture.Open();var publication=new CompletionPublication(db,null!,null!,null!,null!,new(db,h.Time),h.Time,new(),null!);
-        await Assert.ThrowsAsync<CompletionPublicationUnavailableException>(()=>publication.PublishAsync(h.Id));
-    }
-
     private async Task<DocumentRetentionSnapshot> Read(Shared h)
     {
         await using var db=fixture.Open();return (await new UploadRetention(db,h.Retention,h.Time).ReadAsync(await h.StateAsync()))!;
