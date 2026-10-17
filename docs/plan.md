@@ -1157,7 +1157,7 @@ Current integration: QUILS-76 merged main is integrated; all 63 combined consent
 
 ## QUILS-78: Persist authenticated purge recovery markers and storage-only retries
 
-Status: In Progress. QUILS-74 and QUILS-76 merged as PRs #81 and #82; native Jira Done verified for both.
+Status: Done. Merged as PR #84 after all ten exact-head checks and all 1,760 .NET tests passed; native Jira Done verified.
 
 Add the durable storage-only recovery dependency for enrolled demo purge after QUILS-76 bounded storage authority and QUILS-74 private access cutoff. Both prerequisites are merged; implementation may proceed independently of QUILS-79 signer decline.
 
@@ -1176,3 +1176,19 @@ Implementation design: keep one authenticated minimal marker per opaque envelope
 Validation: all 20 new recovery cases pass and all 151 combined purge, storage, retention, durable-work and configuration checks pass. Tests use real local SQL/Azurite, persistent keys and SDK response-loss injection; a separate real CLI process succeeds with ConnectionStrings__Database explicitly empty. They cover SQL removal/original lease expiry, new-provider key reuse, tampering/rebinding, bounded object/marker continuation, active/lost finite leases, cancellation, uncertain writes, late writes and no ordinary-recover key-ring access. The initial run was 13/16; three failures exposed missing InvalidDataException handling in retry reporting, which is now corrected and verified. Model comparison is unchanged and all 95 local Markdown links pass. No automatic producer, private SQL removal, live mail/TSA or hosted changes. Current-head CI and secret scans gate merge.
 
 Current integration: QUILS-79 merged as PR #83 with native Jira Done and all 1,740 .NET tests passing. Its source is integrated; all 184 combined purge, work/configuration, storage, consent and post-consent checks pass. Model comparison is unchanged and 97 local Markdown links pass. Final exact-head CI gates this recovery merge.
+
+## QUILS-81: Schedule and execute durable enrolled demo purge
+
+Status: To Do. Planning only until QUILS-78 and QUILS-80 merge.
+
+Coordinate actual enrolled demo purge scheduling and execution after QUILS-78 authenticated recovery and QUILS-80 narrow private SQL cleanup merge. Planning only until both prerequisites are merged. This is the remaining orchestration scope of the original broad purge plan, with no duplicate SQL-deletion or storage-capability implementation.
+
+Add durable once-only first-upload scheduling at the verified fixed deadline with exact canonical payload, parent locking, storage hint and post-commit queue publication. Replacement, Send, Finish and completion never reset it. Truthfully gate readiness and support bounded explicit recovery of already enrolled unscheduled records without backfilling or changing their saved policy. Use event-driven wakes/storage-only recovery; no recurring SQL polling or SQL-backed idle probes.
+
+Wire a supported durable Purge handler through the verified storage, marker and narrow SQL contracts. Fence/reconcile in-flight checkpoint, sealing, invitation/email and public write races so deleted private rows cannot be recreated. Preserve only required minimal non-personal protocol state, remove owned wake hints where safe and retain markers for late-owned blob cleanup. Do not delete global suppression, unproven pre-envelope data or unrelated records.
+
+Keep cleanup retryable after transient SQL/storage failure, lease expiry, unknown commits, held/immutable versions and ordinary attempt exhaustion without weakening finite email submission safety. Distinguish private SQL removal, protected/pending objects and actual bounded sweep outcomes; never call one empty scan permanent erasure or promise immediate backup/soft-delete/log/provider-copy deletion. Do not remove a recovery marker merely because it was empty.
+
+Validate real local SQL/Azurite synthetic draft/sent/declined/voided/completed records, exact deadline, producer rollback/unknown commits/duplicates/recovery, bounded batches/cursors, active worker and Finish/email races, cancellation/partial failure/retry, real runtime permissions, complete associated private cleanup and late orphan writes after SQL removal. Preserve unrelated records and idle SQL behavior. No real user documents or outbound services.
+
+Create matching docs/plan.md before implementation, refine design before coding and keep native statuses current on a separate QUILS branch. Update the versioned synthetic disclosure only when supported automatic purge is ready, preserving old snapshots. No Azure/AWS resources/permissions, hosted enablement/schedule, live email/TSA, purchases, dependency changes, fabricated operator policies, OTP or deferred AI. Prepare any demonstrated hosted permission/configuration requirement for separate owner approval; do not deploy it. Run meaningful regression/model/secrets, commit/push/open/attach/pass exact-head checks/merge and native Jira Done.
