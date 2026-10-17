@@ -20,6 +20,10 @@ internal sealed record DownloadPublication(Guid EnvelopeId,string PublicId,strin
 // that files are currently retrievable; preparation/GET independently verify the actual pair.
 internal static class CompletionDownloadState
 {
+    internal static async Task RecheckSourceAsync(CompletionEvidenceCollector collector,DownloadPublication saved,CancellationToken ct) {
+        try {await collector.RecheckLockedAsync(saved.EnvelopeId,saved.FrozenState,ct,saved.AuditSequence,saved.AuditAnchor,saved.Source);}
+        catch(QuillSign.Documents.DocumentConflictException) {throw Invalid();}
+    }
     private sealed record Documents(FinalStoredDocument Executed,FinalStoredDocument Certificate);
     private sealed record Stages(Guid Id,Guid EnvelopeId,byte[] RecipeSha256,byte[] RowVersion,byte[] FrozenStateSha256,long AuditSequence,byte[] AuditAnchor,Output[] outputs);
     private sealed record Output(Guid Id,Guid PdfObjectId,CompletionSealKind Kind,byte[] RecipeSha256,byte[] RowVersion,long AuditSequence,byte[] AuditHash,byte[] Sha256);

@@ -207,8 +207,8 @@ public sealed class SignerReviewCandidateTests(SqlDatabaseFixture fixture) : ICl
         public IWorkSignals Signals=new CheckpointSignals(); public WorkOptions Work=new() { Enabled=true };
         public static async Task<Run> Create(SqlDatabaseFixture fixture,bool midnight=false)
         {
-            var r=new Run { H=await SignerFieldTests.Harness.Create(fixture),fixture=fixture }; var h=r.H;
-            if(midnight) { h.Clock.Set(new DateTimeOffset(2026,10,16,23,59,50,TimeSpan.Zero)); h.Identity=h.Identity with { SessionExpiresAt=h.Clock.GetUtcNow().AddHours(2) }; }
+            // Seed consent and all earlier evidence on the same clock; never rewind a live-date fixture.
+            var r=new Run { H=await SignerFieldTests.Harness.Create(fixture,midnight ? new DateTimeOffset(2026,10,16,23,59,50,TimeSpan.Zero) : null),fixture=fixture }; var h=r.H;
             using var input=new MemoryStream(PdfFixtures.Create(text:"Sender fixed synthetic - NO AGREEMENT")); using var normalized=new MemoryStream(); var pages=new PdfValidation(new()).Rewrite(input,normalized); var bytes=normalized.ToArray(); h.Blobs.SourceId=h.Identity.DocumentId;
             await h.Blobs.WriteAsync(BlobStorageTests.Sender(h.Envelope.Id),new(h.Envelope.Id,DocumentBlobKind.Normalized,h.Identity.DocumentId),new MemoryStream(bytes),bytes.Length);
             await using(var db=fixture.Open()) {

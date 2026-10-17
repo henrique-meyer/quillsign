@@ -127,8 +127,11 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         });
         model.Entity<AuthToken>().HasIndex(x => x.TokenSha256).IsUnique();
         model.Entity<AuthToken>().HasIndex(x => x.ExpiresAt);
+        model.Entity<AuthToken>().HasOne<CompletionPublicationResult>().WithMany().HasForeignKey(x=>x.CompletionPublicationId).OnDelete(DeleteBehavior.NoAction);
         model.Entity<AuthToken>().ToTable(t => t.HasCheckConstraint("CK_Token_Scope", "[Purpose] = 'Lookup' OR [EnvelopeId] IS NOT NULL"));
         model.Entity<AuthToken>().ToTable(t=>t.HasCheckConstraint("CK_Token_DocumentBinding","([DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL) OR ([DocumentId] IS NOT NULL AND [DocumentSha256] IS NOT NULL AND [DisclosureSha256] IS NOT NULL)"));
+        model.Entity<AuthToken>().ToTable(t=>t.HasCheckConstraint("CK_Token_CompletionBinding",
+            "([Purpose] = 'CompletionAccess' AND [CompletionPublicationId] IS NOT NULL AND [CompletionRecipeSha256] IS NOT NULL AND [CompletionPartySha256] IS NOT NULL AND [DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL AND (([PartyType] = 'Sender' AND [PartyId] IS NULL) OR ([PartyType] IN ('Signer','Recipient') AND [PartyId] IS NOT NULL))) OR ([Purpose] <> 'CompletionAccess' AND [CompletionPublicationId] IS NULL AND [CompletionRecipeSha256] IS NULL AND [CompletionPartySha256] IS NULL)"));
         model.Entity<AuditEvent>().HasIndex(x => new { x.EnvelopeId, x.Sequence }).IsUnique();
         model.Entity<AuditEvent>().ToTable(t => t.HasCheckConstraint("CK_Audit_Chain", "([Sequence] = 1 AND [PrevHash] IS NULL) OR ([Sequence] > 1 AND [PrevHash] IS NOT NULL)"));
 
@@ -183,6 +186,10 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     private void GuardAuditMutations()
     {
         ChangeTracker.DetectChanges();
+        if(ChangeTracker.Entries<AuthToken>().Any(x=>x.State==EntityState.Modified &&
+            (x.Entity.Purpose==TokenPurpose.CompletionAccess || x.Property(t=>t.Purpose).OriginalValue==TokenPurpose.CompletionAccess) &&
+            x.Properties.Any(p=>p.IsModified && p.Metadata.Name!=nameof(AuthToken.UsedAt))))
+            throw new InvalidOperationException("Completion access token bindings are immutable.");
         if(ChangeTracker.Entries<CompletionPublicationIntent>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<CompletionPublicationResult>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Completion publication records are immutable.");

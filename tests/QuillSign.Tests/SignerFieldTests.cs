@@ -206,9 +206,10 @@ public sealed class SignerFieldTests(SqlDatabaseFixture fixture) : IClassFixture
         public VerifiedSigner Identity=null!; public Clock Clock=new(); public Faults Faults=new(); public Blobs Blobs=null!;
         public ClaimsPrincipal Principal=>SignerAccessConfiguration.Principal(Identity);
         public DocumentField Field(FieldType type)=>Fields.Single(x=>x.Type==type);
-        public static async Task<Harness> Create(SqlDatabaseFixture fixture)
+        public static async Task<Harness> Create(SqlDatabaseFixture fixture,DateTimeOffset? initialTime=null)
         {
-            var run=new Harness { fixture=fixture }; var now=run.Clock.GetUtcNow(); run.Envelope=new Envelope { SenderEmail="sender@example.invalid",Title="Synthetic fields - NO AGREEMENT",Status=EnvelopeStatus.Sent,SenderVerifiedAt=now,SentPdfBlob=Guid.NewGuid().ToString("N"),SentPdfSha256=SHA256.HashData(new byte[]{1,2,3}),PageCount=1,ExpiresAt=now.AddDays(2) };
+            var run=new Harness { fixture=fixture }; if(initialTime is { } start)run.Clock.Set(start);
+            var now=run.Clock.GetUtcNow(); run.Envelope=new Envelope { SenderEmail="sender@example.invalid",Title="Synthetic fields - NO AGREEMENT",Status=EnvelopeStatus.Sent,SenderVerifiedAt=now,SentPdfBlob=Guid.NewGuid().ToString("N"),SentPdfSha256=SHA256.HashData(new byte[]{1,2,3}),PageCount=1,ExpiresAt=now.AddDays(2) };
             var disclosure=new ElectronicRecordDisclosure(ElectronicRecordDisclosureTests.Policy()).Build(run.Envelope.PublicId,run.Envelope.Title,run.Envelope.SenderEmail); run.Envelope.ErsdVersion=disclosure.Version; run.Envelope.ErsdText=disclosure.Text; run.Envelope.ErsdSha256=disclosure.Sha256;
             run.Signer=new Signer { EnvelopeId=run.Envelope.Id,FullName="Synthetic signer",Email="signer@example.invalid",ConsentAt=now,Status=SignerStatus.Viewed };
             run.Other=new Signer { EnvelopeId=run.Envelope.Id,FullName="Other synthetic",Email="other@example.invalid",Order=2 };

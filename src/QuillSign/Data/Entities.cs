@@ -6,7 +6,7 @@ public enum SignatureMethod { Typed, Drawn, Uploaded }
 public enum FieldType { Signature, Initials, FullName, DateSigned, Text, Checkbox, Date }
 public enum FieldSource { Manual, Ai, AcroForm }
 public enum PartyType { Sender, Signer, Recipient, System }
-public enum TokenPurpose { SenderVerify, SenderStatus, SignerAccess, Lookup }
+public enum TokenPurpose { SenderVerify, SenderStatus, SignerAccess, Lookup, CompletionAccess }
 public enum EmailStatus { Queued, Sent, Failed, Bounced, Complained }
 public enum WorkStatus { Queued, Leased, Completed, Failed }
 public enum WorkKind { Conversion, Ai, Rendering, Sealing, Email, Purge }
@@ -266,6 +266,9 @@ public sealed class AuthToken : IVersionedRecord
     public Guid? DocumentId { get; set; }
     public byte[]? DocumentSha256 { get; set; }
     public byte[]? DisclosureSha256 { get; set; }
+    public Guid? CompletionPublicationId {get;set;}
+    public byte[]? CompletionRecipeSha256 {get;set;}
+    public byte[]? CompletionPartySha256 {get;set;}
     public TokenPurpose Purpose { get; set; }
     public Guid? EnvelopeId { get; set; }
     public PartyType PartyType { get; set; }
