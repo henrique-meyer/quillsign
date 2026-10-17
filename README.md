@@ -81,6 +81,8 @@ Restore the pinned EF CLI with `dotnet tool restore`. Generate migrations using 
 
 Compose selects SMTP and captures messages in Mailpit using a synthetic sender. `Use-LocalDatabase.ps1 -Action Test` exercises sender verification, rendered HTML/text messages, local SMTP capture, simulated SES requests, signed SNS feedback, and suppression. No AWS credentials or live email are used by tests.
 
+The adapters also support [bounded PDF attachments](docs/email-attachments.md), preserving exact supplied bytes with safe filenames and explicit MIME encoding. Completion-notification production remains subsequent work; attachment support does not enable live delivery.
+
 For a complete browser flow using the local services, migrate first, then run these commands in separate terminals:
 
 ```powershell
@@ -160,7 +162,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 
 ## Remaining work
 
-- Authorized final downloads, completion delivery and sender status-link email.
+- Completion delivery and sender status-link email.
 - Office conversion and document-processing workers.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - Public executed-PDF verification.

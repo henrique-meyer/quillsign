@@ -1,0 +1,11 @@
+# PDF email attachments
+
+The existing SMTP and SES v2 adapters support up to two PDF attachments alongside their plain-text and HTML alternatives. Attachment objects own a copy of the supplied bytes, derive their length from that copy, and expose only non-writable reads. A send snapshots the attachment list before asynchronous work. Safe, distinct `.pdf` filenames and a PDF header are required; full completion-packet integrity remains the verified producer's responsibility.
+
+`Email:Attachments:MaximumDecodedBytes` defaults to 20 MiB and permits a positive value up to 25 MiB. `Email:Attachments:MaximumMessageBytes` defaults to 32 MiB and permits a positive value up to 32 MiB. These are technical transport limits. The message estimate includes Base64 expansion and line wrapping plus conservative body/header space, so a payload below the decoded limit can still exceed the message limit.
+
+SES v2 receives the original raw attachment streams through the installed SDK's `Simple.Attachments`, with explicit PDF content type, attachment disposition and Base64 MIME transfer encoding. The SDK performs the API transport encoding. SMTP uses MimeKit multipart messages and Base64 attachment parts. The application's bounds leave space below SES's documented 40 MB total-message limit. See [SES attachment behavior](https://docs.aws.amazon.com/ses/latest/dg/attachments.html) and the [.NET SDK attachment contract](https://docs.aws.amazon.com/sdkfornet/v4/apidocs/items/SimpleEmailV2/TAttachment.html).
+
+Invalid or oversized attachment messages fail before provider submission. The adapters never silently omit attachments or choose a link-only fallback. Later completion dispatch must verify the exact published pair, provide the party's private backup link, and explicitly warn the sender when attachment size requires a link-only message. Completion templates, durable production of those notifications and actual delivery remain subsequent work.
+
+Existing disabled-email and suppression gates remain in place. Definite provider rejections remain distinct from ambiguous failures after submission; attachment support does not introduce automatic retries for an uncertain send. No live-email setting is enabled by this change.
