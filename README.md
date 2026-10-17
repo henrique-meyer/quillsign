@@ -29,9 +29,9 @@ Synthetic end-to-end flows have local automated and browser coverage. Hosted com
 | Background work | SQL durable work/outbox records, Azure Storage Queues and Blob recovery hints; finite Container Apps jobs |
 | Email | Amazon SES v2 and SMTP/Mailpit; ACS remains a future optional adapter |
 | Hosting and delivery | Azure Container Apps Consumption, GitHub Actions, GHCR and Bicep; CloudFormation for AWS resources |
-| Planned extensions | Gotenberg for Office conversion; Azure OpenAI for sender-approved signer-role and field suggestions |
+| Planned extensions | Gotenberg for Office conversion; Azure OpenAI suggestions deferred until the rest of the project is complete |
 
-There is no CAPTCHA. Verified email, request limits, daily caps and bounce/complaint suppression provide abuse controls. Office conversion and AI suggestions are not implemented yet.
+There is no CAPTCHA. Verified email, request limits, daily caps and bounce/complaint suppression provide abuse controls. Office conversion and AI suggestions are not implemented yet. AI field and signer-role suggestions, including heuristic automatic placement, are deferred until the remaining non-AI project work and hosted validation are complete. Manual field placement is the current workflow; AI is not required for project completion or demo release.
 
 ### Timestamp, immutable storage and retention setup
 
@@ -206,7 +206,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 - Automatic expiry scheduling, reminders, invitation resend, contact correction and document lookup.
 - Office/image document conversion.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
-- Optional AI suggestions.
+- After the rest of the project is complete: optional, sender-approved AI field and signer-role suggestions.
 
 See the [implementation plan](docs/plan.md) for tracked work. The SVG and PNG brand assets are in [assets](assets/).
 

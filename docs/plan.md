@@ -58,6 +58,10 @@ Current follow-up: 2026-10-17 owner-requested follow-up: Refresh README current 
 
 Follow-up validation: All 78 local Markdown links resolve and whitespace checks pass. Stack/configuration claims were checked against the current project, completion-retention options, seal client and final-storage adapter. Primary FreeTSA and Azure documentation confirms service limits and version-level policy behavior. Only README and plan bookkeeping change; no new tests or application build are needed. Staged/full-history secret scans and applicable CI gate publication.
 
+Priority update: 2026-10-17 owner priority change: Defer AI field and signer-role suggestions, including heuristic automatic placement, until the rest of the agreed project is complete and validated. Manual placement remains the current workflow. Preserve the future sender-approved suggestion design without treating AI as a completion or hosted-release prerequisite. Record the decision in README and docs/plan.md; synchronize ignored requirements and reorder milestones so non-AI completion and demo rollout precede AI. Documentation only, with no feature implementation, cloud provisioning or runtime changes. Validate Markdown links, whitespace and secrets; commit, push, open and attach a small PR, pass checks, merge and move this story Done in the same pass.
+
+Priority-update validation: All 78 local Markdown links and whitespace checks pass. README, plan and ignored requirements agree on deferring automatic placement until the non-AI project and hosted validation are complete. This documentation-only change introduces no runtime behavior or new tests; staged/full-history secret scans and applicable CI gate merge.
+
 ## QUILS-7: Plan the application foundation and first sender workflow
 
 Status: Planning complete.
