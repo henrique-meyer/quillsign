@@ -3,7 +3,6 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using QuillSign.Data;
 using QuillSign.Storage;
 
@@ -23,8 +22,12 @@ public static class SenderConfiguration
         services.AddSingleton(options);
         services.AddSingleton<SenderAvailability>();
         services.AddScoped<SenderWorkflow>();
-        services.AddScoped<SenderVoid>();
-        services.TryAddScoped<QuillSign.Signing.SignerCheckpointState>();
+        // Scanner-safe/custom hosts can register sender HTTP plumbing without SQL.
+        // Resolve the mutation backend only when a trusted caller invokes it.
+        services.AddScoped<SenderVoid>(sp=> {
+            var db=sp.GetRequiredService<QuillSignDbContext>();var clock=sp.GetRequiredService<TimeProvider>();
+            return new(db,new(db,clock),sp.GetRequiredService<AuditWriter>(),clock);
+        });
         services.AddScoped<Func<Work.EmailOutboxWriter>>(sp => () => sp.GetRequiredService<Work.EmailOutboxWriter>());
         services.AddScoped<Func<SenderWorkflow>>(sp => () => sp.GetRequiredService<SenderWorkflow>());
         services.AddScoped<AuditWriter>();
