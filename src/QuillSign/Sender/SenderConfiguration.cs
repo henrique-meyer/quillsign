@@ -67,6 +67,9 @@ public static class SenderConfiguration
             limiter.OnRejected = async (rejected,ct) =>
             {
                 var context=rejected.HttpContext;
+                if(QuillSign.Verification.VerificationBrowser.IsPath(context)) {
+                    await QuillSign.Verification.VerificationBrowser.Error(context,429,"Verification is busy or its request limit was reached. Wait before selecting and submitting your PDF again; no integrity result is confirmed.",ct);return;
+                }
                 if(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value is { } voidPath && voidPath.EndsWith("/void",StringComparison.Ordinal)) {
                     const string message="Too many void actions. Wait before retrying and check saved request status first; no new void is confirmed by this response.";
                     context.Response.Headers.CacheControl="no-store";context.Response.Headers["Referrer-Policy"]="no-referrer";
@@ -114,6 +117,10 @@ public static class SenderConfiguration
                     (context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/review",StringComparison.Ordinal)==true && HttpMethods.IsPost(context.Request.Method)) ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(QuillSign.Verification.VerificationBrowser.IsPath(context))
+                    return RateLimitPartition.GetFixedWindowLimiter((HttpMethods.IsPost(context.Request.Method) ? "pdf-verification-action:" : "pdf-verification-read:")+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=HttpMethods.IsPost(context.Request.Method) ? context.RequestServices.GetService<QuillSign.Verification.VerificationBrowserOptions>()?.RequestsPerMinute??10 : 120,
+                        Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });
                 if(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/void",StringComparison.Ordinal)==true)
                     return RateLimitPartition.GetFixedWindowLimiter((HttpMethods.IsPost(context.Request.Method) ? "sender-void-action:" : "sender-void-read:")+address,_=>new FixedWindowRateLimiterOptions {
                         PermitLimit=HttpMethods.IsPost(context.Request.Method) ? Math.Min(10,options.RequestsPerWindow) : 120,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true });

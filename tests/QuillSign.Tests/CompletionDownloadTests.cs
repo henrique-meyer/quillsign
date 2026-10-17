@@ -18,6 +18,7 @@ using QuillSign.Sender;
 using QuillSign.Signing;
 using QuillSign.Storage;
 using QuillSign.Work;
+using QuillSign.Verification;
 using Run=QuillSign.Tests.CompletionSealOutputTests.Run;
 
 namespace QuillSign.Tests;
@@ -185,7 +186,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
         public SendDraftWorkflowTests.Clock Clock=>Run.Signing.H.Clock; public Guid Id=>Run.Signing.Envelope.Id; public string PublicId=>Run.Signing.Envelope.PublicId;
         public string PagePath=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+(Role=="sender" ? "/sent" : "/confirmed");
         public string Resource(string kind)=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+"/final"+(kind.Length==0 ? "" : "/"+kind);
-        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false,bool completionNotifications=false,bool publish=true,bool senderAlsoSigns=false)
+        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false,bool completionNotifications=false,bool publish=true,bool senderAlsoSigns=false,bool verificationBrowser=false)
         {
             var f=new Flow {fixture=fixture,Run=await Run.Create(fixture,senderAlsoSigns:senderAlsoSigns),CompletionNotifications=completionNotifications}; f.Store=new(f.Clock); _=await f.Run.Prepare();
             await using var db=fixture.Open(); if(publish)f.Published=(await f.Publication(db).PublishAsync(f.Id))!;
@@ -203,13 +204,14 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
                 o=> {o.Cookie.Name="QuillSign.CustomReader";o.CookieManager=new Microsoft.AspNetCore.Authentication.Cookies.ChunkingCookieManager {ChunkSize=900};});
             if(completionNotifications)builder.Services.AddSingleton<IWorkSignals>(f.Run.Signing.H.Signals);
             builder.Services.AddScoped<CompletionPublication>(sp=>f.Publication(sp.GetRequiredService<QuillSignDbContext>()));
+            if(verificationBrowser)builder.Services.AddPdfVerificationBrowser(builder.Configuration);
             f.App=builder.Build();
             if(completionNotifications) {
                 f.App.Services.GetRequiredService<WorkOptions>().Enabled=true;
                 var email=f.App.Services.GetRequiredService<EmailOptions>();email.Enabled=true;email.Provider="Smtp";email.FromEmail="noreply@example.invalid";email.BaseUrl="https://example.invalid";
                 email.Smtp=new() {Host="127.0.0.1",Port=int.Parse(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_SMTP_PORT")!),UseStartTls=false};
             }
-            f.App.UseRouting(); f.App.UseRateLimiter(); f.App.UseAuthentication(); f.App.UseAuthorization(); f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
+            f.App.UseRouting(); f.App.UseRateLimiter();if(verificationBrowser)f.App.UseMiddleware<VerificationUploadBoundary>(); f.App.UseAuthentication(); f.App.UseAuthorization(); f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
             f.App.MapGet("/fixture/{role}",async (HttpContext http,string role,SignerReviewBrowser browser)=> {
                 if(role=="sender") {
                     var sender=f.Run.Signing.Sender.Clone(); if(f.PaddedSender)((ClaimsIdentity)sender.Identity!).AddClaim(new("synthetic-padding",new string('x',6000)));

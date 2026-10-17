@@ -148,7 +148,7 @@ The internal [completion-evidence collector](docs/completion-evidence.md) verifi
 
 The private [sender void flow](docs/sender-void.md) confirms an original sender action on an unfinished sent request, stops subsequent signing progression and preserves prior signing evidence. Supported informative notices queue atomically for the sender and signers, with finite recovery and no access links or attachments.
 
-The internal [uploaded-PDF verification backend](docs/uploaded-pdf-verification.md) matches supplied bytes to a unique retained completed artifact and verifies its publication, seal and timestamp evidence without granting record access. A public verification page follows in a separate slice.
+The public **Verify a completed PDF** link opens `/verify`. Its [bounded upload verification](docs/uploaded-pdf-verification.md) matches supplied bytes to a unique retained completed artifact and verifies its publication, seal and timestamp evidence without granting record access. Uploads are processed in memory and are not saved. An unrecognized file alone does not prove an invalid signature; verification does not establish identity or legal validity.
 
 The backend [sender-prefill renderer](docs/sender-pdf-rendering.md) now shares these independent geometry checks. It validates source bytes and sender text/date/checkbox fields, embeds the pinned font, and returns bounded output and hashes. It has no endpoint and does not yet freeze, send or sign drafts.
 
@@ -169,7 +169,6 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 - Completion delivery and sender status-link email.
 - Office conversion and document-processing workers.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
-- Public executed-PDF verification.
 - Optional AI suggestions.
 
 See the [implementation plan](docs/plan.md) for tracked work. The SVG and PNG brand assets are in [assets](assets/).
