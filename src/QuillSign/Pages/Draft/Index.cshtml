@@ -13,15 +13,17 @@
 @if (Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
 @if (Model.Error is not null) { <p class="validation document-error" role="alert">@Model.Error</p> }
 <section class="start-card" aria-labelledby="upload-title">
-    <h2 id="upload-title">@(Model.Draft.PdfBlob is null ? "Upload your PDF" : "Replace this PDF")</h2>
-    <p>One PDF, up to @(Math.Round(Model.Limits.MaximumBytes / 1048576d, 3)) MiB and @Model.Limits.MaximumPages pages. Use an unsigned, unencrypted PDF.</p>
+    <h2 id="upload-title">@(Model.Draft.PdfBlob is null ? "Upload your document" : "Replace this document")</h2>
+    <p>One document, up to @(Math.Round(Model.Limits.MaximumBytes / 1048576d, 3)) MiB and @Model.Limits.MaximumPages pages. Use an unsigned, unencrypted PDF@(Model.DocxAvailable ? ", DOCX" : "")@(Model.ImagesAvailable ? ", PNG or JPEG" : "").</p>
+    @if(!Model.DocxAvailable) { <p>DOCX conversion is unavailable here. Export Office documents to PDF before uploading.</p> }
+    @if(Model.ImagesAvailable) { <p>Images must be static PNG or 8-bit JPEG, up to 12 million pixels and 12,000 pixels on either side. Some color profiles and image variants require export to PDF. Each image becomes one page, fitted without cropping. Review the converted PDF carefully.</p> }
     @if (Model.Draft.PdfBlob is not null) { <p>Replacing it clears this preview's confirmation and any document fields.</p> }
-    <form method="post" enctype="multipart/form-data" asp-page-handler="Upload" data-pdf-upload data-maximum-bytes="@Model.Limits.MaximumBytes">
+    <form method="post" enctype="multipart/form-data" asp-page-handler="Upload" data-document-upload data-maximum-bytes="@Model.Limits.MaximumBytes" data-extensions="@Model.Extensions">
         <input type="hidden" asp-for="Version" id="UploadVersion" />
-        <label asp-for="Upload">PDF file</label>
-        <input asp-for="Upload" type="file" accept="application/pdf,.pdf" required />
+        <label asp-for="Upload">Document file</label>
+        <input asp-for="Upload" type="file" accept="@Model.Extensions" required />
         <p class="validation" data-upload-error hidden tabindex="-1" role="alert"></p>
-        <button type="submit">@(Model.Draft.PdfBlob is null ? "Upload PDF" : "Replace PDF")</button>
+        <button type="submit">@(Model.Draft.PdfBlob is null ? "Upload document" : "Replace document")</button>
     </form>
 </section>
 @if (Model.Draft.PdfBlob is not null)

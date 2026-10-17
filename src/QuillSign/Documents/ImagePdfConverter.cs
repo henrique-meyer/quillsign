@@ -29,7 +29,7 @@ public sealed class ImagePdfConversion : IDisposable
     public void Dispose() { lock (gate) { if (original is null) return; Array.Clear(original); Array.Clear(pdf!); Array.Clear(originalHash); Array.Clear(pdfHash); original = pdf = null; } }
 }
 
-// Internal format conversion only; public upload stays PDF-only until intake integration.
+// Bounded format conversion; authorization and persistence belong to the workflow.
 public sealed class ImagePdfConverter(DocumentOptions options, PdfValidation validation)
 {
     private static readonly SemaphoreSlim Admission = new(1, 1);

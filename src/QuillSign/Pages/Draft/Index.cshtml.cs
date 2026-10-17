@@ -10,10 +10,17 @@ using QuillSign.Storage;
 namespace QuillSign.Pages.Draft;
 
 [Authorize(AuthenticationSchemes = EnvelopeStorageAuthorization.SenderScheme)]
-public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limits, BrowserNotices notices) : PageModel
+public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limits, BrowserNotices notices,
+    DocxDocumentWorkflow docx, ImageDocumentWorkflow images, GotenbergOptions conversion,IHostEnvironment environment) : PageModel
 {
     public Envelope Draft { get; private set; } = null!;
     public DocumentOptions Limits => limits;
+    public bool ImagesAvailable => limits.MaximumBytes <= 64 * 1024 * 1024;
+    public bool DocxAvailable
+    {
+        get {if(!ImagesAvailable)return false;try{return conversion.Endpoint(environment) is not null;}catch(InvalidOperationException){return false;}}
+    }
+    public string Extensions => ".pdf" + (ImagesAvailable ? ",.png,.jpg,.jpeg" : "") + (DocxAvailable ? ",.docx" : "");
     public string? Notice { get; private set; }
     public string? Error { get; private set; }
     public bool RetentionExpired {get;private set;}
@@ -36,11 +43,19 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
 
     public Task<IActionResult> OnPostUploadAsync(string publicId, CancellationToken cancellationToken) => MutateAsync(publicId, async () =>
     {
-        if (!ModelState.IsValid) throw new DocumentRejectedException("Choose one PDF within the upload size limit.");
-        if (Upload is null || Request.Form.Files.Count != 1) throw new DocumentRejectedException("Choose one PDF to upload.");
+        if (!ModelState.IsValid) throw new DocumentRejectedException("Choose one supported document within the upload size limit.");
+        if (Upload is null || Request.Form.Files.Count != 1) throw new DocumentRejectedException("Choose one supported document to upload.");
         await using var source = Upload.OpenReadStream();
-        return await documents.UploadAsync(User, publicId, ExpectedVersion(), Upload.FileName, source, Upload.Length,
-            HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), cancellationToken);
+        var extension = Path.GetExtension(Upload.FileName).ToLowerInvariant();
+        var version = ExpectedVersion(); var ip = HttpContext.Connection.RemoteIpAddress?.ToString(); var ua = Request.Headers.UserAgent.ToString();
+        return extension switch
+        {
+            ".pdf" => await documents.UploadAsync(User, publicId, version, Upload.FileName, source, Upload.Length, ip, ua, cancellationToken),
+            ".docx" when DocxAvailable => await docx.UploadAsync(User, publicId, version, Upload.FileName, source, Upload.Length, ip, ua, cancellationToken),
+            ".docx" => throw new DocumentConversionUnavailableException("DOCX conversion is unavailable. Export your document to PDF and try again."),
+            ".png" or ".jpg" or ".jpeg" when ImagesAvailable => await images.UploadAsync(User, publicId, version, Upload.FileName, source, Upload.Length, ip, ua, cancellationToken),
+            _ => throw new DocumentRejectedException("Choose a supported document shown on the upload form, or export it to PDF.")
+        };
     }, NoticeCode.DocumentUploaded, cancellationToken);
 
     public Task<IActionResult> OnPostConfirmAsync(string publicId, CancellationToken cancellationToken) => MutateAsync(publicId,
@@ -64,6 +79,7 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
     private async Task<IActionResult> MutateAsync(string publicId, Func<Task<bool>> action, NoticeCode notice, CancellationToken ct)
     {
         Response.Headers.CacheControl = "no-store";
+        Response.Headers["Referrer-Policy"] = "no-referrer";
         var status = StatusCodes.Status400BadRequest;
         try
         {
@@ -78,6 +94,7 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
             RetentionExpired=true;Response.StatusCode=410;return Page();
         }
         catch (DocumentRejectedException error) { Error = error.Message; }
+        catch (DocumentConversionUnavailableException error) { Error = error.Message; status = StatusCodes.Status503ServiceUnavailable; }
         catch (DocumentConflictException error) { Error = error.Message; status = StatusCodes.Status409Conflict; }
         catch (DbUpdateConcurrencyException) { Error = "This draft changed. Reload it before trying again."; status = StatusCodes.Status409Conflict; }
         catch (Exception error) when (error.GetBaseException() is Microsoft.Data.SqlClient.SqlException ||

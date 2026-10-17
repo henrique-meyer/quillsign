@@ -233,13 +233,13 @@ public sealed class SenderWorkflowTests(SqlDatabaseFixture fixture) : IClassFixt
         var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.SenderEmail == email);
         try
         {
-            Assert.Contains("Upload your PDF", await browser.GetTextAsync(draft));
+            Assert.Contains("Upload your document", await browser.GetTextAsync(draft));
             var fields = new Dictionary<string, string> { ["Version"] = Convert.ToBase64String(envelope.RowVersion) };
             using (var noCsrf = await browser.PostDraftAsync(draft, "Upload", fields, PdfFixtures.Create(), csrf: false))
                 Assert.Equal(HttpStatusCode.BadRequest, noCsrf.StatusCode);
             using (var upload = await browser.PostDraftAsync(draft, "Upload", fields, PdfFixtures.Create()))
             { Assert.Equal(HttpStatusCode.Redirect, upload.StatusCode); Assert.Equal(draft, upload.Headers.Location!.OriginalString); }
-            Assert.Contains("PDF uploaded", await browser.GetTextAsync(draft));
+            Assert.Contains("Document uploaded", await browser.GetTextAsync(draft));
             envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.SenderEmail == email);
             var document = draft + "/document/" + envelope.PdfBlob;
             using (var download = await browser.GetAsync(document))

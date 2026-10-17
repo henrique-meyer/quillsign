@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 
 namespace QuillSign.Documents;
 
-// Internal backend only. The public upload handler continues using the PDF path.
+// Validated conversion and atomic persistence behind the sender upload handler.
 public sealed class DocxDocumentWorkflow(DocumentWorkflow documents, DocxPackageValidation packages, GotenbergDocxConverter converter)
 {
     public const string Mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
