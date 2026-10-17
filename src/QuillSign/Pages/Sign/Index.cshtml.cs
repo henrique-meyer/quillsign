@@ -25,7 +25,7 @@ public sealed class IndexModel(SignerAccess access,SignerPdfAccess pdf,SignerRec
         {
             _ = await pdf.PrepareAsync(User,Context,ct);
             if (await access.GetContextAsync(User,publicId,ct) is null) return NotFound();
-            Receipt = receipts.Create(Context.Identity);
+            Receipt = receipts.Create(Context);
         }
         catch (Exception e) when (e is DocumentRejectedException or RequestFailedException or IOException)
         { AccessError = "The saved PDF is unavailable or could not be verified. Consent is unavailable. Try again later or contact the sender."; Response.StatusCode = 503; }

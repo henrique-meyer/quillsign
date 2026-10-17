@@ -8,6 +8,7 @@ using QuillSign.Data;
 using QuillSign.Email;
 using QuillSign.Legal;
 using QuillSign.Storage;
+using QuillSign.Documents;
 
 namespace QuillSign.Signing;
 
@@ -37,7 +38,12 @@ public sealed class SignerInvitationFactory(SignerAccessOptions options,TimeProv
     }
 }
 public sealed record SignerReadContext(VerifiedSigner Identity,string Title,string SignerName,string? Role,
-    DocumentBlob Document,byte[] DocumentSha256,DisclosureSnapshot Disclosure,DateTimeOffset? ConsentAt = null,Guid? SignatureAdoptionId = null);
+    DocumentBlob Document,byte[] DocumentSha256,DisclosureSnapshot Disclosure,DateTimeOffset? ConsentAt = null,Guid? SignatureAdoptionId = null)
+{
+    // Keep the signed session identity unchanged for existing evidence bindings.
+    internal DateTimeOffset? RetentionDeadline {get;init;}
+    internal DateTimeOffset AccessExpiresAt=>RetentionDeadline is { } end && end<Identity.SessionExpiresAt ? end : Identity.SessionExpiresAt;
+}
 
 public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerAccessOptions options,TimeProvider time)
 {
@@ -61,12 +67,14 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
             token.DocumentId!=context.Identity.DocumentId || token.DocumentSha256 is not { Length:32 } || token.DisclosureSha256 is not { Length:32 } ||
             Convert.ToHexStringLower(token.DocumentSha256)!=context.Identity.DocumentHash || Convert.ToHexStringLower(token.DisclosureSha256)!=context.Identity.DisclosureHash ||
             !CryptographicOperations.FixedTimeEquals(token.TokenSha256,hash) || !string.Equals(token.Email,context.Identity.Email,StringComparison.OrdinalIgnoreCase)) return null;
+        context=await RetainedAsync(context,envelope!,true,ct);if(context is null)return null;
         var consumed = await db.AuthTokens.Where(x => x.Id == token.Id && x.UsedAt == null).ExecuteUpdateAsync(
             update => update.SetProperty(x => x.UsedAt,now),ct);
         if (consumed != 1) return null;
         await audit.AppendAsync(envelopeId,"link_opened",context.Identity.Email,ip,userAgent,ct,
             JsonSerializer.Serialize(new { signerId,tokenId = token.Id,documentId=context.Identity.DocumentId,documentSha256 = context.Identity.DocumentHash,
                 disclosureSha256 = context.Identity.DisclosureHash,authentication = "single_use_email_link" }),PartyType.Signer,signerId);
+        if(!IsLive(context))return null;
         await transaction.CommitAsync(ct); return context.Identity;
     }
 
@@ -76,6 +84,7 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var context = await GetLockedContextAsync(principal,publicId,ct,declinedConfirmation);
+        if(context is not null && !IsLive(context))return null;
         await transaction.CommitAsync(ct); return context;
     }
     // The caller owns the transaction, so scope validation and mutation share the same lock.
@@ -90,13 +99,16 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         if (context is null || identity.SessionExpiresAt <= time.GetUtcNow() || context.Identity.PublicId != identity.PublicId || context.Identity.Email != identity.Email ||
             context.Identity.DocumentId != identity.DocumentId || context.Identity.DocumentHash != identity.DocumentHash ||
             context.Identity.DisclosureHash != identity.DisclosureHash) return null;
-        return context with { Identity = identity };
+        return await RetainedAsync(context with {Identity=identity},envelope!,false,ct);
     }
     private IQueryable<Envelope> Locked(Guid id) => db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {id}");
     internal async Task<SignerReadContext?> GetEligibleLockedAsync(Guid envelopeId,Guid signerId,CancellationToken ct)
     {
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("A transaction is required.");
-        return await EligibleAsync(await Locked(envelopeId).AsNoTracking().SingleOrDefaultAsync(ct),signerId,ct);
+        var envelope=await Locked(envelopeId).AsNoTracking().SingleOrDefaultAsync(ct);
+        var context=await EligibleAsync(envelope,signerId,ct);if(context is null)return null;
+        try {return await RetainedAsync(context,envelope!,true,ct);}
+        catch(DocumentRetentionExpiredException) {return null;} // No new invitation after the cutoff.
     }
     private async Task<SignerReadContext?> EligibleAsync(Envelope? envelope,Guid signerId,CancellationToken ct,bool declinedConfirmation = false,bool finishConfirmation = false)
     {
@@ -131,7 +143,19 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
             !SignerCheckpointState.Same(f.SessionSha256,SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(identity))) ||
             identity.SessionExpiresAt<=time.GetUtcNow())return null;
         var disclosure=new DisclosureSnapshot(envelope.ErsdVersion,envelope.PublicId,envelope.Title,envelope.SenderEmail,envelope.ErsdText,envelope.ErsdSha256);
-        return ElectronicRecordDisclosure.Verify(disclosure) ? new(identity,envelope.Title,signer.FullName,signer.Role,
-            new(envelope.Id,DocumentBlobKind.Normalized,f.SourceObjectId),f.SourceSha256,disclosure,signer.ConsentAt,signer.SignatureAdoptionId) : null;
+        if(!ElectronicRecordDisclosure.Verify(disclosure))return null;
+        return await RetainedAsync(new(identity,envelope.Title,signer.FullName,signer.Role,
+            new(envelope.Id,DocumentBlobKind.Normalized,f.SourceObjectId),f.SourceSha256,disclosure,signer.ConsentAt,signer.SignatureAdoptionId),envelope,false,ct);
     }
+    private async Task<SignerReadContext?> RetainedAsync(SignerReadContext context,Envelope envelope,bool newSession,CancellationToken ct)
+    {
+        DateTimeOffset? deadline;
+        try {deadline=await DocumentRetentionAccess.ReadAsync(db,envelope,ct);}
+        catch(InvalidDataException) {throw new SignerRetentionEvidenceException();}
+        context=context with {RetentionDeadline=deadline};
+        if(!IsLive(context))return null;
+        return newSession ? context with {Identity=context.Identity with {SessionExpiresAt=context.AccessExpiresAt}} : context;
+    }
+    internal bool IsLive(SignerReadContext context)
+    {DocumentRetentionAccess.Check(context.RetentionDeadline,time);return context.Identity.SessionExpiresAt>time.GetUtcNow();}
 }

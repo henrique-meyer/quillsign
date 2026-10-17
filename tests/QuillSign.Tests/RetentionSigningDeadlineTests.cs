@@ -160,9 +160,9 @@ public sealed class RetentionSigningDeadlineTests(SqlDatabaseFixture fixture):IC
     internal sealed class Retained:IAsyncDisposable
     {
         public Shared H=null!;public DocumentRetentionSnapshot Policy=null!;internal SqlDatabaseFixture fixture=null!;
-        public static async Task<Retained> Create(SqlDatabaseFixture fixture,string requested="later",int? browserPort=null,bool browser=false)
+        public static async Task<Retained> Create(SqlDatabaseFixture fixture,string requested="later",int? browserPort=null,bool browser=false,Func<QuillSign.Signing.VerifiedSigner?>? syntheticSigner=null)
         {
-            var run=new Retained{fixture=fixture,H=await Shared.Create(fixture,browser:browser || browserPort is not null,browserPort:browserPort)};var h=run.H;var old=Guid.ParseExact(h.Envelope.PdfBlob!,"N");h.App.Services.GetRequiredService<DemoRetentionOptions>().PurgeAfterDays=7;
+            var run=new Retained{fixture=fixture,H=await Shared.Create(fixture,browser:browser || browserPort is not null,browserPort:browserPort,syntheticSigner:syntheticSigner)};var h=run.H;var old=Guid.ParseExact(h.Envelope.PdfBlob!,"N");h.App.Services.GetRequiredService<DemoRetentionOptions>().PurgeAfterDays=7;
             await using(var db=fixture.Open())
             {
                 var e=await db.Envelopes.SingleAsync(x=>x.Id==h.Envelope.Id);e.IsDemo=true;e.PdfBlob=null;e.PdfSha256=null;e.PageCount=null;e.PageSizesJson=null;e.PreviewConfirmedAt=null;

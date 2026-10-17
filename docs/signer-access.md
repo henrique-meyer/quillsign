@@ -22,6 +22,14 @@ QUILS-37 resolves that source from the [verified checkpoint chain](signer-checkp
 
 Frozen PDF objects use distinct immutable IDs in the existing private normalized container. Signer copy authorization permits only the bound envelope/object in that container; original, preview, other objects and other envelopes are denied. Sender identity remains required for writes/deletes. **Future handlers must obtain a current `SignerReadContext` before copying and verify actual PDF bytes against its expected hash before successful display/download.** Low-level blob authorization checks protected claim scope; it does not independently query current SQL state or establish content integrity.
 
+## Fixed demo retention during signing
+
+For an enrolled demo request, the shared [upload-retention policy](document-retention.md) adds an independent absolute access limit. Full token or session/party/source/disclosure authorization happens before private policy reads. Missing or inconsistent enrolled policy/provenance fails closed; ordinary and historical unenrolled requests are not silently enrolled.
+
+Newly redeemed sessions, PDF-access receipts, adoption previews and review candidates cannot outlive the fixed cutoff. Existing protected session identities retain their exact original serialization so consent/adoption/Finish evidence remains verifiable; every public use independently checks the verified retention limit. Public mutation boundaries recheck time after audit/work preparation, and buffered document/asset reads recheck context before returning verified bytes. At the exact cutoff, authenticated signer pages, accepted confirmation and own-checkpoint downloads return a private generic 410. Unverifiable retention evidence returns a private generic 503; unknown identities keep their existing behavior. Responses include no document or party metadata and retain no-store/no-referrer headers.
+
+Accepted signing never restores edits. Trusted checkpoint/history workers retain their existing narrow system capabilities after original signer-session expiry and do not impersonate a signer. This change adds no purge, completed-recipient retrieval guard or worker-publication behavior. Downloads already started and copies held by parties cannot be recalled.
+
 ## Integration still required
 
 The mail worker must create/persist protected invitation state at actual dispatch, handle retries/resends and update notification status without overwriting a later signer state. Add rate limits and a safe landing/redemption flow before exposing a public invitation endpoint. Keep tokens out of request logs/referrers and redirect to clean URLs after redemption.
