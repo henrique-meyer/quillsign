@@ -884,6 +884,18 @@ Timestamp precision clarification: capture the upload retention start at canonic
 
 Validation: All 1,332 combined local .NET tests and all exact-head CI checks pass. The 54 focused retention/upload/persistence/permission cases cover subsecond and non-UTC capture, concurrent uploads, audit-boundary expiry, lost acknowledgements and recomputed-evidence tampering. Real synthetic desktop upload/replacement, keyboard preview confirmation and mobile deadline rejection pass with fixed snapshots, preserved saved content/confirmation and no horizontal overflow. Model, Node, pinned vendor/MIT distributions, 79 Markdown links and staged/full-history secrets pass. PR #67 merged and native Jira Done was verified in the same pass. Hosted settings and resources remain unchanged.
 
+## QUILS-64: Add a bounded internal DOCX conversion client for Gotenberg
+
+Status: Done. Merged as PR #68; native Jira Done. The internal DOCX client is complete; public upload remains PDF-only.
+
+Add the internal DOCX-to-PDF client for the agreed non-AI conversion workflow using the existing Gotenberg/LibreOffice sidecar. Validate an explicit private operator-configured origin, fixed conversion route, bounded input/output and total request time, cancellation, disabled redirects and safe generic errors. Never accept a user-controlled URL/host, log response bodies or automatically retry an uncertain conversion. Preserve original bytes/hash and normalize/validate the returned PDF through current PDFsharp limits before returning exact conversion bytes and page geometry. Construction and scanner reads perform no network or SQL work.
+
+Exercise a synthetic multi-page DOCX with the real local Gotenberg service, plus fake/local malformed, oversized, wrong-media, timeout, cancellation and redirect responses. Keep private endpoints in ignored configuration. Document remaining intake, package-security and sender-preview integration honestly; do not advertise new public formats or enqueue unsupported Conversion work. Gotenberg's internal ingress/no-egress hosting requirement remains separate from the client.
+
+Validate meaningful regression/model/vendor/license/secrets, commit/push/open/attach/pass exact-head checks/merge and native Jira Done in the same pass. No Azure/AWS changes, hosted settings, real documents, live email/TSA, purchases, deferred AI or v1 scope expansion. Keep dependencies permissive and PDFsharp/MigraDoc MIT 6.2.4.
+
+Validation: All 1,365 combined local .NET tests and all 12 exact-head CI checks pass. All 33 converter cases cover private-origin validation, exact normalized hashes, input/body deadlines, safe errors and actual redirect refusal. The real pinned local Gotenberg service converted a generated two-page synthetic DOCX; both PDF pages were rendered and visually inspected with correct geometry/hashes. Model, Node, pinned vendors/MIT licenses, Markdown links and staged/full-history secret checks pass. PR #68 merged and native Jira Done was verified in the same pass. Public formats, hosted settings and resources remain unchanged.
+
 ## QUILS-63: Align final packet retention with the frozen upload deadline
 
 Status: In Progress. Depends on merged QUILS-62 (PR #67); merged Send/expiry scheduling is integrated.
