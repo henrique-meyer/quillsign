@@ -2,6 +2,8 @@
 
 This is a storage dependency, not automatic document deletion. There is no public endpoint, registered purge handler or maintenance schedule. It does not remove SQL transaction/contact/evidence data or enable hosted maintenance. [Retention enrollment](document-retention.md) still supplies the immutable first-upload decision.
 
+[Authenticated recovery markers](demo-purge-recovery.md) now support explicit storage-only retries through the bounded adapter. Actual scheduling and private SQL deletion remain a following coordinator slice.
+
 `DemoPurgeAuthority.AuthorizeLockedAsync` requires a caller-owned SQL transaction, a genuine currently owned `Purge` work lease and its exact canonical envelope/policy payload. It locks the parent before the work row, verifies the saved upload policy and audit provenance, rejects ordinary and unenrolled records, and requires the saved UTC deadline to have arrived. Environment changes cannot extend or replace that decision. The resulting sealed storage scope expires at the earlier of two minutes and the work lease; it is separate from all sender, signer and final-file read/write identities.
 
 `AzureEnvelopePurgeStore.SweepAsync` accepts that scope and a maximum of 1–128 inventory entries. It visits only the exact opaque envelope prefix in `originals`, `normalized`, `previews` and `final`. This includes obsolete/replaced assets and completion subpaths independently of current SQL file references. Continuations remain bound to the envelope/policy and area; inventory names and exact ETags are checked before constructing object clients. It never lists the whole container, reads document bodies, creates resources or deletes containers.

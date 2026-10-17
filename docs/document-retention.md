@@ -1,6 +1,6 @@
 # Fixed document retention
 
-The [bounded purge storage dependency](demo-purge-storage.md) provides exact per-envelope inventory/deletion authority. It is not registered or scheduled and does not yet remove SQL records; durable purge coordination remains required.
+The [bounded purge storage dependency](demo-purge-storage.md) provides exact per-envelope inventory/deletion authority. [Authenticated storage-only recovery](demo-purge-recovery.md) can retry explicit marker-backed maintenance without SQL. Automatic scheduling and private SQL cleanup remain required.
 
 `Demo__PurgeAfterDays` is an optional positive integer from 1 through 36500. It remains unset in examples. Configure actual deployment values privately; the selected demo policy is seven days from the first successful document upload.
 
