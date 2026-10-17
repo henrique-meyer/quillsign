@@ -113,6 +113,19 @@ public sealed class SenderVoidTests(SqlDatabaseFixture fixture) : IClassFixture<
     }
 
     [Fact]
+    public async Task Concurrent_Finish_and_void_preserve_any_accepted_act_but_prevent_later_progression()
+    {
+        await using var run=await SigningRun.Create(fixture,finishLast:false);var e=await run.Refresh();var calls=run.H.Sender.Calls;var blobs=run.H.Blobs.Created.Count;
+        var voiding=Void(run.H,e,run.Sender);var finishing=run.Use((SignerFinish s)=>s.AcceptAsync(run.LastSigner,e.PublicId,run.LastReviewReceipt,true,SignerFinishStatement.Version,null,null));
+        await Task.WhenAll(voiding,finishing);Assert.Equal(SenderVoidOutcome.Voided,(await voiding).Outcome);var finish=(await finishing).Outcome;Assert.True(finish is SignerFinishOutcome.Accepted or SignerFinishOutcome.InvalidContext);
+        Assert.Equal(EnvelopeStatus.Voided,(await Load(e.Id)).Status);await using var db=fixture.Open();Assert.Equal(1,await db.Signers.CountAsync(x=>x.EnvelopeId==e.Id && x.Status==SignerStatus.Signed));
+        Assert.Equal(finish==SignerFinishOutcome.Accepted ? 1 : 0,await db.SignerFinishAcceptances.CountAsync(x=>x.EnvelopeId==e.Id && x.ProcessedAt==null));
+        if(finish==SignerFinishOutcome.Accepted)Assert.True(await run.H.Once());
+        Assert.Equal(calls,run.H.Sender.Calls);Assert.Equal(blobs,run.H.Blobs.Created.Count);Assert.False(await db.CompletionPublicationResults.AnyAsync(x=>x.EnvelopeId==e.Id));
+        Assert.Equal(1,await db.AuditEvents.CountAsync(x=>x.EnvelopeId==e.Id && x.Event=="voided"));
+    }
+
+    [Fact]
     public async Task Previously_prepared_seals_are_retained_and_void_prevents_final_publication()
     {
         await using var run=await CompletionSealOutputTests.Run.Create(fixture);_ = await run.Prepare();var e=await run.Signing.Refresh();var before=await Fingerprint(e.Id);var requests=run.Seal.Requests;var deleted=run.Storage.Deleted.Count;
