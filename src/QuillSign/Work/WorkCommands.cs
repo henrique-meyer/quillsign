@@ -16,16 +16,22 @@ public static class WorkCommands
         var voids=args.Length==2 && args[0]=="resume-void-notifications" && Guid.TryParseExact(args[1],"N",out _);
         var scheduleExpiry=args.Length==2 && args[0]=="resume-signing-expiry" && Guid.TryParseExact(args[1],"N",out _);
         var expiry=args.Length is >=1 and <=3 && args[0]=="expire";
+        var purgeRecovery=args.Length is 1 or 2 && args[0]=="purge-recover";var purgeBatch=8;
+        if(purgeRecovery && args.Length==2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out purgeBatch) || purgeBatch is <1 or >32))purgeRecovery=false;
         var batch=32;
         if(expiry && args.Length>=2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out batch) || batch is <1 or >64))expiry=false;
-        if (!republish && !completion && !voids && !expiry && !scheduleExpiry && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
-        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications|resume-signing-expiry <32-character-envelope-id>"); return 2; }
+        if (!republish && !completion && !voids && !expiry && !scheduleExpiry && !purgeRecovery && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
+        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work purge-recover [1-32] OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications|resume-signing-expiry <32-character-envelope-id>"); return 2; }
         try
         {
             var builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders(); // CLI failures must not expose private payloads/endpoints.
-            builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment, registerHandlers: args[0] != "recover");
-            if (args[0] != "recover")
+            builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment, registerHandlers: args[0] != "recover" && !purgeRecovery);
+            if(purgeRecovery) {
+                builder.Services.AddQuillSignStorage(builder.Configuration,builder.Environment);
+                builder.Services.AddDemoPurgeRecovery();
+            }
+            else if (args[0] != "recover")
             {
                 builder.Services.AddRazorPages();
                 builder.Services.AddQuillSignDatabase(builder.Configuration);
@@ -35,9 +41,15 @@ public static class WorkCommands
             if (args[0] == "listen" && !builder.Environment.IsDevelopment()) throw new InvalidOperationException("Listen is Development-only.");
             using var app = builder.Build();
             if (!expiry && !app.Services.GetRequiredService<WorkOptions>().Enabled) throw new InvalidOperationException("Durable work is disabled.");
-            using var timeout = new CancellationTokenSource(args[0] == "recover" ? TimeSpan.FromSeconds(50) : TimeSpan.FromSeconds(240));
+            using var timeout = new CancellationTokenSource(args[0] == "recover" || purgeRecovery ? TimeSpan.FromSeconds(50) : TimeSpan.FromSeconds(240));
             if (args[0] == "listen") timeout.CancelAfter(Timeout.InfiniteTimeSpan);
             Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; timeout.Cancel(); };
+            if(purgeRecovery) {
+                var result=await app.Services.GetRequiredService<DemoPurgeRecovery>().RecoverBatchAsync(purgeBatch,timeout.Token);
+                Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new {operation="work-purge-recover",status=result.Failed>0 ? "partial" : result.Pending>0 || result.Busy>0 ? "pending" : "ok",
+                    result.Examined,result.Swept,result.Busy,result.Failed,result.Deleted,result.Protected,result.Changed,result.Pending,result.More}));
+                return result.Failed==0 ? 0 : 1;
+            }
             if(expiry) {
                 await using var scope=app.Services.CreateAsyncScope();
                 var result=await scope.ServiceProvider.GetRequiredService<SigningExpiry>().RunBatchAsync(batch,args.Length==3 ? args[2] : null,timeout.Token);
