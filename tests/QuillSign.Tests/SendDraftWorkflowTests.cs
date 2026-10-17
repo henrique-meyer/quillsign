@@ -265,9 +265,19 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         public Task DeleteAsync(ClaimsPrincipal p,DocumentBlob b,CancellationToken ct) { Deleted.Add(b); return inner.DeleteAsync(p,b,ct); } }
     internal sealed class Faults : DbTransactionInterceptor, ISaveChangesInterceptor
     {
-        public bool FailCommit,FailAudit;
-        public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData e,CancellationToken ct=default) { if(FailCommit)throw new IOException("Synthetic lost commit acknowledgement"); return Task.CompletedTask; }
-        public ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e,InterceptionResult<int> result,CancellationToken ct=default) { if(FailAudit && e.Context!.ChangeTracker.Entries<AuditEvent>().Any(x=>x.State==EntityState.Added))throw new DbUpdateException("Synthetic audit failure"); return ValueTask.FromResult(result); }
+        public bool FailCommit,FailAudit,RejectCommit; private string? target; private bool armed;
+        public string? Event {get=>target;set {target=value;armed=false;}}
+        public Func<QuillSignDbContext,Task>? BeforeAudit;
+        public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData e,CancellationToken ct=default) { if(FailCommit && (Event is null || armed)) {armed=false;throw new IOException("Synthetic lost commit acknowledgement");} return Task.CompletedTask; }
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction,TransactionEventData e,InterceptionResult result,CancellationToken ct=default) {
+            if(RejectCommit && (Event is null || armed)) {armed=false;throw new IOException("Synthetic rejected commit");}return ValueTask.FromResult(result);
+        }
+        public async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData e,InterceptionResult<int> result,CancellationToken ct=default) {
+            if(e.Context!.ChangeTracker.Entries<AuditEvent>().Any(x=>x.State==EntityState.Added && (Event is null || x.Entity.Event==Event))) {
+                armed=true;if(BeforeAudit is not null)await BeforeAudit((QuillSignDbContext)e.Context);
+                if(FailAudit)throw new DbUpdateException("Synthetic audit failure");
+            }return result;
+        }
     }
     internal sealed class Signals(IWorkSignals inner) : IWorkSignals
     { public bool FailHint,FailPublish; public int Published;

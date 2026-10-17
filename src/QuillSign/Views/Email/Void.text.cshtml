@@ -1,0 +1,14 @@
+@model QuillSign.Email.VoidEmailModel
+@{ Layout = null; }
+QuillSign
+
+Signing request voided: @Html.Raw(Model.Title)
+The sender voided this request at @Model.VoidedAt.ToString("u") (UTC).
+Further signing has stopped. Records of earlier actions are retained; this notice does not change those actions or provide access to the document.
+@if(Model.Reason is { } reason) {<text>
+Sender's reason:
+@Html.Raw(reason)
+</text>}
+@if(Model.IsDemo) {<text>
+Demo instance. No uptime or retention guarantees. Not for legally significant documents.
+</text>}

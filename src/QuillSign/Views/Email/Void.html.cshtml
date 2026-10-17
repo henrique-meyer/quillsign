@@ -1,0 +1,9 @@
+@model QuillSign.Email.VoidEmailModel
+@{ Layout = null; }
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Signing request voided</title></head>
+<body><p>QuillSign</p><h1>Signing request voided</h1><h2>@Model.Title</h2>
+<p>The sender voided this request at @Model.VoidedAt.ToString("u") (UTC).</p>
+<p>Further signing has stopped. Records of earlier actions are retained; this notice does not change those actions or provide access to the document.</p>
+@if(Model.Reason is { } reason) {<h3>Sender's reason</h3><p style="white-space:pre-wrap">@reason</p>}
+@if(Model.IsDemo) {<p>Demo instance. No uptime or retention guarantees. Not for legally significant documents.</p>}
+</body></html>

@@ -23,7 +23,7 @@ public sealed class SenderVoidTests(SqlDatabaseFixture fixture) : IClassFixture<
         Assert.Equal(EnvelopeStatus.Voided,(await Load(e.Id)).Status);Assert.Equal(before,await Fingerprint(e.Id));Assert.Equal(blobs,h.Blobs.Created.Count);Assert.Empty(h.Blobs.Deleted);
         Assert.True(await h.Once());Assert.Equal(0,h.Sender.Calls);
         await using var db=fixture.Open();Assert.False(await db.AuthTokens.AnyAsync(x=>x.EnvelopeId==e.Id && x.Purpose==TokenPurpose.SignerAccess));
-        Assert.Equal(EmailStatus.Failed,(await db.EmailOutbox.SingleAsync(x=>x.EnvelopeId==e.Id)).Status);
+        Assert.Equal(EmailStatus.Failed,(await db.EmailOutbox.SingleAsync(x=>x.EnvelopeId==e.Id && x.Template=="signer-invitation")).Status);
         var entry=await db.AuditEvents.SingleAsync(x=>x.EnvelopeId==e.Id && x.Event=="voided");Assert.Equal(PartyType.Sender,entry.ActorType);Assert.Equal(e.SenderEmail,entry.ActorEmail);Assert.Equal(AuditHash.Compute(entry),entry.Hash);
         using var scope=h.App.Services.CreateScope();var status=await scope.ServiceProvider.GetRequiredService<SenderSentStatus>().GetAsync(h.Principal,e.PublicId);Assert.Equal("Voided",status!.State);
     }
