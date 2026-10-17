@@ -44,7 +44,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
                 return new(null, null, true);
             }
         }
-        if (row.Attempts >= options.MaximumAttempts)
+        if (row.Kind!=WorkKind.Purge && row.Attempts >= options.MaximumAttempts)
         {
             row.Status = WorkStatus.Failed; row.LastError = "attempts-exhausted";
             row.LeaseOwner = null; row.LeaseExpiresAt = null;
@@ -56,7 +56,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
             return new(null, null, true);
         }
         row.Status = WorkStatus.Leased;
-        row.Attempts++;
+        row.Attempts=row.Kind==WorkKind.Purge && row.Attempts==int.MaxValue ? int.MaxValue : row.Attempts+1;
         row.LeaseOwner = Guid.NewGuid();
         row.LeaseExpiresAt = now.AddSeconds(options.LeaseSeconds);
         await db.SaveChangesAsync(cancellationToken);
@@ -69,7 +69,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
     public async Task<DateTimeOffset?> FinishAsync(WorkLease lease, WorkResult result, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
-        var retry = result.Outcome == WorkOutcome.Retry && lease.Attempt < options.MaximumAttempts;
+        var retry = result.Outcome == WorkOutcome.Retry && (lease.Kind==WorkKind.Purge || lease.Attempt < options.MaximumAttempts);
         var status = retry ? WorkStatus.Queued : result.Outcome == WorkOutcome.Completed ? WorkStatus.Completed : WorkStatus.Failed;
         var at = retry ? now + Backoff(lease.Attempt) : now;
         var code = result.Outcome == WorkOutcome.Retry && !retry ? "attempts-exhausted" : result.Code;

@@ -24,7 +24,7 @@ public sealed class PublicDocumentIntakeTests(SqlDatabaseFixture fixture):IClass
         page=await Page(b);Assert.Contains("Review needed",page);Assert.DoesNotContain("Set up signers",page);
         using(var confirm=await b.Post(b.Path+"?handler=Confirm",new(){["__RequestVerificationToken"]=SignaturePageTests.Browser.Token(page),["Version"]=SenderSendPageTests.Flow.Value(page,"Version"),["DocumentId"]=state.PdfBlob!,["PreviewMatches"]="true"}))Assert.Equal(HttpStatusCode.Redirect,confirm.StatusCode);
         Assert.Contains("Set up signers",await Page(b));await using var db=fixture.Open();Assert.False(await db.Fields.AnyAsync(x=>x.EnvelopeId==state.Id));
-        Assert.Equal(UploadRetention.Digest(b.run.Policy),UploadRetention.Digest(await db.DocumentRetentionSnapshots.AsNoTracking().SingleAsync(x=>x.EnvelopeId==state.Id)));Assert.False(await db.EmailOutbox.AnyAsync(x=>x.EnvelopeId==state.Id));Assert.False(await db.WorkItems.AnyAsync(x=>x.EnvelopeId==state.Id));
+        Assert.Equal(UploadRetention.Digest(b.run.Policy),UploadRetention.Digest(await db.DocumentRetentionSnapshots.AsNoTracking().SingleAsync(x=>x.EnvelopeId==state.Id)));Assert.False(await db.EmailOutbox.AnyAsync(x=>x.EnvelopeId==state.Id));var purge=Assert.Single(await db.WorkItems.AsNoTracking().Where(x=>x.EnvelopeId==state.Id).ToArrayAsync());Assert.Equal(WorkKind.Purge,purge.Kind);Assert.Equal(b.run.Policy.DeleteAfter,purge.AvailableAt);
         Assert.Equal(kind=="docx" ? 1 : 0,provider.Calls);
     }
 

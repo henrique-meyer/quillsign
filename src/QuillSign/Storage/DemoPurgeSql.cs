@@ -17,7 +17,7 @@ public sealed class DemoPurgeSql(QuillSignDbContext db,DemoPurgeRecovery recover
         if(db.Database.CurrentTransaction is not null || db.ChangeTracker.HasChanges() || lease.Kind!=WorkKind.Purge ||
             lease.Id==Guid.Empty || lease.Owner==Guid.Empty || lease.Attempt<1 || lease.Until<=time.GetUtcNow())throw Invalid();
         var located=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==lease.Id,ct)??throw Invalid();
-        var binding=Parse(located.PayloadJson);
+        var binding=ReadPayload(located.PayloadJson);
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
         var parent=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={binding.Id}")
             .AsNoTracking().SingleOrDefaultAsync(ct);
@@ -56,8 +56,9 @@ public sealed class DemoPurgeSql(QuillSignDbContext db,DemoPurgeRecovery recover
         db.ChangeTracker.Clear();
         return removed;
     }
-    private sealed record Binding(Guid Id,string Digest,DateTimeOffset Deadline);
-    private static Binding Parse(string json)
+    internal sealed record Binding(Guid Id,string Digest,DateTimeOffset Deadline);
+    // A validated description, never deletion authority on its own.
+    internal static Binding ReadPayload(string json)
     {
         if(json.Length>1024)throw Invalid();
         try

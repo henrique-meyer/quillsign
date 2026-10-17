@@ -101,6 +101,13 @@ internal sealed class SealFixtures : IAsyncDisposable
         Timestamps.Dispose(); await App.DisposeAsync(); Root.Dispose(); Tsa.Dispose(); Seal.Dispose(); BadEku.Dispose(); RootKey.Dispose(); TsaKey.Dispose();
         File.Delete(Path.Combine(directory,"synthetic.pfx")); File.Delete(Path.Combine(directory,"synthetic-root.cer")); Directory.Delete(directory,false);
     }
-    public sealed class Clock : TimeProvider { private DateTimeOffset now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()); public override DateTimeOffset GetUtcNow()=>now; public void Advance(TimeSpan interval)=>now+=interval; }
+    public sealed class Clock : TimeProvider
+    {
+        private DateTimeOffset now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        private global::System.Diagnostics.Stopwatch? elapsed;
+        public override DateTimeOffset GetUtcNow()=>now+(elapsed?.Elapsed??TimeSpan.Zero);
+        public void Advance(TimeSpan interval)=>now+=interval;
+        public void TrackElapsed()=>elapsed??=global::System.Diagnostics.Stopwatch.StartNew();
+    }
     public sealed class CountingProvider(ISealCertificateProvider inner) : ISealCertificateProvider { public int Calls; public Task<SealCertificateMaterial> AcquireAsync(CancellationToken ct) { Calls++; return inner.AcquireAsync(ct); } }
 }

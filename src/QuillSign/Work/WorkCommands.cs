@@ -15,13 +15,14 @@ public static class WorkCommands
         var completion=args.Length==2 && args[0]=="resume-completion-notifications" && Guid.TryParseExact(args[1],"N",out _);
         var voids=args.Length==2 && args[0]=="resume-void-notifications" && Guid.TryParseExact(args[1],"N",out _);
         var scheduleExpiry=args.Length==2 && args[0]=="resume-signing-expiry" && Guid.TryParseExact(args[1],"N",out _);
+        var schedulePurge=args.Length==2 && args[0]=="resume-demo-purge" && Guid.TryParseExact(args[1],"N",out _);
         var expiry=args.Length is >=1 and <=3 && args[0]=="expire";
         var purgeRecovery=args.Length is 1 or 2 && args[0]=="purge-recover";var purgeBatch=8;
         if(purgeRecovery && args.Length==2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out purgeBatch) || purgeBatch is <1 or >32))purgeRecovery=false;
         var batch=32;
         if(expiry && args.Length>=2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out batch) || batch is <1 or >64))expiry=false;
-        if (!republish && !completion && !voids && !expiry && !scheduleExpiry && !purgeRecovery && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
-        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work purge-recover [1-32] OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications|resume-signing-expiry <32-character-envelope-id>"); return 2; }
+        if (!republish && !completion && !voids && !expiry && !scheduleExpiry && !schedulePurge && !purgeRecovery && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
+        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work purge-recover [1-32] OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications|resume-signing-expiry|resume-demo-purge <32-character-envelope-id>"); return 2; }
         try
         {
             var builder = WebApplication.CreateBuilder();
@@ -58,7 +59,11 @@ public static class WorkCommands
             }
             var signals = app.Services.GetRequiredService<IWorkSignals>();
             var count = 0;
-            if(scheduleExpiry) {
+            if(schedulePurge) {
+                await using var scope=app.Services.CreateAsyncScope();
+                count=await scope.ServiceProvider.GetRequiredService<DemoPurgeJobs>().ResumeAsync(Guid.ParseExact(args[1],"N"),timeout.Token) is null ? 0 : 1;
+            }
+            else if(scheduleExpiry) {
                 await using var scope=app.Services.CreateAsyncScope();
                 count=await scope.ServiceProvider.GetRequiredService<SigningExpiryJobs>().ResumeAsync(Guid.ParseExact(args[1],"N"),timeout.Token) is null ? 0 : 1;
             }

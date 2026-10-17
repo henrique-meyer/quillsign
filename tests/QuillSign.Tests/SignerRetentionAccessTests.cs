@@ -101,9 +101,9 @@ public sealed class SignerRetentionAccessTests(SqlDatabaseFixture fixture):IClas
     {
         public Shared H=null!;public DocumentRetentionSnapshot? Policy;public DateTimeOffset Cutoff;public VerifiedSigner Identity=null!;public SenderSendPageTests.Flow? Flow;private SqlDatabaseFixture fixture=null!;private int? port;
         public string PublicId=>H.Envelope.PublicId;public string Signing=>"/sign/"+PublicId;public ClaimsPrincipal Principal=>SignerAccessConfiguration.Principal(Identity);
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool enrolled=true,bool demo=true,int? port=null)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool enrolled=true,bool demo=true,int? port=null,DateTimeOffset? initialTime=null)
         {
-            var r=new Run{fixture=fixture,port=port};if(enrolled){var retained=await RetentionSigningDeadlineTests.Retained.Create(fixture,browser:true,browserPort:port,syntheticSigner:()=>r.Identity);r.H=retained.H;r.Policy=retained.Policy;r.Cutoff=retained.Policy.DeleteAfter;}else{r.H=await Shared.Create(fixture,browser:true,browserPort:port,syntheticSigner:()=>r.Identity);r.Cutoff=r.H.Clock.GetUtcNow().AddDays(7);}
+            var r=new Run{fixture=fixture,port=port};if(enrolled){var retained=await RetentionSigningDeadlineTests.Retained.Create(fixture,browser:true,browserPort:port,syntheticSigner:()=>r.Identity,initialTime:initialTime);r.H=retained.H;r.Policy=retained.Policy;r.Cutoff=retained.Policy.DeleteAfter;}else{r.H=await Shared.Create(fixture,browser:true,browserPort:port,syntheticSigner:()=>r.Identity);r.Cutoff=r.H.Clock.GetUtcNow().AddDays(7);}
             var h=r.H;var frozen=new DocumentBlob(h.Envelope.Id,DocumentBlobKind.Normalized,Guid.NewGuid());using(var bytes=new MemoryStream(h.Source,false))await h.Blobs.WriteAsync(h.Principal,frozen,bytes,bytes.Length,default);
             await using(var db=fixture.Open())
             {

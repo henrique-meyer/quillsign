@@ -10,6 +10,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Sender;
 using QuillSign.Storage;
+using QuillSign.Work;
 
 namespace QuillSign.Tests;
 
@@ -191,6 +192,8 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
         public FailCommit CommitFailure { get; } = new();
         public DemoRetentionOptions Retention {get;}=new();
         public TimeProvider Time {get;set;}=TimeProvider.System;
+        public IWorkSignals PurgeSignals {get;set;}=new PurgeTestSignals();
+        public DemoPurgeJobs PurgeJobs(QuillSignDbContext db)=>new(db,()=>PurgeSignals,new(){Enabled=true},Time);
         public static async Task<Harness> CreateAsync(SqlDatabaseFixture fixture,bool demo=false)
         {
             var run = new Harness(fixture);
@@ -202,7 +205,7 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
         { await using var db = fixture.Open(); return await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == Id); }
         public Task<T> WithAsync<T>(Func<DocumentWorkflow, Task<T>> operation) => WithDatabaseAsync(db=> {
             var options = new DocumentOptions();
-            return operation(new(db, Store, new(options), options, new(db, Time), Time, NullLogger<DocumentWorkflow>.Instance,Retention));
+            return operation(new(db, Store, new(options), options, new(db, Time), Time, NullLogger<DocumentWorkflow>.Instance,Retention,PurgeJobs(db)));
         });
         public async Task<T> WithDatabaseAsync<T>(Func<QuillSignDbContext,Task<T>> operation)
         {
@@ -219,6 +222,19 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
         }
         public async ValueTask DisposeAsync()
         { foreach (var blob in Store.Created) await Store.Inner.DeleteAsync(Sender, blob); }
+    }
+    internal sealed class PurgeTestSignals:IWorkSignals
+    {
+        public Dictionary<Guid,DateTimeOffset> Hints=[];public List<Guid> Published=[];
+        public Task PutHintAsync(Guid id,DateTimeOffset due,CancellationToken ct){ct.ThrowIfCancellationRequested();Hints[id]=due;return Task.CompletedTask;}
+        public Task RemoveHintAsync(Guid id,CancellationToken ct){Hints.Remove(id);return Task.CompletedTask;}
+        public Task<DateTimeOffset?> ReadDueAsync(Guid id,CancellationToken ct)=>Task.FromResult<DateTimeOffset?>(Hints.TryGetValue(id,out var due) ? due:null);
+        public Task PublishAsync(Guid id,TimeSpan delay,CancellationToken ct){ct.ThrowIfCancellationRequested();Published.Add(id);return Task.CompletedTask;}
+        public Task<WorkDelivery?> ReceiveAsync(CancellationToken ct)=>Task.FromResult<WorkDelivery?>(null);
+        public Task DeferAsync(WorkDelivery delivery,TimeSpan delay,CancellationToken ct)=>Task.CompletedTask;
+        public Task AcknowledgeAsync(WorkDelivery delivery,CancellationToken ct)=>Task.CompletedTask;
+        public Task<int> RecoverAsync(DateTimeOffset now,CancellationToken ct)=>Task.FromResult(0);
+        public Task VerifyAsync(CancellationToken ct)=>Task.CompletedTask;
     }
     internal sealed class FaultStore(IBlobStore inner) : IBlobStore
     {
@@ -255,6 +271,9 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
     internal sealed class FailCommit : DbTransactionInterceptor
     {
         public bool Enabled { get; set; }
+        public bool Reject {get;set;}
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction,TransactionEventData data,InterceptionResult result,CancellationToken ct=default)
+        {if(Reject)throw new IOException("Synthetic rejected upload commit.");return ValueTask.FromResult(result);}
         public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData, CancellationToken ct = default)
         { if (Enabled) throw new IOException("Synthetic lost commit acknowledgement."); return Task.CompletedTask; }
     }

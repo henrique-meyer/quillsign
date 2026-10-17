@@ -4,11 +4,12 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Storage;
+using QuillSign.Work;
 
 namespace QuillSign.Documents;
 
 public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, PdfValidation pdf, DocumentOptions options,
-    AuditWriter audit, TimeProvider time, ILogger<DocumentWorkflow> logger,DemoRetentionOptions? retentionOptions=null)
+    AuditWriter audit, TimeProvider time, ILogger<DocumentWorkflow> logger,DemoRetentionOptions? retentionOptions=null,DemoPurgeJobs? purgeJobs=null)
 {
     public static FileStream TemporaryFile() => new(Path.Combine(Path.GetTempPath(), "quillsign-" + Guid.NewGuid().ToString("N")),
         FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
@@ -104,6 +105,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
         var originalBlob = new DocumentBlob(before.Id, DocumentBlobKind.Original, Guid.NewGuid());
         var normalizedBlob = new DocumentBlob(before.Id, DocumentBlobKind.Normalized, Guid.NewGuid());
         var commitStarted = false;
+        Guid? purgeId=null;DateTimeOffset? purgeDue=null;
         try
         {
             await storage.WriteAsync(sender, originalBlob, original, original.Length, ct);
@@ -113,6 +115,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             if (envelope is null) throw new DocumentConflictException();
             Version(envelope, expectedVersion);
             var retention=await new UploadRetention(db,retentionOptions ?? new(),time).PrepareLockedAsync(envelope,originalBlob.ObjectId,originalHash,normalizedBlob.ObjectId,normalizedHash,ct);
+            var newlyEnrolled=retention is not null && db.Entry(retention).State==EntityState.Added;
             var previous = envelope.PdfBlob;
             envelope.Title = safeName;
             envelope.OriginalBlob = originalBlob.ObjectId.ToString("N"); envelope.OriginalSha256 = originalHash; envelope.OriginalMime = originalMime;
@@ -127,6 +130,10 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
                     pageCount=pages.Count,previousDocument=previous,retentionSha256=retention is null ? null : UploadRetention.Digest(retention),conversion=provenance});
             await audit.AppendAsync(envelope.Id, previous is null ? "document_uploaded" : "document_replaced", envelope.SenderEmail, ip, userAgent, ct, data);
             await db.SaveChangesAsync(ct);
+            if(retention is not null) {
+                if(purgeJobs is null)throw new DocumentRejectedException("This demo's document retention service is not ready.");
+                purgeId=await purgeJobs.PrepareLockedAsync(envelope.Id,newlyEnrolled,ct);purgeDue=retention.DeleteAfter;
+            }
             UploadRetention.CheckDeadline(retention,time.GetUtcNow());
             commitStarted = true;
             await transaction.CommitAsync(ct);
@@ -137,6 +144,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             if (!commitStarted) { await CleanupAsync(sender, originalBlob); await CleanupAsync(sender, normalizedBlob); }
             throw;
         }
+        if(purgeId is Guid scheduled)await purgeJobs!.PublishAsync(scheduled,purgeDue!.Value,ct);
         await CleanupReferenceAsync(sender, before.Id, DocumentBlobKind.Original, before.OriginalBlob);
         await CleanupReferenceAsync(sender, before.Id, DocumentBlobKind.Normalized, before.PdfBlob);
         return true;

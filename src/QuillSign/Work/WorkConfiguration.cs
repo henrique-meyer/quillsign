@@ -4,6 +4,7 @@ using Azure.Storage.Queues;
 using QuillSign.Signing;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using QuillSign.Sealing;
+using QuillSign.Storage;
 
 namespace QuillSign.Work;
 
@@ -60,6 +61,10 @@ public static class WorkConfiguration
             services.AddScoped<DeclineNotificationWriter>();
             services.AddScoped<WorkStore>();
             services.AddScoped<WorkProcessor>();
+            services.AddDemoPurgeRecovery();services.AddScoped<QuillSign.Storage.DemoPurgeSql>();services.AddScoped<DemoPurgeJobs>();
+            services.AddScoped<Func<QuillSign.Storage.DemoPurgeSql>>(sp=>()=>sp.GetRequiredService<QuillSign.Storage.DemoPurgeSql>());
+            services.AddScoped<Func<QuillSign.Storage.DemoPurgeRecovery>>(sp=>()=>sp.GetRequiredService<QuillSign.Storage.DemoPurgeRecovery>());
+            services.AddScoped<IWorkHandler,DemoPurgeHandler>();
             services.AddScoped<EmailPayloadProtection>();
             services.AddScoped<EmailOutboxWriter>();
             services.AddScoped<IWorkHandler, EmailWorkHandler>();

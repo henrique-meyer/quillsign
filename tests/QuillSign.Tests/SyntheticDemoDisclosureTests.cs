@@ -6,6 +6,7 @@ using QuillSign.Documents;
 using QuillSign.Legal;
 using QuillSign.Sender;
 using QuillSign.Signing;
+using QuillSign.Work;
 using Retained=QuillSign.Tests.RetentionSigningDeadlineTests.Retained;
 
 namespace QuillSign.Tests;
@@ -28,10 +29,10 @@ public sealed class SyntheticDemoDisclosureTests(SqlDatabaseFixture fixture):ICl
         var review=(await run.Review())!;using var scope=h.App.Services.CreateScope();
         var readiness=scope.ServiceProvider.GetRequiredService<SenderSendReadiness>();
         var snapshot=Assert.IsType<DisclosureSnapshot>(readiness.Read(h.Principal,review).Disclosure);
-        Assert.Equal("synthetic-demo-2026-10-17.1",snapshot.Version);Assert.True(ElectronicRecordDisclosure.Verify(snapshot));
+        Assert.Equal("synthetic-demo-2026-10-17.2",snapshot.Version);Assert.True(ElectronicRecordDisclosure.Verify(snapshot));
         Assert.Contains(days+" days",snapshot.Text);Assert.Contains(run.Policy.DeleteAfter.ToString("yyyy-MM-dd HH:mm:ss 'UTC'",System.Globalization.CultureInfo.InvariantCulture),snapshot.Text);
         Assert.Contains("not waive statutory rights",snapshot.Text);Assert.Contains("may decline before Finish",snapshot.Text);
-        Assert.Contains("Automatic physical deletion is not implemented yet",snapshot.Text);Assert.Contains("another PDF reader",snapshot.Text);
+        Assert.Contains("Automatic cleanup is queued for the fixed deadline",snapshot.Text);Assert.Contains("can delay physical deletion",snapshot.Text);Assert.Contains("another PDF reader",snapshot.Text);
         Assert.DoesNotContain("{{delete_after}}",snapshot.Text);Assert.DoesNotContain('\r',snapshot.Text);
         h.App.Services.GetRequiredService<DemoRetentionOptions>().PurgeAfterDays=90;
         var fresh=readiness.Read(h.Principal,(await run.Review())!).Disclosure!;Assert.Equal(snapshot.Text,fresh.Text);Assert.Equal(snapshot.Sha256,fresh.Sha256);
@@ -49,6 +50,34 @@ public sealed class SyntheticDemoDisclosureTests(SqlDatabaseFixture fixture):ICl
         Assert.Equal(ConsentResult.Accepted,await consent.AcceptAsync(principal,sent.PublicId,receipt,true,true,"preview",null,null));
         await using var db=fixture.Open();var audit=await db.AuditEvents.SingleAsync(x=>x.EnvelopeId==sent.Id && x.Event=="consent_given");
         Assert.Contains(Convert.ToHexStringLower(snapshot.Sha256),audit.DataJson);Assert.Equal(AuditHash.Compute(audit),audit.Hash);
+    }
+
+    [Fact]
+    public async Task Original_v1_disclosure_stays_verifiable_after_new_queued_cleanup_template_is_selected()
+    {
+        await using var run=await Retained.Create(fixture,browser:true);Select(run.H.App.Services.GetRequiredService<ElectronicRecordOptions>());
+        using var scope=run.H.App.Services.CreateScope();var current=scope.ServiceProvider.GetRequiredService<SenderSendReadiness>().Read(run.H.Principal,(await run.Review())!).Disclosure!;
+        const string version="synthetic-demo-2026-10-17.1";var invariant=System.Globalization.CultureInfo.InvariantCulture;
+        var values=new Dictionary<string,string>{["version"]=version,["public_id"]=current.PublicId,["title"]=current.Title,["sender_contact"]=current.SenderContact,
+            ["days"]=run.Policy.Days.ToString(invariant),["started_at"]=run.Policy.StartedAt.ToString("yyyy-MM-dd HH:mm:ss 'UTC'",invariant),
+            ["delete_after"]=run.Policy.DeleteAfter.ToString("yyyy-MM-dd HH:mm:ss 'UTC'",invariant),["retention_digest"]=UploadRetention.Digest(run.Policy)};
+        var template=(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"Fixtures","historical-synthetic-demo-disclosure-v1.txt"))).Replace("\r\n","\n").TrimEnd()+"\n";
+        var text=Regex.Replace(template,@"\{\{([a-z_]+)\}\}",m=>values[m.Groups[1].Value]);
+        var original=new DisclosureSnapshot(version,current.PublicId,current.Title,current.SenderContact,text,System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+        Assert.True(ElectronicRecordDisclosure.Verify(original));Assert.True(ElectronicRecordDisclosure.Verify(current));Assert.NotEqual(original.Sha256,current.Sha256);
+        Assert.Contains("Automatic physical deletion is not implemented yet",original.Text);Assert.DoesNotContain("Automatic physical deletion is not implemented yet",current.Text);
+    }
+
+    [Fact]
+    public async Task New_disclosure_and_Send_are_unavailable_when_enrolled_legacy_cleanup_is_not_scheduled()
+    {
+        await using var run=await Retained.Create(fixture,browser:true);Select(run.H.App.Services.GetRequiredService<ElectronicRecordOptions>());var before=await run.State();
+        await using(var db=fixture.Open())await db.WorkItems.Where(x=>x.EnvelopeId==before.Id && x.Kind==WorkKind.Purge).ExecuteDeleteAsync();
+        var review=(await run.Review())!;Assert.Contains(review.Errors,x=>x.Message.Contains("retention service",StringComparison.Ordinal));
+        using var scope=run.H.App.Services.CreateScope();Assert.Null(scope.ServiceProvider.GetRequiredService<SenderSendReadiness>().Read(run.H.Principal,review).Disclosure);
+        await Assert.ThrowsAsync<DocumentRejectedException>(()=>run.H.Send(reviewedRetentionSha256:review.RetentionSha256));
+        await using var check=fixture.Open();Assert.False(await check.WorkItems.AnyAsync(x=>x.EnvelopeId==before.Id && x.Kind==WorkKind.Purge));
+        var unchanged=await run.State();Assert.Equal(EnvelopeStatus.Draft,unchanged.Status);Assert.Null(unchanged.ErsdText);Assert.Equal(before.RowVersion,unchanged.RowVersion);
     }
 
     [Theory]

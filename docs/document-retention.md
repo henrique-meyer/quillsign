@@ -1,6 +1,6 @@
 # Fixed document retention
 
-The [bounded purge storage dependency](demo-purge-storage.md) provides exact per-envelope inventory/deletion authority. [Authenticated storage-only recovery](demo-purge-recovery.md) can retry explicit marker-backed maintenance without SQL. Automatic scheduling and private SQL cleanup remain required.
+The [demo purge coordinator](demo-purge-coordinator.md) schedules one job with the first successful enrolled upload and uses [guarded private SQL removal](demo-purge-sql.md), [bounded storage authority](demo-purge-storage.md) and [authenticated storage-only recovery](demo-purge-recovery.md). Approved hosted permissions, maintenance scheduling and operational validation remain required before enabling the demo policy.
 
 `Demo__PurgeAfterDays` is an optional positive integer from 1 through 36500. It remains unset in examples. Configure actual deployment values privately; the selected demo policy is seven days from the first successful document upload.
 
@@ -8,7 +8,7 @@ For a stored demo envelope, the first successful upload freezes one immutable `D
 
 The start uses whole UTC seconds, rounded down by less than one second at initial capture so the fixed deadline can be represented exactly by Blob Storage's RFC1123 retention timestamps. The audit keeps its actual event time. Publication and retries must not round or extend a frozen deadline.
 
-Replacements preserve the first snapshot even if configuration changes or becomes unset. Replacement at or after its deadline is rejected. Concurrent first uploads use the common envelope lock and reviewed row version, so only the winning upload can establish the snapshot. Runtime SQL permissions permit snapshot reads/inserts and deny updates/deletes; EF also rejects tracked mutations. The separate [guarded worker SQL operation](demo-purge-sql.md) deliberately removes expired enrolled records without widening those general permissions; automatic purge coordination remains unfinished.
+Replacements preserve the first snapshot even if configuration changes or becomes unset. Replacement at or after its deadline is rejected. Concurrent first uploads use the common envelope lock and reviewed row version, so only the winning upload can establish the snapshot and purge job. Runtime SQL permissions permit snapshot reads/inserts and deny updates/deletes; EF also rejects tracked mutations. The separate [guarded worker SQL operation](demo-purge-sql.md) deliberately removes expired enrolled records without widening those general permissions. Missing legacy jobs require explicit recovery, and new preparation/Send verifies scheduling without mutating on GET.
 
 Ordinary envelopes and unconfigured demo envelopes are not enrolled. Existing uploaded demo documents without a snapshot require an explicit migration decision before replacement after the setting is enabled. The application does not infer an earlier upload time, silently backfill them or reset their age. Reading a document does not create a snapshot.
 

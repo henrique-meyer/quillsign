@@ -6,7 +6,8 @@ using QuillSign.Documents;
 
 namespace QuillSign.Legal;
 
-// Context comes only from the authorized, verified immutable upload snapshot.
+// Callers verify scheduling before building new disclosures from this authorized,
+// verified immutable upload snapshot. Historical snapshots are never regenerated.
 // It grants no document, signing or deletion authority.
 internal sealed record DemoDisclosureContext(string PublicId,int Days,DateTimeOffset StartedAt,DateTimeOffset DeleteAfter,string RetentionSha256)
 {
@@ -17,7 +18,7 @@ internal sealed record DemoDisclosureContext(string PublicId,int Days,DateTimeOf
 internal static class SyntheticDemoDisclosure
 {
     internal const string Profile="synthetic-demo-v1";
-    internal const string Version="synthetic-demo-2026-10-17.1";
+    internal const string Version="synthetic-demo-2026-10-17.2";
     private static readonly UTF8Encoding Utf8=new(false,true);
     private static readonly Lazy<string> Template=new(()=>{
         using var input=typeof(ElectronicRecordDisclosure).Assembly.GetManifestResourceStream("QuillSign.Legal.SyntheticDemoDisclosure.txt")
