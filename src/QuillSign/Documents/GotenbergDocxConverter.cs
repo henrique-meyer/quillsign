@@ -23,8 +23,8 @@ public sealed class GotenbergOptions
 public sealed record DocxConversion(byte[] Pdf,byte[] OriginalSha256,byte[] PdfSha256,IReadOnlyList<PageGeometry> Pages);
 public sealed class DocumentConversionUnavailableException(string message) : Exception(message);
 
-// Transport/normalization only. A future intake gate must validate the DOCX package
-// before calling this; no public handler or Conversion work producer calls it yet.
+// Transport/normalization only. DocxDocumentWorkflow validates the owned DOCX
+// package before this request; no automatic Conversion work producer is used.
 public sealed class GotenbergDocxConverter(HttpClient http,GotenbergOptions options,DocumentOptions limits,PdfValidation validation,IHostEnvironment environment)
 {
     public async Task<DocxConversion> ConvertAsync(Stream original,long declaredLength,CancellationToken ct=default)
