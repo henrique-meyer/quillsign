@@ -30,6 +30,7 @@ Synthetic end-to-end flows have local automated and browser coverage. Hosted com
 | Email | Amazon SES v2 and SMTP/Mailpit; ACS remains a future optional adapter |
 | Hosting and delivery | Azure Container Apps Consumption, GitHub Actions, GHCR and Bicep; CloudFormation for AWS resources |
 | Office conversion | Gotenberg/LibreOffice sidecar and an internal DOCX client; public intake integration remains pending |
+| Image conversion | [Internal PNG/JPEG conversion](docs/image-conversion.md) with StbImageSharp (MIT) and PDFsharp; public intake integration remains pending |
 | Deferred enhancement | Azure OpenAI suggestions, after the remaining project work is complete |
 
 There is no CAPTCHA. Verified email, request limits, daily caps and bounce/complaint suppression provide abuse controls. The [internal DOCX conversion foundation](docs/document-conversion.md) is tested locally; the public upload screen still accepts PDFs only. AI field and signer-role suggestions, including heuristic automatic placement, are deferred until the remaining non-AI project work and hosted validation are complete. Manual field placement is the current workflow; AI is not required for project completion or demo release.

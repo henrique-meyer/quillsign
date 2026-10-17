@@ -13,6 +13,7 @@ public static class DocumentConfiguration
         if (options.MaximumBytes < 1024 || options.MaximumBytes > storageMaximum || options.MaximumPages is < 1 or > 200)
             throw new InvalidOperationException("Document limits must fit configured storage and support 1–200 pages.");
         services.AddSingleton(options); services.AddScoped<PdfValidation>(); services.AddScoped<DocumentWorkflow>();
+        services.AddScoped<ImagePdfConverter>();
         var conversion=config.GetSection("Gotenberg").Get<GotenbergOptions>() ?? new();
         services.AddSingleton(conversion);
         services.AddHttpClient<GotenbergDocxConverter>(client=>client.Timeout=Timeout.InfiniteTimeSpan)
