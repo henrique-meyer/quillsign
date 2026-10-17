@@ -55,6 +55,7 @@ public static class EmailConfiguration
         services.AddScoped<RazorEmailViews>();
         services.AddScoped<DeclineEmailTemplate>();
         services.AddScoped<SignerInvitationTemplate>();
+        services.AddScoped<CompletionEmailTemplate>();
         services.AddScoped<SesFeedbackProcessor>();
         services.AddHttpClient("Sns", client => client.Timeout = TimeSpan.FromSeconds(10))
             .RemoveAllLoggers() // Confirmation URLs contain a subscription token.

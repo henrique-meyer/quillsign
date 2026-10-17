@@ -1,0 +1,23 @@
+@model QuillSign.Email.CompletionEmailModel
+@{ Layout = null; }
+QuillSign
+
+Your completed records: @Html.Raw(Model.Title)
+The request completed at @Model.CompletedAt.ToString("u") (UTC).
+@if(Model.LinkOnly) {<text>
+Attachment-size warning: the PDFs are not attached because this packet exceeds the configured email attachment limit. Use your private link to save both files.
+</text>} else {<text>
+Attached: the fully executed PDF, including every signer's saved entries and the certificate, plus the standalone certificate of completion. Save both files for your records.
+</text>}
+
+Private backup access:
+@Html.Raw(Model.Link.AbsoluteUri)
+
+Continue to prepare this link, then select Open records to use it once. Access is readonly and does not restore signing or edits. Do not forward this private link.
+The link expires at @Model.LinkExpiresAt.ToString("u") (UTC). Saved copies do not depend on this link.
+@if(Model.RetainedUntil is { } until) {<text>
+Server retention ends at @until.ToString("u") (UTC). Save your copies before then.
+</text>}
+@if(Model.IsDemo) {<text>
+Demo instance. No uptime or retention guarantees. Not for legally significant documents.
+</text>}
