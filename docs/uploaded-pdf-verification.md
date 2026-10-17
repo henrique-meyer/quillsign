@@ -1,6 +1,6 @@
-# Uploaded PDF verification backend
+# Uploaded PDF verification
 
-QUILS-55 adds `UploadedPdfVerification.VerifyAsync`, a bounded readonly service for the planned public verification flow. This slice has no public upload endpoint or browser page.
+QUILS-55 adds `UploadedPdfVerification.VerifyAsync`, a bounded readonly service. QUILS-56 exposes it through the anonymous `/verify` page, linked from the home page. Visitors explicitly select one PDF and submit **Verify PDF**; no account or document-access session is created.
 
 The service streams the supplied upload through SHA-256 with a strict byte limit, PDF-header check, optional exact declared length and operation deadline. It keeps only a small read buffer. It does not persist, normalize or rewrite the upload. Oversized input consumes at most the configured limit plus one detection byte; unrecognized bytes never enter a PDF parser or open private stored files.
 
@@ -14,4 +14,16 @@ No party identity, envelope/public ID, title, stored file, capability, session, 
 
 The backend performs no document writes/deletes, packet regeneration, private-key acquisition, new TSA request, embedded-URL fetch, OCSP/CRL download, email/work enqueueing, token issuance or audit mutation. Existing offline certificate validation disables certificate downloads and revocation network checks. Public timestamp trust material must remain available; private signing material is not needed for verification.
 
-`AddUploadedPdfVerification` registers the service lazily for hosts with the existing completed-publication verification services. Optional `PdfVerification:MaximumBytes` is bounded to 16 bytes through 64 MiB, defaulting to 64 MiB; `PdfVerification:TimeoutSeconds` is bounded to 1–120 seconds, defaulting to 60. These are technical processing limits, not retention or disclosure policy. HTTP request bounds, antiforgery, rate limits and visible result wording belong to the later public browser slice.
+`AddUploadedPdfVerification` registers the service lazily for hosts with the existing completed-publication verification services. Optional `PdfVerification:MaximumBytes` is bounded to 16 bytes through 64 MiB, defaulting to 64 MiB; `PdfVerification:TimeoutSeconds` is bounded to 1–120 seconds, defaulting to 60. These are technical processing limits, not retention or disclosure policy.
+
+## Browser and HTTP boundary
+
+GET displays instructions and the current form without opening SQL, reading private files or preparing a result. Query-bearing GETs redirect to the clean URL. POST requires the current antiforgery form token and cookie, including for JSON clients. Successful checks return only the current response; the result is not placed in a URL, cookie or history lookup. Another check requires a fresh explicit file selection and submission.
+
+The named sender rate policy allows 120 verification GETs per minute per IP. POST has a dedicated limit of `PdfVerification:RequestsPerMinute` (default 10, permitted 1–20) per IP per minute. A global concurrency limiter permits one verification POST per process, with no queue. Both limiters run before the body boundary and Razor form binding. Rejected requests return a private 429 without consuming the upload. Replicas each have their own memory and frequency budgets; these process-local limits are not a distributed quota.
+
+`VerificationUploadBoundary` runs after rate limiting and before authentication/Razor Pages. It accepts multipart form data containing at most one `Upload` file and one antiforgery field. It enforces a 128-character boundary, eight headers/8 KiB per section, 512-character filename headers, a 2 KiB antiforgery value, two sections, the actual file limit, and a total raw-body limit of file limit plus 32 KiB. Declared request and optional file-part lengths must match actual counts. Transfer encoding, unexpected fields, duplicate parts and malformed framing are rejected. Raw filenames and exception details are never echoed.
+
+The boundary owns one bounded memory stream and bypasses the framework's temporary-file form buffering. It clears and disposes that stream on every exit. Its real elapsed deadline covers body processing and the rest of the verification request: `TimeoutSeconds + PdfVerification:BodyTimeoutSeconds` (body allowance default 30, permitted 1–30 seconds). The backend also applies its separate processing deadline. Caller cancellation remains cancellation; an elapsed operation deadline returns a controlled unavailable result. Custom hosts must register `AddPdfVerificationBrowser` and place the middleware in this order; the page rejects POST before form binding if the boundary marker is missing.
+
+All verification responses use `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`. Recognized and unrecognized results use HTTP 200; rejected input uses 400 (size overflow 413), unverifiable retained evidence 422, and unavailable processing 503. JSON results contain only status, supplied SHA-256, verified kind, seal/timestamp integrity flags and a fixed message. Boundary errors expose only a fixed status/message. No result grants record retrieval or downloads, and no uploaded filename, bytes, party metadata or private reference enters the response or application logs.

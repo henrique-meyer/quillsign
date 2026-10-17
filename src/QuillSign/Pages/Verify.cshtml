@@ -1,0 +1,25 @@
+@page "/verify"
+@model QuillSign.Pages.VerifyModel
+@{ViewData["Title"]="Verify a PDF";}
+@section Styles {<link rel="stylesheet" href="~/review.css" asp-append-version="true" />}
+<section class="draft-review">
+<p class="eyebrow">Completed file integrity</p><h1>Verify a PDF</h1>
+<p>Check whether your PDF matches a completed file retained by this QuillSign instance, and whether its seal and timestamp evidence verify.</p>
+<p>The upload is processed in memory for this check and is not saved. Verification gives no access to other records.</p>
+@if(Model.Message is { } message) {
+<section aria-labelledby="verification-result"><h2 id="verification-result">@(Model.Result?.Status==QuillSign.Completion.UploadedPdfVerificationStatus.Verified ? "File integrity verified" : "Verification result")</h2>
+<p role="@(Model.Response.StatusCode>=400 ? "alert" : "status")">@message</p>
+@if(Model.Result?.Sha256 is { } hash) {<h3>Supplied file SHA-256</h3><p><code>@hash</code></p>}
+@if(Model.Result?.Kind is { } kind) {<p>Verified file: @(kind==QuillSign.Storage.FinalDocumentKind.Executed ? "executed PDF" : "standalone certificate of completion").</p>}
+</section>
+}
+<p>Integrity checks do not establish a signer's identity, a document's legal validity, AdES/QES status, independent trust in the platform signing certificate or long-term revocation validity.</p>
+@if(Model.Available) {
+<form method="post" enctype="multipart/form-data" asp-page="/Verify" asp-page-handler="">
+<label asp-for="Upload">Choose a PDF</label><input asp-for="Upload" type="file" accept=".pdf,application/pdf" required />
+<p class="hint">Maximum file size: @((Model.MaximumBytes/1024m/1024m).ToString("0.##")) MiB. Select and submit the file again for another check.</p>
+<button type="submit">Verify PDF</button>
+</form>
+} else {<p class="notice">Verification is currently unavailable on this instance.</p>}
+<p><a asp-page="/Index">Return to QuillSign</a></p>
+</section>
