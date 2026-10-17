@@ -1078,7 +1078,7 @@ Validation: all 28 targeted field-page and lease-expiry/real-processor cases pas
 
 ## QUILS-77: Provide explicitly configured synthetic-demo electronic-record disclosures
 
-Status: In Progress. Independent of the QUILS-73/75 regression repair and queued QUILS-74 access changes. Hosted configuration remains unchanged.
+Status: Done. Merged as PR #80; all twelve exact-head checks passed and native Jira Done was verified. Hosted configuration remains unchanged.
 
 Provide an explicitly selected synthetic-demo electronic-record disclosure profile for the operating policy approved by Henrique. This independent slice may proceed while QUILS-73/75 checks run. Do not enable or change hosted configuration. The reusable real-use operator-policy path must retain its explicit policy requirements.
 
@@ -1098,6 +1098,26 @@ Validation: all 112 disclosure, retained-deadline, Send and consent regression c
 Local configuration integration: forward the explicit profile, existing seven operator-policy variables and optional Demo:PurgeAfterDays through the shared Compose app/worker environment, with empty defaults. This makes the documented private .env selection usable locally and preserves mixed-policy rejection. Do not add an unused demo-mode switch or change running containers; validate configuration without printing private values.
 
 Current integration: QUILS-73 merged main is integrated. All 144 disclosure, Send, consent, deadline and preparation cases pass; corrupt review evidence now asserts the merged preparation guard's specific exception. The profile implementation and completed browser flow are unchanged. Shared Compose configuration validates for app and the optional workers profile without printing values or changing services. Current-head CI gates merge.
+
+## QUILS-74: Enforce fixed retention on sender status and completed record access
+
+Status: Done. Merged as PR #81 after all 14 exact-head checks passed; native Jira Done verified. All 1,701 current .NET tests pass.
+
+Close remaining fixed demo retention coverage for sender sent-status/void and private completed-record access, after merged QUILS-69/72 and the QUILS-73 preparation guard. Prerequisite QUILS-73 is merged; implementation may proceed. Preserve independent QUILS-71 intake and its validation boundary.
+
+Authorize the exact sender or completed party/token/session/publication scope before private enrolled-policy reads. Apply the earlier verified upload cutoff without extending original session, link, candidate or download deadlines. Return private generic unavailable/verification-failure responses at exact UTC cutoff or missing/tampered enrolled evidence, including legacy enrolled requests whose stored signing/completion deadlines are later. Ordinary and historical unenrolled records remain compatible, with no silent backfill or rewritten identities/evidence.
+
+Cover appropriate sender status/void context and mutation boundaries, completed link redemption/session/private metadata and download preparation/read boundaries. Reuse existing correct publication/capability bounds; do not add redundant authority or needless state changes. Recheck after slow storage/hash work and before successful public mutations. Preserve canonical Send/void/completion evidence, party membership, exact file hashes, nonces, CSRF/rate limits, private bounded cookies/proofs, clean redirects and no-store/no-referrer. GET never changes status, schedules expiry/purge, grants raw storage access or restores edits.
+
+Keep trusted historical/checkpoint/completion worker capabilities independent from public sessions without impersonation. Do not recall party-held copies or claim packet-level revocation. This slice adds no purge, demo ERSD/operator settings, hosted enablement, cloud resources/permissions, live email/TSA, purchases, dependencies, OTP, deferred AI or changes to immutable final evidence.
+
+Validate actual SQL/Azurite and HTTP cases for before/exact/after cutoff, legacy enrolled later deadlines, accepted/completed parties, wrong scope, missing/corrupt policy, earlier session expiry, slow I/O and audit crossings, rollback/uncertain response/recovery, unchanged saved/audit/work state, ordinary compatibility and retained trusted historical verification. Exercise real synthetic desktop/mobile/keyboard status/retrieval flows with controlled external services, honestly recording any live-service limitation. Run appropriate combined regression/model/vendor/license/secrets, commit/push/open/attach/pass exact-head checks/merge and native Jira Done.
+
+Implementation design: reuse verified immutable-policy checks only after exact private owner/party authorization, under the parent lock. Preserve original protected completion identities; carry any earlier cutoff separately into public view/session/grant bounds. Recheck after private reads, audit writes and final page composition, including optional final-download availability reads after status/acceptance was loaded. Clear private view models on verification failures so stale metadata cannot remain rendered. Trusted canonical void, publication and worker reads retain their historical contracts. Tests may delay actual preparation after first upload before issuing fresh signer sessions, rather than rewriting frozen completion evidence to manufacture near-deadline cases.
+
+Required reader compatibility fix discovered by genuine enrolled completion tests: CompletionDownloadState still deserializes the pre-retention flat stage JSON, while QUILS-63 freezes enrolled intents inside a versioned retention wrapper. Validate/extract the exact inner stages through CompletionRetentionBinding and check the metadata deadline against that frozen binding, without rewriting intent/result bytes, hashes, recipes or legacy flat records. Keep private current-policy checks after exact party authorization; structural frozen-wrapper parsing grants no access and performs no policy lookup.
+
+Validation: all 40 combined sender/preparation retention checks pass. The completed-record matrix passed 46 of 48 cases; the remaining two correctly returned the existing anonymous sign-in redirect, and both passed after fixing that test expectation without changing authentication. Genuine completed sender/signer/recipient sessions receive the exact published files before cutoff and no private metadata or bytes at cutoff. Slow storage, audit and final-page composition crossings deny access and preserve saved state. Real synthetic desktop/mobile/keyboard flows passed status, fragment-based recipient redemption, exact executed/certificate downloads, signer own-checkpoint download and generic sender/recipient cutoff views, without live email/TSA or agreements. The expired signer browser navigation was blocked by the browser client; actual HTTP tests separately verify its unauthorized response, so no rendered signer-expiry page is claimed. Model comparison is unchanged, all 11 Node tests and 89 local Markdown links pass. Full local regression and exact-head CI are still required before merge.
 
 ## QUILS-78: Persist authenticated purge recovery markers and storage-only retries
 

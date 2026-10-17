@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QuillSign.Completion;
@@ -186,14 +187,20 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
         public SendDraftWorkflowTests.Clock Clock=>Run.Signing.H.Clock; public Guid Id=>Run.Signing.Envelope.Id; public string PublicId=>Run.Signing.Envelope.PublicId;
         public string PagePath=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+(Role=="sender" ? "/sent" : "/confirmed");
         public string Resource(string kind)=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+"/final"+(kind.Length==0 ? "" : "/"+kind);
-        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false,bool completionNotifications=false,bool publish=true,bool senderAlsoSigns=false,bool verificationBrowser=false)
+        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false,bool completionNotifications=false,bool publish=true,bool senderAlsoSigns=false,bool verificationBrowser=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DbCommandInterceptor? readFault=null,int? browserPort=null)
         {
-            var f=new Flow {fixture=fixture,Run=await Run.Create(fixture,senderAlsoSigns:senderAlsoSigns),CompletionNotifications=completionNotifications}; f.Store=new(f.Clock); _=await f.Run.Prepare();
+            var f=new Flow {fixture=fixture,Run=await Run.Create(fixture,senderAlsoSigns:senderAlsoSigns,uploadRetentionDays:uploadRetentionDays,afterUploadDelay:afterUploadDelay),CompletionNotifications=completionNotifications}; f.Store=new(f.Clock); _=await f.Run.Prepare();
             await using var db=fixture.Open(); if(publish)f.Published=(await f.Publication(db).PublishAsync(f.Id))!;
             var connection=db.Database.GetConnectionString();
-            var builder=WebApplication.CreateBuilder(new WebApplicationOptions {ApplicationName=typeof(CompletionDownloads).Assembly.FullName,EnvironmentName="Development",ContentRootPath=AppContext.BaseDirectory});
-            builder.Logging.ClearProviders(); builder.WebHost.UseTestServer(); builder.Services.AddRazorPages();
-            builder.Services.AddDbContext<QuillSignDbContext>(o=>o.UseSqlServer(connection).AddInterceptors(f.Faults));
+            var builder=WebApplication.CreateBuilder(new WebApplicationOptions {ApplicationName=typeof(CompletionDownloads).Assembly.FullName,EnvironmentName="Development",ContentRootPath=AppContext.BaseDirectory,
+                WebRootPath=browserPort is null ? null : Path.GetFullPath("../../../../../src/QuillSign/wwwroot",AppContext.BaseDirectory)});
+            builder.Logging.ClearProviders();if(browserPort is null)builder.WebHost.UseTestServer();else {
+                builder.WebHost.UseUrls("http://127.0.0.1:"+browserPort);
+                var outputRoot=Path.Combine(AppContext.BaseDirectory,"wwwroot");if(Directory.Exists(outputRoot))builder.Environment.WebRootFileProvider=new Microsoft.Extensions.FileProviders.CompositeFileProvider(builder.Environment.WebRootFileProvider,new Microsoft.Extensions.FileProviders.PhysicalFileProvider(outputRoot));
+            }
+            builder.Services.AddRazorPages();
+            builder.Services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(o=>o.Filters.Add<PreparationRetentionExceptionFilter>());
+            builder.Services.AddDbContext<QuillSignDbContext>(o=> {o.UseSqlServer(connection).AddInterceptors(f.Faults);if(readFault is not null)o.AddInterceptors(readFault);});
             builder.Services.AddQuillSignEmail(builder.Configuration,builder.Environment); builder.Services.AddQuillSignWork(builder.Configuration,builder.Environment); builder.Services.AddSingleton<TimeProvider>(f.Clock);
             builder.Services.AddSingleton(f.Run.Signing.H.App.Services.GetRequiredService<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>()); builder.Services.AddSingleton<IBlobStore>(f.Run.Storage); builder.Services.AddSingleton(new DocumentOptions());
             builder.Services.AddQuillSignSender(builder.Configuration,builder.Environment); builder.Services.AddQuillSignSignerAccess(builder.Configuration,builder.Environment);
@@ -211,6 +218,10 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
                 var email=f.App.Services.GetRequiredService<EmailOptions>();email.Enabled=true;email.Provider="Smtp";email.FromEmail="noreply@example.invalid";email.BaseUrl="https://example.invalid";
                 email.Smtp=new() {Host="127.0.0.1",Port=int.Parse(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_SMTP_PORT")!),UseStartTls=false};
             }
+            if(browserPort is not null) {
+                f.App.Use(async(http,next)=> {http.Response.Headers["X-Content-Type-Options"]="nosniff";http.Response.Headers["Referrer-Policy"]="no-referrer";http.Response.Headers["Content-Security-Policy"]="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";await next();});
+                f.App.UseStaticFiles();
+            }
             f.App.UseRouting(); f.App.UseRateLimiter();if(verificationBrowser)f.App.UseMiddleware<VerificationUploadBoundary>(); f.App.UseAuthentication(); f.App.UseAuthorization(); f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
             f.App.MapGet("/fixture/{role}",async (HttpContext http,string role,SignerReviewBrowser browser)=> {
                 if(role=="sender") {
@@ -220,7 +231,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
                 else {var identity=SignerAccessConfiguration.ReadIdentity(f.Run.Signing.LastSigner,f.Clock.GetUtcNow())!; await http.SignInAsync(SignerAccessConfiguration.Scheme,f.Run.Signing.LastSigner,SignerAccessConfiguration.Ticket(identity));
                     browser.Put(http,SignerReviewBrowser.AcceptedCookie,f.Run.Signing.LastReviewReceipt,identity);} return "Synthetic fixture";
             });
-            await f.App.StartAsync(); f.Client=f.App.GetTestClient(); return f;
+            await f.App.StartAsync(); f.Client=browserPort is null ? f.App.GetTestClient() : new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){BaseAddress=new Uri("http://127.0.0.1:"+browserPort)};return f;
         }
         internal CompletionPublication Publication(QuillSignDbContext db)=>new(db,Run.Candidates(db),Run.Service(db),Run.Collector(db),Store,new(db,Clock),Clock,
             new() {DemoPurgeAfterDays=7,AllowDevelopmentWriteOnce=true},Run.Seal.App.Environment,notifications:CompletionNotifications ? ()=>new(db,new(db,Run.Collector(db),()=>Publication(db),Clock),

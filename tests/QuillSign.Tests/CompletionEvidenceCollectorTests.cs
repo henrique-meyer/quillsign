@@ -219,7 +219,7 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
         private SqlDatabaseFixture fixture=null!;
         public async Task<T> Use<S,T>(Func<S,Task<T>> action) where S:notnull {using var scope=H.App.Services.CreateScope(); return await action(scope.ServiceProvider.GetRequiredService<S>());}
         public async Task<Envelope> Refresh() {await using var db=fixture.Open(); return Envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==Envelope.Id);}
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null)
         {
             var run=new Run {fixture=fixture,H=await Shared.Create(fixture,browser:true)}; var email="completion-"+Guid.NewGuid().ToString("N")+"@example.invalid";
             run.H.App.Services.GetRequiredService<DemoRetentionOptions>().PurgeAfterDays=uploadRetentionDays;
@@ -231,6 +231,10 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
             var source=PdfFixtures.Create(text:"SYNTHETIC COMPLETION CHAIN - NO AGREEMENT");
             Assert.True(await run.Use((DocumentWorkflow s)=>s.UploadAsync(run.Sender,run.Envelope.PublicId,run.Envelope.RowVersion,"Synthetic completion NO AGREEMENT.pdf",new MemoryStream(source),source.Length,"127.0.0.1","Synthetic sender",default)));
             await run.Refresh(); Assert.True(await run.Use((DocumentWorkflow s)=>s.ConfirmAsync(run.Sender,run.Envelope.PublicId,run.Envelope.RowVersion,run.Envelope.PdfBlob!,true,"127.0.0.1","Synthetic sender",default)));
+            if(afterUploadDelay is { } delay) {
+                run.H.Clock.Advance(delay);
+                await using var db=fixture.Open();await db.Envelopes.Where(x=>x.Id==run.Envelope.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.ExpiresAt,run.H.Clock.GetUtcNow().AddHours(1)));
+            }
             for(var i=1;i<=2;i++) {
                 await run.Refresh(); var result=await run.Use((SignerSetup s)=>s.ChangeAsync(run.Sender,run.Envelope.PublicId,new(SignerChangeKind.Save,Convert.ToBase64String(run.Envelope.RowVersion),null,"Synthetic signer "+i,senderAlsoSigns && i==1 ? email : "signer"+i+"-"+email,"Role "+i),"127.0.0.1","Synthetic sender",default));
                 Assert.Equal(SignerSetupError.None,result.Error);

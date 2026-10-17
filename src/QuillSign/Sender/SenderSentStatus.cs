@@ -14,6 +14,7 @@ public sealed record SenderSignerProgress(int Order,string Name,string Email,str
 public sealed record SenderSentSnapshot(string PublicId,string Title,string? Message,EnvelopeStatus Status,DateTimeOffset SentAt,
     DateTimeOffset? ExpiresAt,IReadOnlyList<SenderSignerProgress> Signers,IReadOnlyList<RecipientItem> Recipients,SentDraft Sent)
 {
+    internal DateTimeOffset? RetentionDeadline {get;init;}
     public string State=>Status switch { EnvelopeStatus.Completed=>"Completed",EnvelopeStatus.Declined=>"Declined",EnvelopeStatus.Voided=>"Voided",
         EnvelopeStatus.Expired=>"Expired",_=>Signers.All(x=>x.SignedAt is not null) ? "Final completion pending" : "Sent for sequential signing" };
 }
@@ -28,6 +29,7 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
         var envelope=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {identity.Value.Id}")
             .AsNoTracking().SingleOrDefaultAsync(ct);
         if(envelope is null || envelope.PublicId!=publicId || envelope.SenderEmail!=identity.Value.Email || envelope.SenderVerifiedAt is null || envelope.Status==EnvelopeStatus.Draft)return null;
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct);
         var sent=await ReadSentAsync(db,envelope,reviewedVersion,ct);
         if(await checkpoints.CurrentAsync(envelope,ct) is null)throw new InvalidDataException("The saved signing state could not be verified.");
         var signers=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id).OrderBy(x=>x.Order).Take(101).ToArrayAsync(ct);
@@ -66,7 +68,9 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
             string.IsNullOrWhiteSpace(envelope.SealProvider) || string.IsNullOrWhiteSpace(envelope.SealCertThumbprint)))
             throw new InvalidDataException("Completion metadata could not be verified.");
         var effective=envelope.Status==EnvelopeStatus.Sent && envelope.ExpiresAt<=time.GetUtcNow() ? EnvelopeStatus.Expired : envelope.Status;
-        await transaction.CommitAsync(ct); return new(envelope.PublicId,envelope.Title!,envelope.Message,effective,envelope.SentAt!.Value,envelope.ExpiresAt,progress,recipients,sent);
+        DocumentRetentionAccess.Check(deadline,time);
+        await transaction.CommitAsync(ct);DocumentRetentionAccess.Check(deadline,time);
+        return new(envelope.PublicId,envelope.Title!,envelope.Message,effective,envelope.SentAt!.Value,envelope.ExpiresAt,progress,recipients,sent){RetentionDeadline=deadline};
     }
 
     internal static async Task<SentDraft> ReadSentAsync(QuillSignDbContext db,Envelope envelope,byte[]? version,CancellationToken ct)
