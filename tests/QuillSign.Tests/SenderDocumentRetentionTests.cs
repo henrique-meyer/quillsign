@@ -140,7 +140,7 @@ public sealed class SenderDocumentRetentionTests(SqlDatabaseFixture fixture):ICl
     }
 
     // Owned test host for both HTTP tests and the real browser flow. No work
-    // processor, mail sender or external conversion service is registered.
+    // processor or mail sender is registered. Conversion is opt-in for intake QA.
     public sealed class BrowserSession:IAsyncDisposable
     {
         internal Retained run=null!;private WebApplication app=null!;private HttpClient client=null!;private BlobClient key=null!;private readonly Dictionary<string,string> cookies=[];
@@ -148,7 +148,7 @@ public sealed class SenderDocumentRetentionTests(SqlDatabaseFixture fixture):ICl
         public string PdfPath=>Path+"/document/"+run.Policy.PdfObjectId.ToString("N");
         public DateTimeOffset DeleteAfter=>run.Policy.DeleteAfter;
         public void Expire()=>run.Clock.Now=DeleteAfter;
-        public static async Task<BrowserSession> Start(SqlDatabaseFixture fixture,int? port=null)
+        public static async Task<BrowserSession> Start(SqlDatabaseFixture fixture,int? port=null,GotenbergOptions? conversion=null,Action<IServiceCollection>? configure=null)
         {
             var b=new BrowserSession{run=await Retained.Create(fixture)};
             try {
@@ -159,14 +159,18 @@ public sealed class SenderDocumentRetentionTests(SqlDatabaseFixture fixture):ICl
             var outputRoot=System.IO.Path.Combine(AppContext.BaseDirectory,"wwwroot");
             if(port is not null && Directory.Exists(outputRoot))builder.Environment.WebRootFileProvider=new Microsoft.Extensions.FileProviders.CompositeFileProvider(builder.Environment.WebRootFileProvider,new Microsoft.Extensions.FileProviders.PhysicalFileProvider(outputRoot));
             builder.Configuration.AddInMemoryCollection(new Dictionary<string,string?>{["ConnectionStrings:Database"]=connection,["Storage:Provider"]="Azurite",["Storage:ConnectionString"]=storage,["DataProtection:ApplicationName"]=name,["DataProtection:KeyRingBlobName"]=name+".xml"});
+            if(port is not null)builder.Configuration.AddInMemoryCollection(new Dictionary<string,string?>{["Sender:RequestsPerWindow"]="1000"});
             builder.Services.AddRazorPages();builder.Services.AddDbContext<QuillSignDbContext>(o=>o.UseSqlServer(connection).AddInterceptors(b.run.H.AuditFailure,b.run.H.CommitFailure));
             builder.Services.AddQuillSignStorage(builder.Configuration,builder.Environment);builder.Services.AddQuillSignSender(builder.Configuration,builder.Environment);
             builder.Services.AddSingleton(new QuillSign.Email.EmailOptions());builder.Services.AddSingleton(new QuillSign.Work.WorkOptions());
             builder.Services.AddQuillSignFieldEditor(builder.Configuration);builder.Services.AddQuillSignDocuments(builder.Configuration);
             builder.Services.AddSingleton<TimeProvider>(b.run.Clock);builder.Services.AddSingleton<IBlobStore>(b.run.H.Store);builder.Services.AddSingleton(b.run.H.Retention);
+            if(conversion is not null)builder.Services.AddSingleton(conversion);configure?.Invoke(builder.Services);
             if(port is { } number)builder.WebHost.UseUrls("http://127.0.0.1:"+number);else builder.WebHost.UseTestServer();
             b.app=builder.Build();
-            b.app.Use(async(context,next)=>{context.Response.Headers["X-Content-Type-Options"]="nosniff";context.Response.Headers["Referrer-Policy"]="no-referrer";context.Response.Headers["Content-Security-Policy"]="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";await next();});
+            b.app.Use(async(context,next)=>{context.Response.Headers["X-Content-Type-Options"]="nosniff";context.Response.Headers["Referrer-Policy"]="no-referrer";context.Response.Headers["Content-Security-Policy"]="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+                if(Microsoft.AspNetCore.Http.HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/draft") && context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is {IsReadOnly:false} body)body.MaxRequestBodySize=b.app.Services.GetRequiredService<DocumentOptions>().MaximumBytes+65536;
+                await next();});
             if(port is not null)b.app.UseStaticFiles();b.app.UseRouting();b.app.UseRateLimiter();b.app.UseAuthentication();b.app.UseAuthorization();b.app.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
             b.app.MapGet("/test-session",async(Microsoft.AspNetCore.Http.HttpContext context)=>{await context.SignInAsync(EnvelopeStorageAuthorization.SenderScheme,b.run.H.Sender,new AuthenticationProperties{ExpiresUtc=b.run.Clock.GetUtcNow().AddHours(2),AllowRefresh=false});return "ok";});
             b.key=new BlobServiceClient(storage,new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03)).GetBlobContainerClient("keys").GetBlobClient(name+".xml");
@@ -175,12 +179,21 @@ public sealed class SenderDocumentRetentionTests(SqlDatabaseFixture fixture):ICl
         }
         internal Task<HttpResponseMessage> Get(string path)=>Request(new HttpRequestMessage(HttpMethod.Get,path));
         internal Task<HttpResponseMessage> Post(string path,Dictionary<string,string> form)=>Request(new HttpRequestMessage(HttpMethod.Post,path){Content=new FormUrlEncodedContent(form)});
-        private async Task<HttpResponseMessage> Request(HttpRequestMessage request)
+        internal Task<HttpResponseMessage> Upload(string page,byte[] bytes,string filename,string mime="application/octet-stream",bool csrf=true,string? version=null,bool extra=false,string? publicId=null,bool json=false,CancellationToken ct=default)
+        {
+            var form=new MultipartFormDataContent();form.Add(new StringContent(version??SenderSendPageTests.Flow.Value(page,"Version")),"Version");
+            if(csrf)form.Add(new StringContent(SignaturePageTests.Browser.Token(page)),"__RequestVerificationToken");
+            var file=new ByteArrayContent(bytes);file.Headers.ContentType=new(mime);form.Add(file,"Upload",filename);
+            if(extra)form.Add(new ByteArrayContent(bytes),"Other","extra.pdf");
+            var request=new HttpRequestMessage(HttpMethod.Post,(publicId is null ? Path : "/draft/"+publicId)+"?handler=Upload"){Content=form};
+            if(json)request.Headers.Accept.ParseAdd("application/json");return Request(request,ct);
+        }
+        private async Task<HttpResponseMessage> Request(HttpRequestMessage request,CancellationToken ct=default)
         {
             client.DefaultRequestHeaders.Remove("Cookie");if(cookies.Count>0)client.DefaultRequestHeaders.Add("Cookie",string.Join("; ",cookies.Select(x=>x.Key+"="+x.Value)));
             using(request)
             {
-                var response=await client.SendAsync(request);if(response.Headers.TryGetValues("Set-Cookie",out var values))foreach(var value in values){var pair=value.Split(';')[0].Split('=',2);if(pair[1].Length==0)cookies.Remove(pair[0]);else cookies[pair[0]]=pair[1];}return response;
+                var response=await client.SendAsync(request,ct);if(response.Headers.TryGetValues("Set-Cookie",out var values))foreach(var value in values){var pair=value.Split(';')[0].Split('=',2);if(pair[1].Length==0)cookies.Remove(pair[0]);else cookies[pair[0]]=pair[1];}return response;
             }
         }
         public async ValueTask DisposeAsync(){client?.Dispose();if(app is not null)await app.DisposeAsync();if(key is not null)await key.DeleteIfExistsAsync();await run.DisposeAsync();}

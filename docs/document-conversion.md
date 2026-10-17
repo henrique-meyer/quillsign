@@ -1,8 +1,8 @@
-# Internal DOCX conversion foundation
+# DOCX conversion and sender upload
 
 `GotenbergDocxConverter` sends one DOCX to the configured Gotenberg LibreOffice conversion route, then validates and normalizes the returned PDF with the same PDFsharp byte/page/geometry rules as PDF upload. It returns the exact normalized bytes, original SHA-256, normalized SHA-256 and page geometry. The caller keeps ownership of the original input stream.
 
-The internal `DocxDocumentWorkflow` now joins package validation, conversion, original/PDF storage, audit and upload retention. Public upload remains PDF-only; public format selection and browser integration follow separately. No public handler or supported Conversion work producer invokes it yet. Other Office formats remain future work.
+`DocxDocumentWorkflow` joins package validation, conversion, original/PDF storage, audit and upload retention. The verified-sender upload handler selects this workflow only for a `.docx` filename when conversion is configured. Browser MIME labels grant no trust: the package gate validates the actual content before the ordinary Gotenberg HTTP request. The resulting normalized PDF is previewed/downloaded and requires explicit confirmation before preparation continues. No automatic Conversion work producer is used. Other Office formats remain future work.
 
 | Setting | Default / requirement |
 | --- | --- |
@@ -38,9 +38,9 @@ The supported profile is unencrypted, non-macro DOCX with stored/deflated ZIP en
 
 Actual decompression and parsing are bounded independently of declared ZIP sizes. Caller cancellation propagates; a validation deadline or unsupported/malformed package returns a generic rejection without uploaded names, paths, XML or inner exceptions. The isolated no-egress converter remains required: package validation is not a substitute for running LibreOffice with its existing network restrictions.
 
-Synthetic validation covers normal and streaming ZIP packages, exact byte/hash ownership, traversal/aliases, alternate ZIP metadata, CRC/encryption/expansion limits, active content, fragmented field codes, XML entities/depth, cancellation and a local receiver that confirms resources/hyperlinks are never fetched. The same validated two-page source also passes through the real local Gotenberg service; both output pages are rendered and inspected. Public DOCX intake remains dependent work.
+Synthetic validation covers normal and streaming ZIP packages, exact byte/hash ownership, traversal/aliases, alternate ZIP metadata, CRC/encryption/expansion limits, active content, fragmented field codes, XML entities/depth, cancellation and a local receiver that confirms resources/hyperlinks are never fetched. The same validated two-page source also passes through the real local Gotenberg service; both output pages are rendered and inspected.
 
-## Internal sender document workflow
+## Sender document workflow
 
 `DocxDocumentWorkflow.UploadAsync` checks the current sender, draft revision and verified retention deadline before reading the package or contacting the converter. It validates the owned DOCX and compares the client's original hash with the gate hash. After conversion it checks authority, revision and deadline again before writing new objects. No SQL connection or transaction is held during conversion; an already-open caller transaction is rejected.
 
@@ -49,3 +49,11 @@ The original DOCX and exact normalized PDF are stored separately. `OriginalMime`
 Storage and locked SQL publication share the existing PDF upload transaction. A successful replacement clears old preview confirmation, fields and stale suggestions; PDF uploads retain their existing audit shape. The first successful configured demo upload captures one fixed retention deadline, and replacements/settings changes do not reset it. Known failures clean only new operation-owned objects. Uncertain commit acknowledgements preserve potentially committed pairs; retrying the old revision fails before another conversion. The sender must still confirm the normalized PDF explicitly.
 
 SQL Server/Azurite tests cover both replacement directions, immutable source/hash/media evidence, preview confirmation, concurrent revisions, revoked authority, cutoff crossings, rollback and uncertain commits. A real isolated Gotenberg capture supplies an exact synthetic source/response fixture for the persistence test, which runs the client's PDF normalization and verifies stored content, retention/audit and confirmation. Live converter transport and SQL persistence are tested at their separate boundaries; no combined live SQL/converter or hosted-flow claim is made.
+
+## Public upload and preview
+
+The verified-sender form accepts exactly one PDF, supported PNG/JPEG, or DOCX when a usable converter origin and supported limits are configured. Disabled or invalid converter configuration omits DOCX from the choices and returns a generic recoverable error for an attempted DOCX upload. Client extension/size checks are hints; the server retains authorization, CSRF, rate/body limits, actual content validation and row-version checks. It never falls back to another parser for invalid content.
+
+Successful upload redirects to the clean draft URL and displays only the normalized PDF. Conversion failure preserves the previous source and preparation. Successful replacement clears the previous confirmation and fields, preserves the first upload's retention cutoff, and requires a new explicit confirmation. Original files have no public download route. Senders must inspect converted layout/fonts and export their own PDF if the supported profile does not produce a suitable result.
+
+Browser checks exercise desktop/mobile/keyboard upload, both pages, zoom, verified download, explicit confirmation, failure preservation and deliberate recovery. The DOCX browser flow replays the exact response captured from the real isolated converter only after verifying the source bytes, while using actual package validation, normalization and SQL/Azurite persistence. Its downloaded PDF matches the persisted hash. This controls the external transport boundary; live combined converter connectivity and hosted end-to-end validation remain unverified.

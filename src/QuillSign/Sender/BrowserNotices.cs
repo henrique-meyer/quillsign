@@ -39,7 +39,7 @@ public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvi
         NoticeCode.InvalidLink => "This verification link is invalid, expired, or already used. Request a new link to start a draft.",
         NoticeCode.SessionRequired => "Verify your email to open a draft. Your previous session may have expired.",
         NoticeCode.Unavailable => "Email delivery is currently unavailable. Please try again later.",
-        NoticeCode.DocumentUploaded => "PDF uploaded. Review the preview, then confirm it matches your document.",
+        NoticeCode.DocumentUploaded => "Document uploaded. Review the PDF preview, then confirm it matches your document.",
         NoticeCode.PreviewConfirmed => "Preview confirmed. Your document is still a draft; it hasn't been sent for signing.",
         NoticeCode.SignerSaved => "Signer saved. No invitation has been sent.",
         NoticeCode.SignerRemoved => "Signer removed from this draft.",

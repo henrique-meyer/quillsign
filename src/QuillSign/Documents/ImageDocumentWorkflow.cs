@@ -2,7 +2,7 @@ using System.Security.Claims;
 
 namespace QuillSign.Documents;
 
-// Internal backend only; the public upload handler still accepts PDF files.
+// Content-verified image conversion and atomic sender document persistence.
 public sealed class ImageDocumentWorkflow(DocumentWorkflow documents,ImagePdfConverter converter)
 {
     public async Task<bool> UploadAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,string filename,Stream input,

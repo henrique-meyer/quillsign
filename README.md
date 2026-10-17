@@ -29,11 +29,11 @@ Synthetic end-to-end flows have local automated and browser coverage. Hosted com
 | Background work | SQL durable work/outbox records, Azure Storage Queues and Blob recovery hints; finite Container Apps jobs |
 | Email | Amazon SES v2 and SMTP/Mailpit; ACS remains a future optional adapter |
 | Hosting and delivery | Azure Container Apps Consumption, GitHub Actions, GHCR and Bicep; CloudFormation for AWS resources |
-| Office conversion | Gotenberg/LibreOffice sidecar, validated DOCX packages and an internal document workflow; public intake integration remains pending |
-| Image conversion | [Validated PNG/JPEG conversion and internal document workflow](docs/image-conversion.md) with StbImageSharp (MIT) and PDFsharp; public intake integration remains pending |
+| Office conversion | Gotenberg/LibreOffice sidecar for validated DOCX packages when configured; sender upload, normalized PDF preview and explicit confirmation |
+| Image conversion | [Validated PNG/JPEG sender upload and PDF preview](docs/image-conversion.md) with StbImageSharp (MIT) and PDFsharp |
 | Deferred enhancement | Azure OpenAI suggestions, after the remaining project work is complete |
 
-There is no CAPTCHA. Verified email, request limits, daily caps and bounce/complaint suppression provide abuse controls. The [internal DOCX conversion foundation](docs/document-conversion.md) is tested locally; the public upload screen still accepts PDFs only. AI field and signer-role suggestions, including heuristic automatic placement, are deferred until the remaining non-AI project work and hosted validation are complete. Manual field placement is the current workflow; AI is not required for project completion or demo release.
+There is no CAPTCHA. Verified email, request limits, daily caps and bounce/complaint suppression provide abuse controls. Verified senders can upload PDF, supported [PNG/JPEG images](docs/image-conversion.md), and [DOCX documents](docs/document-conversion.md) when the isolated converter is configured. The sender must review and explicitly confirm the normalized PDF. Other Office formats remain future work; hosted conversion enablement is separate from implementation. AI field and signer-role suggestions, including heuristic automatic placement, are deferred until the remaining non-AI project work and hosted validation are complete. Manual field placement is the current workflow; AI is not required for project completion or demo release.
 
 ### Timestamp, immutable storage and retention setup
 
@@ -207,7 +207,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 - Hosted readiness: operator disclosures, TSA configuration and rate coordination, immutable final storage, retention and end-to-end validation.
 - Environment-configurable per-document demo retention from upload and automatic purge, with matching immutable protection and recovery-copy handling.
 - Automatic expiry scheduling, reminders, invitation resend, contact correction and document lookup.
-- Office/image document conversion.
+- Remaining Office formats (DOC, ODT, RTF, TXT, PPTX and XLSX) and hosted conversion validation.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - After the rest of the project is complete: optional, sender-approved AI field and signer-role suggestions.
 
