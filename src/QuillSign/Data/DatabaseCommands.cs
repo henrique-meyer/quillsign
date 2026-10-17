@@ -89,6 +89,8 @@ public static class DatabaseCommands
             await DemandDenied(() => db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM [dbo].[AuditEvents] WHERE [Id] = {audit.Id}"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionCandidates] SET [SnapshotVersion] = 'forbidden' WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[CompletionCandidates] WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[DocumentRetentionSnapshots] SET [Days]=1 WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[DocumentRetentionSnapshots] WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionSealOutputs] SET [RecipeVersion] = 'forbidden' WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[CompletionSealOutputs] WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionPublicationIntents] SET [RetentionDays]=0 WHERE 1 = 0"));

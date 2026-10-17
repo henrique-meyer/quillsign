@@ -60,6 +60,19 @@ public sealed class Envelope : IVersionedRecord
     public byte[] RowVersion { get; set; } = [];
 }
 
+public sealed class DocumentRetentionSnapshot
+{
+    public Guid EnvelopeId { get; set; }
+    public string PolicyVersion { get; set; } = "";
+    public int Days { get; set; }
+    public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset DeleteAfter { get; set; }
+    public Guid OriginalObjectId { get; set; }
+    public byte[] OriginalSha256 { get; set; } = [];
+    public Guid PdfObjectId { get; set; }
+    public byte[] PdfSha256 { get; set; } = [];
+}
+
 public sealed class Signer : IVersionedRecord
 {
     public Guid Id { get; set; } = Guid.NewGuid();

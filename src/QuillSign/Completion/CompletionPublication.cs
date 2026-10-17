@@ -30,6 +30,8 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
     {
         ct.ThrowIfCancellationRequested(); if(id==Guid.Empty)return null;
         if(await Result(id,ct) is not null)return await ReadAsync(id,ct);
+        if(await db.DocumentRetentionSnapshots.AnyAsync(x=>x.EnvelopeId==id,ct))
+            throw new CompletionPublicationUnavailableException("Upload-based demo retention requires final storage alignment before publication.");
         var candidate=await candidates.ReadAsync(id,ct); if(candidate is null)return await ReadAsync(id,ct);
         var pair=await seals.ReadAsync(id,ct); if(pair is null)return null;
         var intent=await PrepareIntent(candidate,pair,ct); if(intent is null)return await ReadAsync(id,ct);

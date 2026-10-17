@@ -47,9 +47,9 @@ Configure these values through environment variables or private settings, using 
 | `Seal__TsaTrustedRootPaths__0` | Absolute runtime path to a verified public TSA root certificate; indexed entries support multiple roots |
 | `Seal__TimestampCoordination__Enabled` | Enable shared Blob-lease request coordination; required for FreeTSA |
 | `Retention__CompletedDays` | Retention interval for completed ordinary requests |
-| `Demo__PurgeAfterDays` | Positive retention interval for completed demo requests |
+| `Demo__PurgeAfterDays` | Positive demo interval; new uploads freeze an upload-based retention snapshot |
 
-The current publication intervals start at completion and are unset by default. They do not schedule deletion. The planned demo policy instead keeps each document for an environment-configurable interval from upload, with seven days selected for the demo. Applying that fixed deadline throughout signing and completion, aligning immutable protection, and implementing automatic purge are still required. Deletion must handle stored versions and disclose backup/soft-delete recovery windows accurately; setting a day count alone does not guarantee erasure.
+Retention settings are unset by default and do not schedule deletion. The [upload-retention foundation](docs/document-retention.md) freezes an exact per-document deadline on the first successful configured demo upload; replacements and setting changes cannot extend it. Seven days is selected for the demo. Existing publication intervals still start at completion, so publication of newly enrolled snapshots fails closed until final protection is aligned. Signing/read expiry, automatic purge and hosted validation remain required before enabling the policy. Deletion must handle stored versions and disclose backup/soft-delete recovery windows accurately; setting a day count alone does not guarantee erasure.
 
 ## Run locally
 
