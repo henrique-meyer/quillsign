@@ -848,6 +848,8 @@ Update matching docs/plan.md before implementation; keep To Do until QUILS-58 me
 
 Implementation design: New Send audit evidence binds the stable expiry job identity and exact UTC deadline. Prepare the row and hint under the existing Send transaction after frozen source/disclosure evidence exists, then publish both wakeups after commit. Canonical reads verify recorded schedules without creating them. Replay reuses queued work and preserves live/terminal jobs; legacy records remain opt-in through trusted resume. Source verification runs after the new transaction-owned row exists to avoid a circular binding dependency. No GET creates or republishes work.
 
+Validation: Focused SQL/Azurite scheduling, Send, expiry and private-status cases pass, including rollback, lost acknowledgements, queued recovery and preservation of live/failed work. Real synthetic desktop/mobile Send flows pass with keyboard affirmation, stale-review reload, uncertain-commit confirmation, disabled delivery and clean private-status redirects. Storage recovery publishes only the three in-memory invitations; the worker expires all three requests once, with unchanged frozen PDF hashes. The mobile status has no horizontal overflow. Legacy regression fixtures now set deadlines before Send and allow the due expiry wake alongside recovered completion. Model, all 11 Node cases, pinned vendor/MIT distributions and 78 Markdown links pass; full regression, secret scans and exact-head CI gate merge.
+
 ## QUILS-61: Coordinate FreeTSA timestamp requests across workers
 
 Status: Done. Merged as PR #65; native Jira Done. Hosted FreeTSA CA and runtime configuration remain separate rollout work.
