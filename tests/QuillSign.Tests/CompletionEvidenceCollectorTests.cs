@@ -196,7 +196,7 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
         private SqlDatabaseFixture fixture=null!;
         public async Task<T> Use<S,T>(Func<S,Task<T>> action) where S:notnull {using var scope=H.App.Services.CreateScope(); return await action(scope.ServiceProvider.GetRequiredService<S>());}
         public async Task<Envelope> Refresh() {await using var db=fixture.Open(); return Envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==Envelope.Id);}
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool finishLast=true)
         {
             var run=new Run {fixture=fixture,H=await Shared.Create(fixture,browser:true)}; var email="completion-"+Guid.NewGuid().ToString("N")+"@example.invalid";
             _=await run.Use((SenderWorkflow s)=>s.RequestAsync(email,"127.0.0.1","Synthetic sender")); Assert.True(await run.H.Once());
@@ -219,11 +219,11 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
                 await db.SaveChangesAsync();
             }
             await run.Refresh(); Assert.NotNull(await run.Use((SendDraftWorkflow s)=>s.SendAsync(run.Sender,run.Envelope.PublicId,run.Envelope.RowVersion,true,true,SenderSendStatement.Version,"127.0.0.1","Synthetic sender")));
-            for(var i=1;i<=2;i++)await run.SignNext(i<2 || publishLast);
+            for(var i=1;i<=2;i++)await run.SignNext(i<2 || publishLast,i<2 || finishLast);
             await run.Refresh(); run.Probe=new(run.H.Blobs.Inner); return run;
         }
         private static string Token(Shared h) {var raw=Regex.Match(h.Sender.Last!.Text,"token=([A-Za-z0-9_-]{43})").Groups[1].Value; Assert.Equal(43,raw.Length); return raw;}
-        private async Task SignNext(bool publish)
+        private async Task SignNext(bool publish,bool finish)
         {
             Assert.True(await H.Once()); var identity=(await Use((SignerAccess s)=>s.RedeemAsync(Token(H),"127.0.0.1","Synthetic signer")))!; Assert.NotNull(identity);
             var principal=SignerAccessConfiguration.Principal(identity); LastSigner=principal;
@@ -241,6 +241,7 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
             var review=(await Use((SignerReviewCandidates s)=>s.PrepareAsync(principal,Envelope.PublicId,"127.0.0.1","Synthetic signer")))!;
             LastReviewReceipt=review.Receipt;
             Assert.NotNull(await Use((SignerReviewCandidates s)=>s.ReadAsync(principal,Envelope.PublicId,review.Receipt)));
+            if(!finish)return;
             Assert.Equal(SignerFinishOutcome.Accepted,(await Use((SignerFinish s)=>s.AcceptAsync(principal,Envelope.PublicId,review.Receipt,true,SignerFinishStatement.Version,"127.0.0.1","Synthetic signer"))).Outcome);
             H.Clock.Advance(TimeSpan.FromSeconds(3)); if(publish)Assert.True(await H.Once());
         }

@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using QuillSign.Data;
 using QuillSign.Storage;
 
@@ -22,6 +23,8 @@ public static class SenderConfiguration
         services.AddSingleton(options);
         services.AddSingleton<SenderAvailability>();
         services.AddScoped<SenderWorkflow>();
+        services.AddScoped<SenderVoid>();
+        services.TryAddScoped<QuillSign.Signing.SignerCheckpointState>();
         services.AddScoped<Func<Work.EmailOutboxWriter>>(sp => () => sp.GetRequiredService<Work.EmailOutboxWriter>());
         services.AddScoped<Func<SenderWorkflow>>(sp => () => sp.GetRequiredService<SenderWorkflow>());
         services.AddScoped<AuditWriter>();
