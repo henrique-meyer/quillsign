@@ -25,6 +25,15 @@ services:
       Sender__WindowMinutes: ${Sender__WindowMinutes:-10}
       Documents__MaximumBytes: ${Documents__MaximumBytes:-10485760}
       Documents__MaximumPages: ${Documents__MaximumPages:-20}
+      Demo__PurgeAfterDays: ${Demo__PurgeAfterDays:-}
+      ElectronicRecords__Profile: ${ElectronicRecords__Profile:-}
+      ElectronicRecords__PaperCopyInstructions: ${ElectronicRecords__PaperCopyInstructions:-}
+      ElectronicRecords__PaperCopyFees: ${ElectronicRecords__PaperCopyFees:-}
+      ElectronicRecords__WithdrawalInstructions: ${ElectronicRecords__WithdrawalInstructions:-}
+      ElectronicRecords__WithdrawalConsequences: ${ElectronicRecords__WithdrawalConsequences:-}
+      ElectronicRecords__ContactUpdateInstructions: ${ElectronicRecords__ContactUpdateInstructions:-}
+      ElectronicRecords__AccessRequirements: ${ElectronicRecords__AccessRequirements:-}
+      ElectronicRecords__RetentionNotice: ${ElectronicRecords__RetentionNotice:-}
     ports:
       - "127.0.0.1:${QUILLSIGN_APP_PORT:-5080}:8080"
     networks: [services, conversion]

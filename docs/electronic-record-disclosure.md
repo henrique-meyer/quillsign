@@ -20,6 +20,18 @@ Environment names use `ElectronicRecords__...`. Missing, blank, oversized or inv
 
 The template follows the project's engineering acceptance targets. ESIGN's detailed consumer consent provisions apply when electronic records replace information legally required to be supplied to a consumer in writing; operators must determine applicability and other transaction/form/delivery rules. For that situation, the statutory subjects include paper options, withdrawal and its terms, scope, contact updates, copies/fees and access/retention requirements. Sources: [15 USC §7001(c)](https://www.govinfo.gov/content/pkg/USCODE-2024-title15/html/USCODE-2024-title15-chap96-subchapI-sec7001.htm), [current LII codification](https://www.law.cornell.edu/uscode/text/15/7001). See the broader [requirements guide](e-signature-requirements.md).
 
+## Explicit synthetic-demo profile
+
+Leave `ElectronicRecords__Profile` blank for operator-supplied policies. An instance intended solely for synthetic demonstrations may explicitly select `synthetic-demo-v1`, leaving the seven operator policy fields empty. Unknown profiles and mixed profile/operator-policy configuration fail snapshot construction. The committed examples select no profile.
+
+Local Compose forwards these settings and optional `Demo__PurgeAfterDays` from private `.env` or process variables to the app and optional worker. Configure retention before the first upload: existing unenrolled documents require an explicit migration and cannot acquire a new deadline through this profile. Restart/recreate local services only when you deliberately want to apply changed settings. This does not configure the hosted instance.
+
+The demo profile requires an authorized review or Send to supply the verified immutable first-upload retention context for an enrolled demo envelope. The public pure builder cannot infer enrollment from an identifier. Non-demo, historical unenrolled and unverifiable records cannot use this profile. It uses saved retention days and the exact UTC deadline; later environment changes, replacement, Send and completion cannot extend that policy.
+
+Its separate versioned text prohibits real-life contracts and describes the absence of paper-copy, consent-withdrawal and post-send contact-correction services without claiming a statutory waiver. It preserves decline before Finish and requires PDF access/download capability and a reader for saved copies. It states that automatic physical deletion is not implemented yet and makes no promise of instant backup, version, soft-delete or log erasure. A future purge release must update that disclosure version before promising automated deletion. No hosted configuration or delivery service is enabled by this code.
+
+Review and Send use the same canonical demo text. Consent verifies the frozen saved body, version and hash, independently of later profile or operator-setting changes. The existing operator template and historical snapshot verification remain unchanged.
+
 ## Exact snapshot contract
 
 The builder includes the disclosure version, exact public envelope identifier, trimmed document title and normalized runtime sender contact in the text header. Policy text and line endings normalize to NFC/LF without mutating the options. Inputs have explicit limits; title/context must stay on one line, and policies reject controls and hidden formatting characters. Each policy allows 4,000 UTF-16 code units; the completed body allows 32,768. UTF-8 hashing uses no BOM and rejects invalid Unicode. Placeholders expand once, so inserted markup or placeholder-like text remains literal plain text. A future HTML view must encode it.

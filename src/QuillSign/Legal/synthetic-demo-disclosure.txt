@@ -1,0 +1,22 @@
+Electronic Record and Signature Disclosure
+Version: {{version}}
+Envelope: {{public_id}}
+Document: {{title}}
+Sender contact: {{sender_contact}}
+
+Synthetic demonstration only
+This instance is for synthetic demonstrations. Do not use it for real-life contracts or legally significant documents. Electronic participation is voluntary. Consent to electronic records does not itself sign the document.
+
+Demo service limitations
+This demo offers no paper-copy service, consent-withdrawal service or post-send contact-detail correction service. No paper copies are provided and no paper-copy fee is charged. These limitations describe this synthetic instance; they do not waive statutory rights for real transactions. You may decline before Finish. Declining does not undo an earlier recorded action. If these limitations are unsuitable, stop and do not use this demo.
+
+Accessing and saving records
+You need an internet connection and a current browser supporting JavaScript, cookies, PDF display and file downloads, plus a place to save the downloaded PDFs. To read saved copies, use Adobe Acrobat Reader or another PDF reader; no particular paid reader is required. Open the representative PDF and confirm access only if you can access and retain the electronic form being used. Browser or device compatibility is not guaranteed.
+
+Fixed demo retention
+The configured retention period for this document is {{days}} days from its first successful upload at {{started_at}}. Its fixed deadline is {{delete_after}}. Replacing the source, sending, signing or completing does not extend this deadline. Download completed copies before the deadline and keep your own copies.
+Automatic physical deletion is not implemented yet. Stored content may remain until the operator deletes it. This instance does not promise immediate erasure of backups, soft-deleted objects, versions or service logs. Do not rely on this demo to retain records for you.
+Retention policy reference: {{retention_digest}}
+
+Before agreeing
+Review this disclosure and the PDF before making separate affirmative electronic-record consent and access confirmations. Adopting a signature, applying it to fields and choosing Finish are separate deliberate actions. No real agreement should be made using this synthetic demo.
