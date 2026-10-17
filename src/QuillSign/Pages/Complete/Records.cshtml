@@ -1,0 +1,17 @@
+@page "/complete/{publicId:regex(^[a-f0-9]{{32}}$)}"
+@model QuillSign.Pages.Complete.RecordsModel
+@{ ViewData["Title"]="Your completed records"; }
+@section Styles { <link rel="stylesheet" href="~/review.css" asp-append-version="true" /> }
+<section class="draft-review"><p class="eyebrow">Private completed records</p><h1>Your completed records</h1>
+@if(Model.Message is not null) { <p class="document-error" role="alert">@Model.Message</p> }
+@if(Model.Records is { } records) {
+<h2>@records.Title</h2><p>The request completed at @records.CompletedAt.ToString("u"). Save both final files for your records.</p>
+<form method="post" asp-page-handler="Download"><input type="hidden" name="kind" value="executed" /><button type="submit">Download executed PDF</button></form>
+<p>The executed PDF includes every signer's saved entries and the certificate.</p>
+<form method="post" asp-page-handler="Download"><input type="hidden" name="kind" value="certificate" /><button type="submit">Download certificate of completion</button></form>
+<p>The standalone certificate records the signing and completion evidence.</p>
+<p>This download session ends at @records.Identity.ExpiresAt.ToString("u").</p>
+@if(records.RetainedUntil is { } until) { <p>Server retention ends at @until.ToString("u"). Save your copies before then.</p> }
+}
+<p><a href="/complete/@RouteData.Values["publicId"]">Refresh completed records</a></p>
+<p><a href="/complete/access">Use a completion access code</a></p></section>

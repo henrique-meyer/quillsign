@@ -1,6 +1,14 @@
-# Completed-record retrieval backend
+# Completed-record retrieval
 
-QUILS-49 provides the internal authentication and exact-file reads needed by later completion-email backup links. It covers the frozen sender, signers and completion recipients. It does not expose a public issuer, redemption page, cookie login flow or completion-mail producer.
+Completed-record access covers the frozen sender, signers and completion recipients. QUILS-49 provides party-bound authentication and exact-file reads; QUILS-50 adds the private browser entry and downloads. Completion-mail issuance, attachments, delivery and lookup/resend remain later supported slices.
+
+## Opening and saving records
+
+Open a supported completion link with a fragment access code (`/complete/access#token=<code>`), or enter its code manually at `/complete/access`. The browser removes the fragment from history promptly. Select Continue to prepare the link, then Open records to use it once. Preparing a link does not consume it or log you in. If another tab prepares a different link, the original confirmation fails instead of silently opening that other link.
+
+The completed-record page shows the request's completion time and the current session/retention limits. Select Download executed PDF or Download certificate of completion to prepare and save the exact published files. The executed PDF includes all saved signer entries and the certificate; the separate certificate provides a standalone copy of the evidence. Save both before access or server retention ends.
+
+Access is readonly and does not restore signing or editing. A used or expired link cannot create another session. If opening access could not be confirmed, the link may already be consumed; return to records if you already opened them, or ask the sender for another copy. Missing or unverifiable storage shows a private retry message and never regenerates or replaces the packet. Refresh manually to retry.
 
 Completed retrieval has its own `CompletionAccess` token purpose and `QuillSign.CompletionReader` identity. It cannot authorize sender edits, signer fields, Finish, worker operations or direct blob access. The existing sender/signer download flow continues to require its original live sessions; this backend can operate after those sessions and the signing deadline expire, while the completed record remains retained.
 
@@ -25,4 +33,4 @@ Rollback returns no transport/session and does not leave pending entities to be 
 
 `CompletionAccess:LinkHours` defaults to 24 and permits 1–168 hours. `CompletionAccess:SessionHours` defaults to 1 and permits 1–24 hours. Both are shortened by the completed record's current retention boundary. These settings control authentication lifetimes; they do not select a legal retention policy or change operator disclosure settings.
 
-The future HTTP slice must validate its named authentication scheme, keep receipts in private bounded cookies/body, use explicit antiforgery-protected redemption and download preparation, and prevent ordinary GETs from consuming tokens or mutating SQL. Completion attachments, delivery, lookup/resend and live email remain separate supported work.
+The HTTP flow uses its dedicated named authentication ticket and separate private bounded receipt cookie, with the original backend expiry and no sliding renewal. Explicit antiforgery-protected, rate-limited POSTs redeem links or prepare downloads. Ordinary page/file GETs never consume tokens, prepare grants or mutate domain state. File grants bind the reader audience, full authenticated cookie, receipt, party, publication/revision, exact kind/hash/version and fresh nonce. Authorization is checked again after I/O and under the final parent lock. Existing sender/signer downloads remain separate audiences. Cookie clearing is a normal-browser convenience; an authenticated copy of a grant can repeat readonly reads until its original two-minute/session/retention limit. Preparing or serving a download does not prove receipt or saving.

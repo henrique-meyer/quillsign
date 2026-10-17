@@ -12,10 +12,10 @@ public sealed class FinalModel(CompletionDownloads downloads) : PageModel
     public async Task<IActionResult> OnGetAsync(string audience,string publicId,string kind,CancellationToken ct)
     {
         Response.Headers.CacheControl="no-store"; Response.Headers["Referrer-Policy"]="no-referrer"; Response.Headers["X-Content-Type-Options"]="nosniff";
-        if(audience is not ("draft" or "sign") || !Guid.TryParseExact(publicId,"N",out var id) || id==Guid.Empty)return NotFound();
-        ConfirmationUrl="/"+audience+"/"+publicId+(audience=="draft" ? "/sent" : "/confirmed");
+        if(audience is not ("draft" or "sign" or "complete") || !Guid.TryParseExact(publicId,"N",out var id) || id==Guid.Empty)return NotFound();
+        ConfirmationUrl="/"+audience+"/"+publicId+(audience=="draft" ? "/sent" : audience=="sign" ? "/confirmed" : "");
         try {
-            var file=await downloads.ReadAsync(HttpContext,publicId,audience=="draft" ? PartyType.Sender : PartyType.Signer,kind,ct);
+            var file=audience=="complete" ? await downloads.ReadReaderAsync(HttpContext,publicId,kind,ct) : await downloads.ReadAsync(HttpContext,publicId,audience=="draft" ? PartyType.Sender : PartyType.Signer,kind,ct);
             if(file is not null)return File(file.Bytes,"application/pdf",file.FileName);
             Message="Prepare a new download from your private confirmation page while your session is live."; Response.StatusCode=404; return Page();
         }

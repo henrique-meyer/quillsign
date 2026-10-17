@@ -93,6 +93,14 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         await tx.CommitAsync(ct); return new(i,saved.Title,saved.CompletedAt,saved.PurgeAfter);
     }
 
+    // Download transactions already hold the parent lock; never open a nested transaction.
+    internal async Task<CompletionReaderView?> AuthenticateLockedAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Completion session validation requires its parent transaction.");
+        var i=protection.Read(receipt); if(i?.PublicId!=publicId || !CompletionAccessProtection.Matches(principal,i))return null;
+        var saved=await SessionLocked(i,ct); return saved is null ? null : new(i,saved.Title,saved.CompletedAt,saved.PurgeAfter);
+    }
+
     public async Task<CompletionReaderFile?> ReadAsync(ClaimsPrincipal principal,string publicId,string? receipt,FinalDocumentKind kind,CancellationToken ct=default)
     {
         if(kind is not (FinalDocumentKind.Executed or FinalDocumentKind.Certificate))return null;

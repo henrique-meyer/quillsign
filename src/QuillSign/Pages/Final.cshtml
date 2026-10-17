@@ -1,4 +1,4 @@
-@page "/{audience:regex(^(draft|sign)$)}/{publicId}/final/{kind}"
+@page "/{audience:regex(^(draft|sign|complete)$)}/{publicId}/final/{kind}"
 @model QuillSign.Pages.FinalModel
 @{ ViewData["Title"]="Download unavailable"; }
 @section Styles { <link rel="stylesheet" href="~/review.css" asp-append-version="true" /> }

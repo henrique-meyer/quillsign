@@ -54,6 +54,7 @@ builder.Services.AddScoped<Func<SenderSentStatus>>(sp=>()=>sp.GetRequiredService
 builder.Services.AddScoped<SenderSendReadiness>();
 builder.Services.AddCompletionDownloads();
 builder.Services.AddCompletionAccess(builder.Configuration);
+builder.Services.AddCompletionReaderBrowser(builder.Environment);
 var app = builder.Build();
 app.UseForwardedHeaders();
 
