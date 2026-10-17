@@ -1,5 +1,7 @@
 # Fixed document retention
 
+The [bounded purge storage dependency](demo-purge-storage.md) provides exact per-envelope inventory/deletion authority. It is not registered or scheduled and does not yet remove SQL records; durable purge coordination remains required.
+
 `Demo__PurgeAfterDays` is an optional positive integer from 1 through 36500. It remains unset in examples. Configure actual deployment values privately; the selected demo policy is seven days from the first successful document upload.
 
 For a stored demo envelope, the first successful upload freezes one immutable `DocumentRetentionSnapshot` in the upload transaction. It records the policy version, selected days, UTC start and exact deletion deadline, and the first original/normalized object identities and hashes. The first upload audit binds the complete snapshot. A failed upload starts no interval; a committed upload whose acknowledgement is lost retains its original snapshot and readable objects.
