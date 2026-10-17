@@ -6,6 +6,7 @@
 <p class="eyebrow">Your signature and initials</p>
 <h1>@Model.Context.Title</h1>
 <p>For @Model.Context.SignerName · <a asp-page="/Sign/Index" asp-route-publicId="@Model.Context.Identity.PublicId">Review the document and disclosure</a></p>
+<p><a asp-page="/Sign/Decline" asp-route-publicId="@Model.Context.Identity.PublicId">Decline to sign</a></p>
 @if(Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
 <div asp-validation-summary="All" class="validation" role="alert"></div>
 @if(Model.Context.SignatureAdoptionId is not null) {

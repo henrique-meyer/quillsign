@@ -15,6 +15,7 @@
 @if(data.Marks is null) { <p>No marks have been adopted. <a asp-page="/Sign/Signature" asp-route-publicId="@data.Snapshot.PublicId">Adopt your signature and initials</a>.</p> }
 else { <p>Your current adopted marks were verified.</p> }
 <p><a class="button-link" asp-page="/Sign/Fields" asp-route-publicId="@data.Snapshot.PublicId">Return to fields</a> · <a asp-page="/Sign/Signature" asp-route-publicId="@data.Snapshot.PublicId">Review or replace adopted marks</a></p>
+<p><a asp-page="/Sign/Decline" asp-route-publicId="@data.Snapshot.PublicId">Decline to sign</a></p>
 <form method="post" asp-page-handler="Prepare"><button type="submit" disabled="@(data.Missing!=0 || data.Stale!=0 || data.Marks is null)">@(Model.Candidate is null ? "Prepare exact review PDF" : "Prepare review again")</button></form>
 @if(Model.Candidate is { } candidate) {
 <section class="start-card">
