@@ -105,7 +105,7 @@ public sealed class UploadRetentionTests(SqlDatabaseFixture fixture) : IClassFix
     {
         await using var h=await Shared.CreateAsync(fixture,demo:true);var clock=new Clock();h.Time=clock;h.Retention.PurgeAfterDays=7;Assert.True(await h.UploadAsync(PdfFixtures.Create()));
         var row=await Read(h);var before=await h.StateAsync();clock.Now=row.DeleteAfter;
-        await Assert.ThrowsAsync<DocumentRejectedException>(()=>h.UploadAsync(PdfFixtures.Create(1)));Assert.Equal(before.RowVersion,(await h.StateAsync()).RowVersion);
+        await Assert.ThrowsAsync<DocumentRetentionExpiredException>(()=>h.UploadAsync(PdfFixtures.Create(1)));Assert.Equal(before.RowVersion,(await h.StateAsync()).RowVersion);
         Assert.Equal(UploadRetention.Digest(row),UploadRetention.Digest(await Read(h)));
     }
 

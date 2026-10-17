@@ -228,6 +228,8 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
         public int Writes => writes;
         public int FailWrite { get; set; }
         public bool CorruptRead { get; set; }
+        public Action? AfterRead {get;set;}
+        public int Reads {get;private set;}
         public async Task WriteAsync(ClaimsPrincipal sender, DocumentBlob blob, Stream source, long length, CancellationToken ct)
         {
             Created.Add(blob);
@@ -235,7 +237,7 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
             if (Interlocked.Increment(ref writes) == FailWrite) throw new IOException("Synthetic lost upload response.");
         }
         public async Task<long> CopyToAsync(ClaimsPrincipal sender, DocumentBlob blob, Stream destination, CancellationToken ct)
-        { var count = await inner.CopyToAsync(sender, blob, destination, ct); if (CorruptRead) destination.WriteByte(0); return count; }
+        { Reads++;var count = await inner.CopyToAsync(sender, blob, destination, ct); if (CorruptRead) destination.WriteByte(0); AfterRead?.Invoke();return count; }
         public Task DeleteAsync(ClaimsPrincipal sender, DocumentBlob blob, CancellationToken ct) => inner.DeleteAsync(sender, blob, ct);
     }
     internal sealed class FailAudit : DbCommandInterceptor
