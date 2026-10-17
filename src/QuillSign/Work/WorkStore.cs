@@ -74,7 +74,8 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         var at = retry ? now + Backoff(lease.Attempt) : now;
         var code = result.Outcome == WorkOutcome.Retry && !retry ? "attempts-exhausted" : result.Code;
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var changed = await db.WorkItems.Where(x => x.Id == lease.Id && x.Status == WorkStatus.Leased && x.LeaseOwner == lease.Owner && x.LeaseExpiresAt > now)
+        var changed = await db.WorkItems.Where(x => x.Id == lease.Id && x.Kind == lease.Kind && x.Attempts == lease.Attempt &&
+                x.Status == WorkStatus.Leased && x.LeaseOwner == lease.Owner && x.LeaseExpiresAt == lease.Until && x.LeaseExpiresAt > now)
             .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, status).SetProperty(x => x.AvailableAt, at)
                 .SetProperty(x => x.LastError, code).SetProperty(x => x.LeaseOwner, (Guid?)null).SetProperty(x => x.LeaseExpiresAt, (DateTimeOffset?)null), cancellationToken);
         if (changed != 1) throw new InvalidOperationException("Work lease is no longer owned.");

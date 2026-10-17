@@ -810,7 +810,7 @@ Validation: Focused runs pass all 18 new expiry/command/late-publication cases a
 
 ## QUILS-58: Support durable deadline expiry with storage-only future wakeups
 
-Status: To Do. Depends on merged QUILS-57 (PR #60). Planning checkpoint only; implementation is unstarted while the merged application is deployed for owner review.
+Status: Implementation complete. Depends on merged QUILS-57 (PR #60); current main is integrated. Atomic preparation from public Send follows separately in QUILS-60.
 
 Depends on merged QUILS-57. Add the supported durable deadline-expiry work foundation needed before Send can automatically schedule expiry. This slice exposes trusted preparation/resume services and the worker only. Atomic public Send/late-checkpoint integration, reminders, expiry emails and recurring infrastructure remain separate dependent work; do not claim automatic scheduling is already enabled.
 
@@ -822,6 +822,10 @@ The due handler verifies exact supported job kind/ID/payload, lease owner/attemp
 
 Create matching native Jira/docs plan before implementation; keep To Do until QUILS-57 merges, then integrate main and move In Progress. Test actual SQL/Azurite preparation/claim/handler/progression/recovery, exact scope/payload/lease/source tampering, before/exact/after deadline, accepted work/all-signed/terminal states, rollback/unknown commit, duplicate wakeups and lease loss. Prove future and empty queue paths do not open SQL, including waits longer than seven days and failed metadata reads. Validate meaningful regression/model/vendor/license/vulnerability/secrets, commit/push/create/attach/pass exact-head checks/merge and native Jira Done. No public Send producer, live email/TSA, resources, purchases, new dependencies, fabricated disclosure/retention policy, OTP or scope expansion. Preserve separate infrastructure/email approval work.
 
+Implementation design: Add a dedicated Expiry work kind with a narrow check-constraint migration. Stable versioned jobs bind the immutable sent object/hash, original source/disclosure hashes and exact UTC deadline. Trusted resume writes the hint under the parent transaction and publishes after commit, preserving live and terminal retry state. Worker scheduling first reads bounded Blob metadata; future waits and transient metadata outages defer without SQL. Missing/malformed hints still pass SQL's authoritative due gate. Envelope-first expiry verifies exact lease/payload/source before state changes and immediately before commit. The finite resume command returns counts without private scope. Automatic preparation from Send is tracked separately in QUILS-60.
+
+Validation: All 24 expiry-work and actual operator-command cases pass. They cover long future waits and storage outages without SQL, missing/malformed hints with authoritative due checks, exact source/payload/lease tampering, duplicate wakes, rollback/lost commit, storage recovery, live/failed job preservation, lease loss during audit, late accepted checkpoint processing and all-signed completion protection. All 11 Node cases, pinned vendor/license checks, 78 local Markdown links and vulnerability checks pass. Full regression, model and staged/full-history secret checks plus exact-head CI gate merge. No visible UI or cloud configuration changes occur in this slice.
+
 ## QUILS-59: Remove demo title label and add creator/source footer attribution
 
 Status: Done. Merged as PR #61; native Jira Done.
@@ -829,3 +833,15 @@ Status: Done. Merged as PR #61; native Jira Done.
 Remove the Demo label from the browser title, using QuillSign for the home title and retaining meaningful titles on other pages. Replace the shared footer copyright attribution with: Designed & built by Henrique Meyer (https://www.hmeyer.com) · Source on GitHub (https://github.com/henrique-meyer/quillsign). Use the QuillSign repository rather than the DocPilot example. Preserve existing operational demo/purge and suitability disclosures separately. Verify actual desktop/mobile browser title, footer layout and link destinations. Build and scan secrets, commit/push/open/attach/pass checks/merge, transition native Jira Done immediately and deploy to the existing approved environment without cloud configuration or email changes.
 
 Validation: Release build succeeds with no warnings or errors. Actual browser checks confirm home title QuillSign, retained Verify a PDF title, both exact footer link destinations, keyboard reachability and mobile wrapping without horizontal overflow. The original purge/suitability disclosure remains below the attribution. No new tests are needed for this text/link-only change; existing CI and staged/full-history secret scans gate merge. Deploy and verify the merged image in the existing environment.
+
+## QUILS-60: Schedule durable signing expiry atomically with reviewed Send
+
+Status: To Do. Depends on QUILS-58; planning only until that prerequisite merges.
+
+Depends on QUILS-58. Join supported durable signing-expiry preparation to each newly committed public Send with a finite frozen UTC signing deadline. Keep the current manual field workflow and sender review/affirmation unchanged. Requests without a finite deadline do not get an expiry job. Existing sent requests retain explicit trusted resume; no recurring SQL discovery or infrastructure is introduced.
+
+After immutable sent PDF/disclosure and canonical Send evidence exist under the common envelope lock, prepare the stable expiry work item and storage recovery hint in the same SQL transaction as Send and the first invitation. Publish both wakeups only after commit. A hint or preparation failure rolls back the complete new Send and cleans only the operation-owned generated PDF; a queue publication failure preserves committed Send and recovers through its durable hint. Do not send live email or call a live timestamp authority.
+
+Repeated Send and lost-acknowledgement recovery must reuse canonical saved Send evidence, the same invitation and expiry identity, with no duplicate files, tokens, mail, job or expiry audit. Preserve live leases and completed/failed retry state; do not silently reset an exhausted or unverifiable expiry job. Keep original sent bytes immutable and preserve on-time accepted Finish, late checkpoint processing and all-signed completion semantics. Future waits remain storage-only and SQL remains authoritative once due.
+
+Update matching docs/plan.md before implementation; keep To Do until QUILS-58 merges, then integrate main and move In Progress. Test actual SQL/Azurite Send, exact deadline/source/job bindings, no-deadline requests, rollback/hint failures, queue outages, unknown commit/replay and due worker progression. Exercise the synthetic sender review/Send/private status flow in the real browser, including stale input and disabled delivery boundaries, and confirm no GET scheduling or new query-string action notices. Validate meaningful regression/model/vendor/license/vulnerability/secrets, commit/push/create/attach/pass checks/merge and move native Jira Done in the same pass. No resources, public email enablement, purchases, fabricated policies, AI, OTP or scope expansion.

@@ -485,6 +485,7 @@ public sealed class DurableWorkTests(SqlDatabaseFixture fixture) : IClassFixture
         public Task RemoveHintAsync(Guid id, CancellationToken ct) => inner.RemoveHintAsync(id, ct);
         public Task<WorkDelivery?> ReceiveAsync(CancellationToken ct) => inner.ReceiveAsync(ct);
         public Task DeferAsync(WorkDelivery delivery, TimeSpan delay, CancellationToken ct) => inner.DeferAsync(delivery, delay, ct);
+        public Task<DateTimeOffset?> ReadDueAsync(Guid id,CancellationToken ct)=>inner.ReadDueAsync(id,ct);
         public Task<int> RecoverAsync(DateTimeOffset now, CancellationToken ct) => inner.RecoverAsync(now, ct);
         public Task VerifyAsync(CancellationToken ct) => inner.VerifyAsync(ct);
     }
