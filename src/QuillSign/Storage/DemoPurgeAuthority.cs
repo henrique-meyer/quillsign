@@ -29,8 +29,9 @@ public sealed class DemoPurgeAuthority
     // Only authenticated marker readback under its finite storage lease creates this internal scope.
     internal static DemoPurgeAuthority Recovery(DemoPurgeRecovery.VerifiedScope scope)=>new(scope);
     // A scheduling description is not authority. Issuance verifies it against saved evidence.
-    public static string Payload(DocumentRetentionSnapshot policy)=>JsonSerializer.Serialize(new {
-        version=Version,envelopeId=policy.EnvelopeId,retentionSha256=UploadRetention.Digest(policy),deleteAfter=policy.DeleteAfter});
+    public static string Payload(DocumentRetentionSnapshot policy)=>Payload(policy.EnvelopeId,UploadRetention.Digest(policy),policy.DeleteAfter);
+    internal static string Payload(Guid id,string digest,DateTimeOffset deadline)=>JsonSerializer.Serialize(new {
+        version=Version,envelopeId=id,retentionSha256=digest,deleteAfter=deadline});
 
     public static async Task<DemoPurgeAuthority> AuthorizeLockedAsync(QuillSignDbContext db,WorkLease lease,TimeProvider time,CancellationToken ct=default)
     {
