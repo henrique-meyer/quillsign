@@ -28,6 +28,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<Suppression>().HasKey(x => x.Email);
         model.Entity<Envelope>().HasIndex(x => x.PublicId).IsUnique();
         model.Entity<Envelope>().HasIndex(x => x.PurgeAfter);
+        model.Entity<Envelope>().HasIndex(x=>x.FinalSha256).HasFilter("[FinalSha256] IS NOT NULL");
+        model.Entity<Envelope>().HasIndex(x=>x.CertificateSha256).HasFilter("[CertificateSha256] IS NOT NULL");
         model.Entity<Envelope>().ToTable(t => t.HasCheckConstraint("CK_Envelope_PageCount", "[PageCount] IS NULL OR [PageCount] > 0"));
         model.Entity<Envelope>().ToTable(t => t.HasCheckConstraint("CK_Envelope_ErsdText", "[ErsdText] IS NULL OR DATALENGTH([ErsdText]) <= 65536"));
         model.Entity<Envelope>().HasOne<SignerFinishAcceptance>().WithMany().HasForeignKey(x=>new { x.Id,x.CurrentFinishId })

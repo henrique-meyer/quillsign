@@ -921,6 +921,12 @@ namespace QuillSign.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CertificateSha256")
+                        .HasFilter("[CertificateSha256] IS NOT NULL");
+
+                    b.HasIndex("FinalSha256")
+                        .HasFilter("[FinalSha256] IS NOT NULL");
+
                     b.HasIndex("PublicId")
                         .IsUnique();
 
