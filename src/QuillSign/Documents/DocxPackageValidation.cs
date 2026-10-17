@@ -212,7 +212,7 @@ public sealed class DocxPackageValidation(DocumentOptions limits)
     {
         if (name.Length is < 1 or > 512 || name.StartsWith('/') || name.Contains('\\') || name.Contains(':') || name.Contains('?') || name.Contains('#') || name.Contains('%')) throw Rejected();
         var decoded = Uri.UnescapeDataString(name).Normalize(NormalizationForm.FormC); if (decoded.Contains('%') || decoded.Contains('\\') || decoded.Contains(':') || decoded.Any(char.IsControl)) throw Rejected();
-        var parts = (directory ? decoded.TrimEnd('/') : decoded).Split('/'); if (parts.Any(x => x.Length == 0 || x is "." or ".." || x != x.Trim())) throw Rejected(); return string.Join('/', parts);
+        var parts = (directory ? decoded[..^1] : decoded).Split('/'); if (parts.Any(x => x.Length == 0 || x is "." or ".." || x != x.Trim())) throw Rejected(); return string.Join('/', parts);
     }
     private static bool ActivePart(string value) => value.Contains("/embeddings/", StringComparison.OrdinalIgnoreCase) || value.StartsWith("embeddings/", StringComparison.OrdinalIgnoreCase) || value.Contains("activex", StringComparison.OrdinalIgnoreCase) || value.Split('/').Any(x => x.StartsWith("vba", StringComparison.OrdinalIgnoreCase)) || value.StartsWith("_xmlsignatures/", StringComparison.OrdinalIgnoreCase) || value.StartsWith("customUI/", StringComparison.OrdinalIgnoreCase);
     private static bool ActiveType(string value) => new[] { "macroenabled", "vba", "activex", "oleobject", "digital-signature", "executable", "javascript", "image/svg" }.Any(x => value.Contains(x, StringComparison.OrdinalIgnoreCase));

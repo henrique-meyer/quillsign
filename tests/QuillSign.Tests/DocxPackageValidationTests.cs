@@ -112,10 +112,11 @@ public sealed class DocxPackageValidationTests
     [InlineData("word\\private.xml")]
     [InlineData("word/./private.xml")]
     [InlineData("word//private.xml")]
+    [InlineData("word//")]
     [InlineData("word/private.xml ")]
     public async Task Traversal_absolute_and_ambiguous_part_names_never_reach_extraction_or_conversion(string path)
     {
-        var bytes = Edit(zip => Put(zip, path, "<synthetic />")); using var source = new MemoryStream(bytes);
+        var bytes = Edit(zip => { if(path.EndsWith('/')) {using var empty=zip.CreateEntry(path).Open();} else Put(zip, path, "<synthetic />"); }); using var source = new MemoryStream(bytes);
         await Assert.ThrowsAsync<DocumentRejectedException>(() => new DocxPackageValidation(new()).ValidateAsync(source, bytes.Length));
     }
     [Theory]
