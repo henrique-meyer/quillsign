@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>@(ViewData["Title"] ?? "Demo") · QuillSign</title>
+    <title>@(ViewData["Title"] is { } title ? $"{title} · QuillSign" : "QuillSign")</title>
     <link rel="icon" href="~/logo.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="~/site.css" />
     @await RenderSectionAsync("Styles", required: false)
@@ -12,7 +12,10 @@
     <main>
         <header><a href="/" class="wordmark"><img src="~/logo-mark.svg" alt="" width="42" height="46" /><span>QuillSign</span></a></header>
         @RenderBody()
-        <footer>Demo instance · Data will be purged periodically. Software provided as-is. Operators are responsible for checking suitability for their use case and jurisdiction.</footer>
+        <footer>
+            <p>Designed &amp; built by <a href="https://www.hmeyer.com">Henrique Meyer</a> · <a href="https://github.com/henrique-meyer/quillsign">Source on GitHub</a></p>
+            <p>Demo instance · Data will be purged periodically. Software provided as-is. Operators are responsible for checking suitability for their use case and jurisdiction.</p>
+        </footer>
     </main>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
