@@ -77,6 +77,17 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             normalized,converted.PdfSha256.ToArray(),converted.Pages,provenance),ip,userAgent,ct);
     }
 
+    internal async Task<bool> StoreConvertedImageAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,string title,string extension,
+        ImagePdfConversion converted,string? ip,string? userAgent,CancellationToken ct)
+    {
+        var before=await CheckConvertedUploadAsync(sender,publicId,expectedVersion,ct);if(before is null)return false;
+        using var original=converted.OpenOriginal();using var normalized=converted.OpenPdf();
+        var provenance=new {version="image-stb-v1",originalFilename=title[..^4]+extension,originalMime=converted.SourceMime,
+            originalBytes=converted.OriginalLength,pdfBytes=converted.PdfLength,width=converted.Width,height=converted.Height};
+        return await PublishUploadAsync(sender,publicId,expectedVersion,before,new(title,converted.SourceMime,original,converted.OriginalSha256,
+            normalized,converted.PdfSha256,converted.Pages,provenance),ip,userAgent,ct);
+    }
+
     private sealed record PreparedUpload(string Filename,string Mime,Stream Original,byte[] OriginalHash,Stream Pdf,byte[] PdfHash,
         IReadOnlyList<PageGeometry> Pages,object? Provenance);
 

@@ -16,6 +16,7 @@ public static class DocumentConfiguration
         services.AddSingleton<DocxPackageValidation>();
         services.AddScoped<DocxDocumentWorkflow>();
         services.AddScoped<ImagePdfConverter>();
+        services.AddScoped<ImageDocumentWorkflow>();
         var conversion=config.GetSection("Gotenberg").Get<GotenbergOptions>() ?? new();
         services.AddSingleton(conversion);
         services.AddHttpClient<GotenbergDocxConverter>(client=>client.Timeout=Timeout.InfiniteTimeSpan)
