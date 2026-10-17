@@ -1137,7 +1137,7 @@ Current integration: merged QUILS-74 status/completed access is integrated. All 
 
 ## QUILS-79: Keep explicit signer decline available after consent until Finish
 
-Status: In Progress. Independent of QUILS-76/78 purge work.
+Status: Done. Merged as PR #83 after all 10 exact-head checks passed; native Jira Done verified. All 1,740 current .NET tests pass.
 
 Close the gap between QUILS-27 pre-consent decline and the agreed requirement that a signer may decline before Finish, including the current synthetic-demo disclosure. This is independent of the pending purge storage/recovery work. Preserve the distinction between an explicit refusal to sign and a general consent-withdrawal or contact-correction service; add neither service.
 
@@ -1153,4 +1153,22 @@ Implementation design: the existing shared current-signer gate already rejects a
 
 Validation: all 91 consent, Finish, signer-retention and post-consent regression cases pass. After adding the two route-specific cutoff cases, all 33 focused consent/post-consent checks pass, including all nine new cases. The original focused run was 30/31 because the test expected only no-store while antiforgery correctly added no-cache; the corrected assertion requires the actual NoStore property. Model comparison is unchanged and all 11 Node checks pass. Real synthetic desktop/mobile/keyboard flows verify the inline stay/discard guard, return without declining, saved entries and exact-review preparation, unchecked intent, browser constraint validation and keyboard submission to a clean confirmation URL. SQL readback confirms one decline, unchanged prior consent/fields, unused review candidates, no Finish and no outbound email. Current-head CI/secrets gate merge; hosted settings remain unchanged.
 
-Current integration: QUILS-76 merged main is integrated; all 63 combined consent/post-consent and purge storage checks pass. Real browser validation is complete. The full current local regression is running and exact-head CI gates merge.
+Current integration: QUILS-76 merged main is integrated; all 63 combined consent/post-consent and purge storage checks pass. Real browser validation is complete. All 1,740 current .NET tests and all ten exact-head CI checks pass; PR #83 merged and native Jira Done was verified in the same pass.
+
+## QUILS-80: Coordinate enrolled demo purge scheduling and private SQL removal
+
+Status: To Do. Planning/research only until QUILS-78 merges.
+
+Complete enrolled demo purge coordination after QUILS-74/76/78 access, storage and authenticated recovery foundations. Planning/research only until QUILS-78 merges. Preserve independent signer-decline work. Seven days from first successful upload is the selected environment policy; replacements, Send and completion never reset the saved deadline.
+
+Inspect actual foreign keys, immutable-policy SQL permissions, work/submission leases, first-upload publication and private payload ownership before implementation. Refine this story and matching plan into a smaller necessary dependency if needed, without duplicate scope. Use verified enrolled policy/audit provenance and exact parent ownership; never erase ordinary or historical unenrolled data, global suppression/pre-envelope records or unrelated work based merely on a shared contact address.
+
+Add durable once-only scheduling/explicit recovery for the verified first-upload deadline, with canonical purge payload and storage hint/queue publication that survives rollback and unknown commit acknowledgements. New automatic scheduling must be truthful about work readiness. Support bounded explicit recovery of already enrolled records that lack scheduling, without backfilling or extending their policy. Reuse event-driven queue wakeups and storage-only recovery; no recurring SQL polling or SQL health probes while idle.
+
+Implement a supported purge handler that verifies the genuine current lease and policy, persists and reads back the authenticated minimal recovery marker before destructive SQL changes, and safely removes envelope-owned transaction/contact/token/field/signature/review/checkpoint/completion/audit/outbox data in the actual FK order. Preserve only minimal non-personal recovery/active-work state as needed; do not fabricate user identities or rewrite frozen historical evidence to authorize deletion. Stop/reconcile active workers and conditional writes so no deleted private state is recreated. Keep original party-held copies and external-provider records outside any erasure claim.
+
+Coordinate bounded storage outcomes, immutable versions/legal holds and late writes with the existing persistent marker. Never clear or shorten protection. Safely resume partial storage/SQL failure, lost commits and original lease expiry; ordinary finite work-attempt exhaustion must not silently abandon verified pending cleanup, while existing email submission safety stays unchanged. Distinguish removed private SQL, pending protected content and incomplete deletion rather than claiming a permanent purge after one empty pass. Do not erase the recovery marker merely because a pass is empty.
+
+Validate actual local SQL/Azurite synthetic draft/sent/declined/voided/completed records, exact cutoff, missing/corrupt/unenrolled policy, bounded scheduling/continuation, once-only production, active Finish/checkpoint/completion/email races, partial failure/cancellation/lost acknowledgements, FK cleanup, expired leases and late orphan writes after SQL removal. Verify all associated private records and available owned content are gone after successful cleanup without touching unrelated records. No real user documents are deleted in development.
+
+Create/update the matching native Jira story and docs/plan.md before implementation, keep statuses current and use its own QUILS branch/worktree. No Azure/AWS resource or permission changes, hosted enablement/schedule, live mail/TSA, purchases, dependency changes, fabricated operator policies, OTP or deferred AI. Prepare any demonstrated permission/configuration requirement as reviewable code/docs for separate owner approval; do not deploy it. Update the versioned synthetic disclosure only when a supported automatic purge workflow is actually ready, preserving old snapshots. Run meaningful regressions/model/secrets, commit/push/open/attach/pass exact-head checks/merge and native Jira Done.
