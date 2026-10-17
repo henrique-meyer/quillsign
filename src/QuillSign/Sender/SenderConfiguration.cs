@@ -28,6 +28,10 @@ public static class SenderConfiguration
             var db=sp.GetRequiredService<QuillSignDbContext>();var clock=sp.GetRequiredService<TimeProvider>();
             return new(db,new(db,clock),sp.GetRequiredService<AuditWriter>(),clock);
         });
+        services.AddScoped<SenderVoidState>(sp=> {
+            var db=sp.GetRequiredService<QuillSignDbContext>();var clock=sp.GetRequiredService<TimeProvider>();
+            return new(db,new(db,clock),clock);
+        });
         services.AddScoped<Func<Work.EmailOutboxWriter>>(sp => () => sp.GetRequiredService<Work.EmailOutboxWriter>());
         services.AddScoped<Func<SenderWorkflow>>(sp => () => sp.GetRequiredService<SenderWorkflow>());
         services.AddScoped<AuditWriter>();
