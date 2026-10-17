@@ -27,6 +27,7 @@ public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState ch
             if(e.Status is not (EnvelopeStatus.Sent or EnvelopeStatus.Expired))return new(SigningExpiryOutcome.Closed);
             if(e.ExpiresAt is not DateTimeOffset deadline || deadline>time.GetUtcNow())return new(SigningExpiryOutcome.NotDue);
             if(e.SentAt is null || deadline<=e.SentAt || e.PurgeAfter<=time.GetUtcNow())throw Invalid();
+            var events=await Chain(id,ct);
             var source=await new SenderVoidState(db,checkpoints,time).SourceLockedAsync(e,ct);
             var signers=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==id).OrderBy(x=>x.Order).Take(101).ToArrayAsync(ct);
             if(signers.Length is <1 or >100 || signers.Where((s,i)=>s.Order!=i+1 || !Enum.IsDefined(s.Status) || s.Status==SignerStatus.Declined).Any())throw Invalid();
@@ -35,7 +36,7 @@ public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState ch
                 e.ErsdVersion,e.ErsdSha256,e.CurrentFinishId,e.CurrentCopyVersion,source,
                 roster=signers.Select(s=>new Roster(s.Id,s.Order,s.FullName,s.Email,s.Role))
             })));
-            var events=await Chain(id,ct);var existing=events.Where(x=>x.Event=="expired").ToArray();
+            var existing=events.Where(x=>x.Event=="expired").ToArray();
             if(e.Status==EnvelopeStatus.Expired) {
                 if(existing.Length!=1)throw Invalid();var row=existing[0];if(row.DataJson.Length>4096)throw Invalid();Evidence? saved;
                 try {saved=JsonSerializer.Deserialize<Evidence>(row.DataJson,new JsonSerializerOptions {MaxDepth=4});}catch(JsonException) {throw Invalid();}

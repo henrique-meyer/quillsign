@@ -150,6 +150,8 @@ The private [sender void flow](docs/sender-void.md) confirms an original sender 
 
 The public **Verify a completed PDF** link opens `/verify`. Its [bounded upload verification](docs/uploaded-pdf-verification.md) matches supplied bytes to a unique retained completed artifact and verifies its publication, seal and timestamp evidence without granting record access. Uploads are processed in memory and are not saved. An unrecognized file alone does not prove an invalid signature; verification does not establish identity or legal validity.
 
+Finite [signing-expiry maintenance](docs/signing-expiry.md) records due requests through `work expire`, preserving on-time accepted checkpoints and the final completion path. New signer activity remains blocked at the deadline; automatic maintenance scheduling and expiry notices remain separate work.
+
 The backend [sender-prefill renderer](docs/sender-pdf-rendering.md) now shares these independent geometry checks. It validates source bytes and sender text/date/checkbox fields, embeds the pinned font, and returns bounded output and hashes. It has no endpoint and does not yet freeze, send or sign drafts.
 
 The .NET build restores interact.js 1.10.28 from its exact npm archive into an ignored `obj/browser-assets` cache, checks pinned SHA-512/SHA-256 hashes, and copies the browser script plus unmodified MIT license into build/publish output. No npm scripts run. First builds require registry access and `tar` (included with current Windows and the .NET SDK Linux image); cached builds work offline. Verify output with `python scripts/dev/verify_interact.py src/QuillSign/bin/Release/net10.0/wwwroot/vendor/interact`. The Docker build performs the same restore. Runtime browsers use local assets without a CDN.

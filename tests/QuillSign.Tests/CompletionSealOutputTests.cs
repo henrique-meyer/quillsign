@@ -233,6 +233,7 @@ public sealed class CompletionSealOutputTests(SqlDatabaseFixture fixture) : ICla
     {
         await using var run=await Run.Create(fixture,prepareCandidate:false,publishLast:false);
         run.Signing.H.Clock.Advance(TimeSpan.FromHours(2));run.Seal.Time.Advance(TimeSpan.FromHours(2));Assert.True(await run.Signing.H.Once());
+        await using(var prepare=fixture.Open())Assert.NotNull(await run.Candidates(prepare).PrepareAsync(run.Signing.Envelope.Id));
         Assert.NotNull(await run.Prepare());await using var db=fixture.Open();var final=new CompletionDownloadTests.FinalStore(run.Signing.H.Clock);
         var publication=new CompletionPublication(db,run.Candidates(db),run.Service(db),run.Collector(db),final,new(db,run.Signing.H.Clock),run.Signing.H.Clock,
             new() {DemoPurgeAfterDays=7,AllowDevelopmentWriteOnce=true},run.Seal.App.Environment);
