@@ -9,6 +9,7 @@ public static class EmailConfiguration
     public static IServiceCollection AddQuillSignEmail(this IServiceCollection services, IConfiguration config, IHostEnvironment environment)
     {
         var options = config.GetSection("Email").Get<EmailOptions>() ?? new();
+        options.Attachments.Validate();
         if (options.Enabled || options.Sns.Enabled)
         {
             _ = EmailAddress.Normalize(options.FromEmail);

@@ -12,6 +12,7 @@ public sealed class EmailOptions
     public SesOptions Ses { get; set; } = new();
     public SmtpOptions Smtp { get; set; } = new();
     public SnsOptions Sns { get; set; } = new();
+    public EmailAttachmentOptions Attachments { get; set; } = new();
 }
 
 public sealed class SesOptions
