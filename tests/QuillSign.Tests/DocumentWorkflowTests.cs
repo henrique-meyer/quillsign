@@ -179,7 +179,7 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
         Assert.Null((await run.StateAsync()).PreviewConfirmedAt);
     }
 
-    private sealed class Harness(SqlDatabaseFixture fixture) : IAsyncDisposable
+    internal sealed class Harness(SqlDatabaseFixture fixture) : IAsyncDisposable
     {
         public Guid Id { get; } = Guid.NewGuid();
         public string PublicId { get; } = Guid.NewGuid().ToString("N");
@@ -189,11 +189,13 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
             new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03)), 25 * 1024 * 1024, true));
         public FailAudit AuditFailure { get; } = new();
         public FailCommit CommitFailure { get; } = new();
-        public static async Task<Harness> CreateAsync(SqlDatabaseFixture fixture)
+        public DemoRetentionOptions Retention {get;}=new();
+        public TimeProvider Time {get;set;}=TimeProvider.System;
+        public static async Task<Harness> CreateAsync(SqlDatabaseFixture fixture,bool demo=false)
         {
             var run = new Harness(fixture);
             await using var db = fixture.Open();
-            db.Envelopes.Add(new() { Id = run.Id, PublicId = run.PublicId, SenderEmail = run.Email, SenderVerifiedAt = DateTimeOffset.UtcNow });
+            db.Envelopes.Add(new() { Id = run.Id, PublicId = run.PublicId, SenderEmail = run.Email, SenderVerifiedAt = DateTimeOffset.UtcNow,IsDemo=demo });
             await db.SaveChangesAsync(); return run;
         }
         public async Task<Envelope> StateAsync()
@@ -204,7 +206,7 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
             await using var db = new QuillSignDbContext(new DbContextOptionsBuilder<QuillSignDbContext>()
                 .UseSqlServer(source.Database.GetDbConnection().ConnectionString).AddInterceptors(AuditFailure, CommitFailure).Options);
             var options = new DocumentOptions();
-            return await operation(new(db, Store, new(options), options, new(db, TimeProvider.System), TimeProvider.System, NullLogger<DocumentWorkflow>.Instance));
+            return await operation(new(db, Store, new(options), options, new(db, Time), Time, NullLogger<DocumentWorkflow>.Instance,Retention));
         }
         public async Task<bool> UploadAsync(byte[] bytes, byte[]? version = null, string filename = "synthetic.pdf")
         {
@@ -215,7 +217,7 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
         public async ValueTask DisposeAsync()
         { foreach (var blob in Store.Created) await Store.Inner.DeleteAsync(Sender, blob); }
     }
-    private sealed class FaultStore(IBlobStore inner) : IBlobStore
+    internal sealed class FaultStore(IBlobStore inner) : IBlobStore
     {
         private int writes;
         public IBlobStore Inner => inner;
@@ -233,17 +235,19 @@ public sealed class DocumentWorkflowTests(SqlDatabaseFixture fixture) : IClassFi
         { var count = await inner.CopyToAsync(sender, blob, destination, ct); if (CorruptRead) destination.WriteByte(0); return count; }
         public Task DeleteAsync(ClaimsPrincipal sender, DocumentBlob blob, CancellationToken ct) => inner.DeleteAsync(sender, blob, ct);
     }
-    private sealed class FailAudit : DbCommandInterceptor
+    internal sealed class FailAudit : DbCommandInterceptor
     {
         public bool Enabled { get; set; }
+        public Action? AfterInsert {get;set;}
         public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData, DbDataReader result, CancellationToken ct = default)
         {
+            if(command.CommandText.Contains("INSERT INTO [AuditEvents]",StringComparison.Ordinal))AfterInsert?.Invoke();
             if (Enabled && command.CommandText.Contains("INSERT INTO [AuditEvents]", StringComparison.Ordinal))
             { await result.DisposeAsync(); throw new IOException("Synthetic audit response loss."); }
             return await base.ReaderExecutedAsync(command, eventData, result, ct);
         }
     }
-    private sealed class FailCommit : DbTransactionInterceptor
+    internal sealed class FailCommit : DbTransactionInterceptor
     {
         public bool Enabled { get; set; }
         public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData, CancellationToken ct = default)

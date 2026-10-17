@@ -680,6 +680,57 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.DocumentRetentionSnapshot", b =>
+                {
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Days")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("DeleteAfter")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("OriginalObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("OriginalSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("PdfObjectId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("PdfSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<string>("PolicyVersion")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("EnvelopeId");
+
+                    b.HasIndex("DeleteAfter", "EnvelopeId");
+
+                    b.ToTable("DocumentRetentionSnapshots", t =>
+                        {
+                            t.HasCheckConstraint("CK_DocumentRetentionSnapshot_Interval", "[Days] BETWEEN 1 AND 36500 AND DATEPART(TZOFFSET,[StartedAt]) = 0 AND DATEPART(TZOFFSET,[DeleteAfter]) = 0 AND [DeleteAfter] = DATEADD(day,[Days],[StartedAt])");
+
+                            t.HasCheckConstraint("CK_DocumentRetentionSnapshot_Objects", "[OriginalObjectId] <> '00000000-0000-0000-0000-000000000000' AND [PdfObjectId] <> '00000000-0000-0000-0000-000000000000' AND [OriginalObjectId] <> [PdfObjectId]");
+
+                            t.HasCheckConstraint("CK_DocumentRetentionSnapshot_OriginalSha256", "[OriginalSha256] IS NULL OR DATALENGTH([OriginalSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_DocumentRetentionSnapshot_PdfSha256", "[PdfSha256] IS NULL OR DATALENGTH([PdfSha256]) = 32");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.EmailOutbox", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1728,6 +1779,15 @@ namespace QuillSign.Data.Migrations
                         .HasForeignKey("EnvelopeId", "SignerId", "SignatureAdoptionId")
                         .HasPrincipalKey("EnvelopeId", "SignerId", "Id")
                         .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("QuillSign.Data.DocumentRetentionSnapshot", b =>
+                {
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("QuillSign.Data.EmailOutbox", b =>

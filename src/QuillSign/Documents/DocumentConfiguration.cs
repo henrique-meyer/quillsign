@@ -17,6 +17,8 @@ public static class DocumentConfiguration
         services.AddSingleton(conversion);
         services.AddHttpClient<GotenbergDocxConverter>(client=>client.Timeout=Timeout.InfiniteTimeSpan)
             .ConfigurePrimaryHttpMessageHandler(()=>new HttpClientHandler {AllowAutoRedirect=false,UseProxy=false,AutomaticDecompression=System.Net.DecompressionMethods.None,MaxResponseHeadersLength=16});
+        var retention=config.GetSection("Demo").Get<DemoRetentionOptions>() ?? new();retention.Validate();
+        services.AddSingleton(retention);services.AddScoped<UploadRetention>();
         var preparation = config.GetSection("Preparation").Get<PreparationOptions>() ?? new();
         if (preparation.MaximumRecipients is < 1 or > 100) throw new InvalidOperationException("Preparation:MaximumRecipients must be between 1 and 100.");
         services.AddSingleton(preparation); services.AddScoped<DraftDetails>(); services.AddScoped<DraftReview>();
