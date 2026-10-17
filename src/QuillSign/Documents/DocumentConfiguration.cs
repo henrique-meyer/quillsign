@@ -13,6 +13,10 @@ public static class DocumentConfiguration
         if (options.MaximumBytes < 1024 || options.MaximumBytes > storageMaximum || options.MaximumPages is < 1 or > 200)
             throw new InvalidOperationException("Document limits must fit configured storage and support 1–200 pages.");
         services.AddSingleton(options); services.AddScoped<PdfValidation>(); services.AddScoped<DocumentWorkflow>();
+        var conversion=config.GetSection("Gotenberg").Get<GotenbergOptions>() ?? new();
+        services.AddSingleton(conversion);
+        services.AddHttpClient<GotenbergDocxConverter>(client=>client.Timeout=Timeout.InfiniteTimeSpan)
+            .ConfigurePrimaryHttpMessageHandler(()=>new HttpClientHandler {AllowAutoRedirect=false,UseProxy=false,AutomaticDecompression=System.Net.DecompressionMethods.None,MaxResponseHeadersLength=16});
         var preparation = config.GetSection("Preparation").Get<PreparationOptions>() ?? new();
         if (preparation.MaximumRecipients is < 1 or > 100) throw new InvalidOperationException("Preparation:MaximumRecipients must be between 1 and 100.");
         services.AddSingleton(preparation); services.AddScoped<DraftDetails>(); services.AddScoped<DraftReview>();
