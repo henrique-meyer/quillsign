@@ -169,9 +169,11 @@ public sealed class DocxPackageValidation(DocumentOptions limits)
         {
             ct.ThrowIfCancellationRequested();
             if (element.Name.NamespaceName == "http://www.w3.org/2000/svg" || element.Name.LocalName is "OLEObject" or "ocx") throw Rejected();
-            if (element.Attributes().Any(a => a.Name.LocalName.Equals("href", StringComparison.OrdinalIgnoreCase) && !a.Value.StartsWith('#'))) throw Rejected();
+            if (element.Attributes().Any(a => (a.Name.LocalName.Equals("href", StringComparison.OrdinalIgnoreCase) ||
+                a.Name.LocalName.Equals("src", StringComparison.OrdinalIgnoreCase) || a.Name.LocalName.Equals("codebase", StringComparison.OrdinalIgnoreCase) ||
+                a.Name.LocalName.Equals("data", StringComparison.OrdinalIgnoreCase)) && !a.Value.StartsWith('#'))) throw Rejected();
             if (!WordNamespaces.Contains(element.Name.NamespaceName)) continue; var ns = element.Name.Namespace;
-            if (element.Name.LocalName is "altChunk" or "object" or "control" or "subDoc") throw Rejected();
+            if (element.Name.LocalName is "altChunk" or "object" or "control" or "subDoc" or "mailMerge" or "saveThroughXslt") throw Rejected();
             if (element.Name.LocalName == "fldSimple") CheckField((string?)element.Attribute(ns + "instr") ?? "");
             if (element.Name.LocalName == "fldChar")
             {

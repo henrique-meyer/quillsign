@@ -61,6 +61,8 @@ public sealed class DocxPackageValidationTests
     [InlineData("xml-extension-spoof")]
     [InlineData("alt-chunk")]
     [InlineData("object-element")]
+    [InlineData("vml-src")]
+    [InlineData("mail-merge")]
     public async Task Unsupported_packages_active_content_and_unsafe_references_are_rejected_without_private_details(string kind)
     {
         var bytes = Edit(zip =>
@@ -93,6 +95,8 @@ public sealed class DocxPackageValidationTests
                 case "xml-extension-spoof": Put(zip, "word/private.bin", "<!DOCTYPE private><private />", "application/xml"); break;
                 case "alt-chunk": Put(zip, "word/document.xml", DocumentXml("<w:altChunk />")); break;
                 case "object-element": Put(zip, "word/document.xml", DocumentXml("<w:p><w:r><w:object /></w:r></w:p>")); break;
+                case "vml-src": Put(zip, "word/document.xml", DocumentXml("<w:p><w:r><w:pict><v:imagedata xmlns:v=\"urn:schemas-microsoft-com:vml\" src=\"https://example.invalid/PRIVATE-MARKER\" /></w:pict></w:r></w:p>")); break;
+                case "mail-merge": Put(zip, "word/settings.xml", $"<w:settings xmlns:w=\"{Word}\"><w:mailMerge><w:connectString w:val=\"PRIVATE-MARKER\" /></w:mailMerge></w:settings>", "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"); break;
             }
         });
         using var source = new MemoryStream(bytes); var error = await Assert.ThrowsAsync<DocumentRejectedException>(() => new DocxPackageValidation(new()).ValidateAsync(source, bytes.Length)); Assert.True(source.CanRead);
