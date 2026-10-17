@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Http.Features;
 using QuillSign.Data;
 using QuillSign.Storage;
+using QuillSign.Documents;
 
 namespace QuillSign.Signing;
 
@@ -23,6 +24,7 @@ public static class FieldEditorConfiguration
             IAntiforgery antiforgery, FieldEditor editor, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers["Referrer-Policy"]="no-referrer";
             var body = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
             if (body is { IsReadOnly: false }) body.MaxRequestBodySize = MaximumRequestBytes;
             if (context.Request.ContentLength > MaximumRequestBytes) return Results.StatusCode(413);
@@ -41,6 +43,8 @@ public static class FieldEditorConfiguration
             }
             catch (System.Text.Json.JsonException) { return Results.BadRequest(new { message = "Provide valid document fields." }); }
             catch (BadHttpRequestException error) { return Results.Json(new { message = "The field request is invalid or too large." }, statusCode: error.StatusCode); }
+            catch(Exception error) when(error is DocumentRetentionExpiredException or PreparationRetentionEvidenceException)
+            {return Results.Json(new{message=SenderPreparationRetention.Message(error)},statusCode:SenderPreparationRetention.Status(error));}
             catch (Exception error) when (error.GetBaseException() is Microsoft.Data.SqlClient.SqlException || SqlResume.IsUnavailable(error))
             { return Results.Json(new { message = "We couldn't confirm that save. Your edits are still here; copy or export them before reloading." }, statusCode: 503); }
         }).RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute { AuthenticationSchemes = EnvelopeStorageAuthorization.SenderScheme });
