@@ -75,7 +75,7 @@ public sealed class SyntheticDemoDisclosureTests(SqlDatabaseFixture fixture):ICl
             if(fault=="missing")await db.DocumentRetentionSnapshots.Where(x=>x.EnvelopeId==before.Id).ExecuteDeleteAsync();
             else await db.DocumentRetentionSnapshots.Where(x=>x.EnvelopeId==before.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.OriginalSha256,new byte[32]));
         }
-        await Assert.ThrowsAsync<InvalidDataException>(()=>run.Review());
+        await Assert.ThrowsAsync<PreparationRetentionEvidenceException>(()=>run.Review());
         await Assert.ThrowsAsync<InvalidDataException>(()=>run.H.Send(reviewedRetentionSha256:review.RetentionSha256));await run.Unsent(before);
     }
 

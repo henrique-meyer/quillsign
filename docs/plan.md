@@ -1044,7 +1044,7 @@ Validation: all 24 new HTTP intake cases pass, and the current merged-prerequisi
 
 ## QUILS-73: Enforce fixed demo retention across sender preparation
 
-Status: In Progress. Implementation and browser checks complete; merged QUILS-71/75 are integrated. All 1,674 current .NET tests pass. Final exact-head CI gates merge.
+Status: Done. Merged as PR #77; all ten exact-head checks passed and native Jira Done was verified. All 1,674 current .NET tests pass.
 
 Close fixed upload-retention access across verified sender preparation, after merged QUILS-69 document preview/PDF guard and QUILS-68 review/send cap. This independent slice does not modify active QUILS-71 public intake or QUILS-72 signer access; preserve their branches and plan entries.
 
@@ -1096,3 +1096,5 @@ Implementation design: keep the existing operator template/version and empty-pol
 Validation: all 112 disclosure, retained-deadline, Send and consent regression cases pass, including actual one-, seven- and thirty-day enrollment, settings changes, source replacement and reconfirmation, non-demo/legacy rejection, missing/corrupt policy, exact snapshot persistence and actual invitation redemption/consent using frozen text after profile changes. Model comparison reports no changes. Real synthetic desktop/mobile/keyboard sender review, clean Send redirect, captured invitation redemption, both PDF pages, separate access/consent choices and post-consent unsigned state pass. The downloaded disclosure matches the displayed body exactly; mobile width is 390 CSS pixels without horizontal overflow. All external email is captured by the local fake provider; no live email/TSA or real agreement is used. Current-head CI and staged/full-history secret scans gate merge.
 
 Local configuration integration: forward the explicit profile, existing seven operator-policy variables and optional Demo:PurgeAfterDays through the shared Compose app/worker environment, with empty defaults. This makes the documented private .env selection usable locally and preserves mixed-policy rejection. Do not add an unused demo-mode switch or change running containers; validate configuration without printing private values.
+
+Current integration: QUILS-73 merged main is integrated. All 144 disclosure, Send, consent, deadline and preparation cases pass; corrupt review evidence now asserts the merged preparation guard's specific exception. The profile implementation and completed browser flow are unchanged. Shared Compose configuration validates for app and the optional workers profile without printing values or changing services. Current-head CI gates merge.
