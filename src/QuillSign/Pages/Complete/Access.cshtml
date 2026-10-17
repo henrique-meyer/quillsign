@@ -1,0 +1,22 @@
+@page "/complete/access"
+@model QuillSign.Pages.Complete.AccessModel
+@{ ViewData["Title"]="Open completed records"; }
+<section class="start-card">
+<p class="eyebrow">Private completed records</p><h1>Open completed records</h1>
+<p>Use your completion link or enter its access code. Opening records gives you download access for a limited time.</p>
+@if(Model.Message is not null) { <p class="document-error" role="alert">@Model.Message</p> }
+<p id="completion-link-status" role="status" hidden></p>
+<form method="post" asp-page-handler="Begin" id="completion-code-form">
+    <label for="completion-code">Completion access code</label>
+    <input id="completion-code" name="code" type="text" maxlength="43" autocomplete="off" spellcheck="false" autocapitalize="none" />
+    <button type="submit" id="completion-begin">Continue with access code</button>
+</form>
+@if(Model.PendingNonce is { } nonce) {
+    <section id="completion-pending">
+    <p>A link is ready to open. Select Open records to use this single-use link.</p>
+    <form method="post" asp-page-handler="Redeem"><input type="hidden" name="nonce" value="@nonce.ToString("N")" /><button type="submit">Open records</button></form>
+    </section>
+}
+<p><a href="/complete/access">Return to access entry</a></p>
+</section>
+@section Scripts { <script src="~/completion-access.js" asp-append-version="true" defer></script> }

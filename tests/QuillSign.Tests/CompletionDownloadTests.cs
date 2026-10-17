@@ -185,7 +185,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
         public SendDraftWorkflowTests.Clock Clock=>Run.Signing.H.Clock; public Guid Id=>Run.Signing.Envelope.Id; public string PublicId=>Run.Signing.Envelope.PublicId;
         public string PagePath=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+(Role=="sender" ? "/sent" : "/confirmed");
         public string Resource(string kind)=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+"/final"+(kind.Length==0 ? "" : "/"+kind);
-        public static async Task<Flow> Create(SqlDatabaseFixture fixture)
+        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false)
         {
             var f=new Flow {fixture=fixture,Run=await Run.Create(fixture)}; f.Store=new(f.Clock); _=await f.Run.Prepare();
             await using var db=fixture.Open(); f.Published=(await f.Publication(db).PublishAsync(f.Id))!;
@@ -198,6 +198,9 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
             builder.Services.AddQuillSignSender(builder.Configuration,builder.Environment); builder.Services.AddQuillSignSignerAccess(builder.Configuration,builder.Environment);
             builder.Services.AddScoped<SignerCheckpointReads>(); builder.Services.AddScoped<SignerReviewProtection>(); builder.Services.AddSignerReviewBrowser(); builder.Services.AddScoped<SenderSentStatus>();
             builder.Services.AddCompletionDownloads(); builder.Services.AddScoped<CompletionEvidenceCollector>(sp=>f.Run.Collector(sp.GetRequiredService<QuillSignDbContext>()));
+            if(completionReaders) {builder.Services.AddCompletionAccess(builder.Configuration);builder.Services.AddCompletionReaderBrowser(builder.Environment);}
+            if(chunkedReader)builder.Services.Configure<Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationOptions>(CompletionAccessProtection.Scheme,
+                o=> {o.Cookie.Name="QuillSign.CustomReader";o.CookieManager=new Microsoft.AspNetCore.Authentication.Cookies.ChunkingCookieManager {ChunkSize=900};});
             builder.Services.AddScoped<CompletionPublication>(sp=>f.Publication(sp.GetRequiredService<QuillSignDbContext>()));
             f.App=builder.Build(); f.App.UseRouting(); f.App.UseRateLimiter(); f.App.UseAuthentication(); f.App.UseAuthorization(); f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
             f.App.MapGet("/fixture/{role}",async (HttpContext http,string role,SignerReviewBrowser browser)=> {
@@ -221,7 +224,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
         }
         public void Take(HttpResponseMessage response) {if(response.Headers.TryGetValues("Set-Cookie",out var values))foreach(var value in values) {var pair=value.Split(';')[0].Split('=',2); Set(pair[0],pair[1]);}}
         public void Restore(Dictionary<string,string> cookies) {Cookies=cookies.ToDictionary(); Set("unused",null);}
-        public void Set(string name,string? value) {if(string.IsNullOrEmpty(value))Cookies.Remove(name); else Cookies[name]=value; Client.DefaultRequestHeaders.Remove("Cookie"); Client.DefaultRequestHeaders.Add("Cookie",string.Join("; ",Cookies.Select(x=>x.Key+"="+x.Value)));}
+        public void Set(string name,string? value) {if(string.IsNullOrEmpty(value))Cookies.Remove(name); else Cookies[name]=value; Client.DefaultRequestHeaders.Remove("Cookie"); if(Cookies.Count>0)Client.DefaultRequestHeaders.Add("Cookie",string.Join("; ",Cookies.Select(x=>x.Key+"="+x.Value)));}
         public async ValueTask DisposeAsync() {Client.Dispose(); await App.DisposeAsync(); await Run.DisposeAsync();}
     }
     internal sealed class FinalStore(TimeProvider time) : ICompletionFinalStore
