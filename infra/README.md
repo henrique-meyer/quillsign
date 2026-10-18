@@ -97,6 +97,8 @@ For an existing final container, apply `final-inventory-access.bicep` only for a
 
 Web and dispatch accept an optional secure `tsaRootPem` parameter mounted read-only at `/app/trust/tsa-root.pem`. Supply verified public root material privately and configure `Seal__TsaTrustedRootPaths__0` to that path, the selected provider URL and shared request coordination. Retain historical roots when rotating. Keep email and hosted Office conversion disabled until their separate gates pass.
 
+For a dispatch-only configuration rollout, use `modules/dispatch.bicep` with the existing project's private settings. The full `work.bicep` calls the same module when provisioning the foundation; the narrow module avoids reapplying queue, hint-container and existing role resources during an application-only update.
+
 The explicit operator commands `staging storage` and `staging seal` require Azure storage, `ElectronicRecords__Profile=synthetic-demo-v1` and `Email__Enabled=false`. They register no SQL/email services. Storage checks one generated synthetic final version with a short probe-only lock, exact readback, early deletion rejection and cleanup after expiry. Seal checks perform two non-agreement seals using the configured persistent identity and coordinated TSA. They do not send mail, change default policies or prove the full enrolled purge flow. Run only with approved scoped credentials and a reviewed live-request budget; failures are reported without private identifiers. See the [rollout gates](../docs/hosted-demo-rollout.md).
 
 CI builds the app and Docker image, validates the infrastructure templates, and scans for secrets. Trusted push runs publish GHCR images tagged with the full commit SHA. Pull-request checks require no cloud credentials.
