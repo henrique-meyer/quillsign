@@ -4,7 +4,7 @@ The [hosted DOCX setup proposal](hosted-docx-setup.md) describes the isolated Az
 
 `GotenbergDocxConverter` sends one DOCX to the configured Gotenberg LibreOffice conversion route, then validates and normalizes the returned PDF with the same PDFsharp byte/page/geometry rules as PDF upload. It returns the exact normalized bytes, original SHA-256, normalized SHA-256 and page geometry. The caller keeps ownership of the original input stream.
 
-`DocxDocumentWorkflow` joins package validation, conversion, original/PDF storage, audit and upload retention. The verified-sender upload handler selects this workflow only for a `.docx` filename when conversion is configured. Browser MIME labels grant no trust: the package gate validates the actual content before the ordinary Gotenberg HTTP request. The resulting normalized PDF is previewed/downloaded and requires explicit confirmation before preparation continues. No automatic Conversion work producer is used. Plain text has internal conversion support below; its public upload integration and other Office formats remain future work.
+`DocxDocumentWorkflow` joins package validation, conversion, original/PDF storage, audit and upload retention. The verified-sender upload handler selects this workflow only for a `.docx` filename when conversion is configured. Browser MIME labels grant no trust: the package gate validates the actual content before the ordinary Gotenberg HTTP request. The resulting normalized PDF is previewed/downloaded and requires explicit confirmation before preparation continues. No automatic Conversion work producer is used. Strict UTF-8 text has optional sender intake below; other Office formats remain gated by their separate validation stories.
 
 | Setting | Default / requirement |
 | --- | --- |
@@ -48,7 +48,7 @@ The app deletes and verifies absence of its exact owned sandbox, snapshots and i
 
 Tests cover regional API scoping, authentication audience, no retries/redirects/body disclosure, policy/runtime/source mismatches, cancellation, quota persistence, unknown create/delete recovery and preservation of unrelated resources. Real Azurite tests cover separate owners, finite lease fencing, restart/tamper checks and scope aliases. SQL/Azurite upload tests exercise this coordinator through the actual sender handlers with a synthetic provider boundary; these do not claim live hosted connectivity.
 
-## Internal plain-text conversion
+## Optional plain-text upload and conversion
 
 `TextPdfConverter` accepts nonempty strict UTF-8 plain text, with an optional UTF-8 BOM. It rejects invalid UTF-8, binary/control characters other than tab and line endings, XML-incompatible characters, whitespace-only input and size mismatches before HTTP. UTF-16 and legacy encodings must be saved as UTF-8 or exported to PDF. The original hash covers the exact input bytes, including any BOM.
 
@@ -56,7 +56,9 @@ The converter serializes text into a minimal owned DOCX with escaped literal tex
 
 Original text, generated package and normalized PDF must each fit `Documents__MaximumBytes`; the expanded wrapper XML is additionally capped at 8 MiB. The shared configured total deadline includes input copying, wrapper generation, package validation and HTTP/PDF processing. Existing PDF/page limits, private fixed endpoint, disabled redirects/proxies/request logging, safe errors and no automatic retry remain in force. Excessively large or complex text must be exported to PDF instead.
 
-This is an internal service only: there is no TXT upload choice, persistence workflow, new configuration, schema change or hosted enablement. Future upload integration must preserve the original text separately, record both hashes and require exact PDF preview confirmation with the existing authority and fixed retention checks.
+The internal converter is always registered. TXT intake separately requires `Documents__EnableTextUploads=true` (default false) and a usable configured Gotenberg transport. A later image deployment therefore does not silently enable TXT on an existing instance. There is no schema or hosted-setting change. The authenticated private draft form shows TXT only when both gates pass; disabled requests return a recoverable unavailable response before conversion.
+
+`TextDocumentWorkflow` first checks sender authority, draft revision and fixed retention, then copies the original once into bounded operation-owned temporary storage. Conversion uses that owned source, and its original hash must match before publication. The exact text bytes, including any BOM and original line endings, are stored as `text/plain` separately from the normalized PDF. Audit provenance uses `text-docx-gotenberg-v1`, source/PDF lengths, sanitized TXT name and both hashes. Shared atomic publication rechecks authority, revision and cutoff, preserves rollback/uncertain-commit behavior and clears preparation only on success. Replacements keep the first upload retention deadline. The generated DOCX is only a transport wrapper; its hash never replaces the original text hash. The sender reviews/downloads the exact normalized PDF and must explicitly confirm it. Unsupported encodings must be saved as UTF-8 or exported to PDF.
 
 Local validation used the pinned isolated Gotenberg service: a three-page multilingual synthetic text and one-page HTML/RTF-looking examples retained their literal content and exact hashes. All five pages were rendered and inspected. A receiver on the same private test network saw zero callbacks; the converter had no default route and a direct external connection failed. These are local checks, not hosted conversion evidence.
 
@@ -92,7 +94,7 @@ SQL Server/Azurite tests cover both replacement directions, immutable source/has
 
 ## Public upload and preview
 
-The verified-sender form accepts exactly one PDF, supported PNG/JPEG, or DOCX when a usable converter origin and supported limits are configured. Disabled or invalid converter configuration omits DOCX from the choices and returns a generic recoverable error for an attempted DOCX upload. Client extension/size checks are hints; the server retains authorization, CSRF, rate/body limits, actual content validation and row-version checks. It never falls back to another parser for invalid content.
+The verified-sender form accepts exactly one PDF, supported PNG/JPEG, DOCX when a usable converter and supported limits are configured, or strict UTF-8 TXT when its separate intake gate is also enabled. Disabled or invalid converter configuration omits DOCX from the choices and returns a generic recoverable error for an attempted DOCX upload. Client extension/size checks are hints; the server retains authorization, CSRF, rate/body limits, actual content validation and row-version checks. It never falls back to another parser for invalid content.
 
 Successful upload redirects to the clean draft URL and displays only the normalized PDF. Conversion failure preserves the previous source and preparation. Successful replacement clears the previous confirmation and fields, preserves the first upload's retention cutoff, and requires a new explicit confirmation. Original files have no public download route. Senders must inspect converted layout/fonts and export their own PDF if the supported profile does not produce a suitable result.
 

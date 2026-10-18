@@ -11,21 +11,21 @@ namespace QuillSign.Tests;
 public sealed class PublicDocumentIntakeTests(SqlDatabaseFixture fixture):IClassFixture<SqlDatabaseFixture>
 {
     [Theory]
-    [InlineData("pdf")][InlineData("docx")][InlineData("png")][InlineData("jpg")][InlineData("jpeg")]
+    [InlineData("pdf")][InlineData("docx")][InlineData("png")][InlineData("jpg")][InlineData("jpeg")][InlineData("txt")]
     public async Task Verified_upload_publishes_only_normalized_PDF_then_requires_explicit_confirmation(string kind)
     {
         var provider=new DocxDocumentWorkflowTests.Provider();await using var b=await Start(provider);var old=await Prepared(b);var page=await Page(b);
         var input=Input(kind);using(var upload=await b.Upload(page,input,"synthetic."+kind,"application/x-ignored-browser-label"))
         {Assert.Equal(HttpStatusCode.Redirect,upload.StatusCode);Assert.Equal(b.Path,upload.Headers.Location!.OriginalString);Assert.True(upload.Headers.CacheControl!.NoStore);Assert.Contains("no-referrer",upload.Headers.GetValues("Referrer-Policy"));}
         var state=await b.run.H.StateAsync();Assert.Null(state.PreviewConfirmedAt);Assert.Equal("synthetic.pdf",state.Title);Assert.NotEqual(old.PdfBlob,state.PdfBlob);
-        Assert.Equal(SHA256.HashData(input),state.OriginalSha256);Assert.Equal(kind switch {"pdf"=>"application/pdf","docx"=>DocxDocumentWorkflow.Mime,"png"=>"image/png",_=>"image/jpeg"},state.OriginalMime);
+        Assert.Equal(SHA256.HashData(input),state.OriginalSha256);Assert.Equal(kind switch {"pdf"=>"application/pdf","docx"=>DocxDocumentWorkflow.Mime,"txt"=>TextDocumentWorkflow.Mime,"png"=>"image/png",_=>"image/jpeg"},state.OriginalMime);
         using(var pdf=await b.Get(b.Path+"/document/"+state.PdfBlob)) {Assert.Equal(HttpStatusCode.OK,pdf.StatusCode);Assert.Equal("application/pdf",pdf.Content.Headers.ContentType!.MediaType);Assert.Equal(state.PdfSha256,SHA256.HashData(await pdf.Content.ReadAsByteArrayAsync()));}
         using(var stale=await b.Get(b.Path+"/document/"+old.PdfBlob))Assert.Equal(HttpStatusCode.NotFound,stale.StatusCode);
         page=await Page(b);Assert.Contains("Review needed",page);Assert.DoesNotContain("Set up signers",page);
         using(var confirm=await b.Post(b.Path+"?handler=Confirm",new(){["__RequestVerificationToken"]=SignaturePageTests.Browser.Token(page),["Version"]=SenderSendPageTests.Flow.Value(page,"Version"),["DocumentId"]=state.PdfBlob!,["PreviewMatches"]="true"}))Assert.Equal(HttpStatusCode.Redirect,confirm.StatusCode);
         Assert.Contains("Set up signers",await Page(b));await using var db=fixture.Open();Assert.False(await db.Fields.AnyAsync(x=>x.EnvelopeId==state.Id));
         Assert.Equal(UploadRetention.Digest(b.run.Policy),UploadRetention.Digest(await db.DocumentRetentionSnapshots.AsNoTracking().SingleAsync(x=>x.EnvelopeId==state.Id)));Assert.False(await db.EmailOutbox.AnyAsync(x=>x.EnvelopeId==state.Id));var purge=Assert.Single(await db.WorkItems.AsNoTracking().Where(x=>x.EnvelopeId==state.Id).ToArrayAsync());Assert.Equal(WorkKind.Purge,purge.Kind);Assert.Equal(b.run.Policy.DeleteAfter,purge.AvailableAt);
-        Assert.Equal(kind=="docx" ? 1 : 0,provider.Calls);
+        Assert.Equal(kind is "docx" or "txt" ? 1 : 0,provider.Calls);
     }
 
     [Theory]
@@ -62,7 +62,10 @@ public sealed class PublicDocumentIntakeTests(SqlDatabaseFixture fixture):IClass
 
     private async Task<Browser> Start(DocxDocumentWorkflowTests.Provider provider,bool enabled=true)
     {
-        var b=await Browser.Start(fixture,conversion:new(){Enabled=enabled,BaseUrl="http://127.0.0.1:3000"},configure:services=>services.AddHttpClient<GotenbergDocxConverter>().ConfigurePrimaryHttpMessageHandler(()=>provider));
+        var b=await Browser.Start(fixture,conversion:new(){Enabled=enabled,BaseUrl="http://127.0.0.1:3000"},configure:services=>{
+            services.AddSingleton(new DocumentOptions{EnableTextUploads=true});
+            services.AddHttpClient<GotenbergDocxConverter>().ConfigurePrimaryHttpMessageHandler(()=>provider);
+        });
         using var session=await b.Get("/test-session");Assert.Equal(HttpStatusCode.OK,session.StatusCode);return b;
     }
     [Theory]
@@ -99,5 +102,5 @@ public sealed class PublicDocumentIntakeTests(SqlDatabaseFixture fixture):IClass
         await using var db=fixture.Open();db.Fields.Add(new(){EnvelopeId=before.Id,Type=FieldType.Text,Width=.2m,Height=.1m});await db.SaveChangesAsync();return await b.run.H.StateAsync();
     }
     private static async Task<string> Page(Browser b) {using var response=await b.Get(b.Path);Assert.Equal(HttpStatusCode.OK,response.StatusCode);return await response.Content.ReadAsStringAsync();}
-    private static byte[] Input(string kind)=>kind switch {"pdf"=>PdfFixtures.Create(),"docx"=>GotenbergDocxConverterTests.Docx(),"png"=>ImagePdfConverterTests.Png(orientation:6),_=>ImagePdfConverterTests.Jpeg(orientation:6)};
+    private static byte[] Input(string kind)=>kind switch {"pdf"=>PdfFixtures.Create(),"docx"=>GotenbergDocxConverterTests.Docx(),"txt"=>"SYNTHETIC TEXT - NO AGREEMENT\n<markup> is literal"u8.ToArray(),"png"=>ImagePdfConverterTests.Png(orientation:6),_=>ImagePdfConverterTests.Jpeg(orientation:6)};
 }

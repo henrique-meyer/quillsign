@@ -219,7 +219,7 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
         private SqlDatabaseFixture fixture=null!;
         public async Task<T> Use<S,T>(Func<S,Task<T>> action) where S:notnull {using var scope=H.App.Services.CreateScope(); return await action(scope.ServiceProvider.GetRequiredService<S>());}
         public async Task<Envelope> Refresh() {await using var db=fixture.Open(); return Envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==Envelope.Id);}
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DateTimeOffset? initialTime=null,string? mailbox=null)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DateTimeOffset? initialTime=null,string? mailbox=null,Func<Run,int,Task<bool>>? signerOverride=null)
         {
             var run=new Run {fixture=fixture,H=await Shared.Create(fixture,browser:true)}; var email=mailbox??"completion-"+Guid.NewGuid().ToString("N")+"@example.invalid";
             if(initialTime is { } start) {
@@ -262,13 +262,13 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
             }
             await run.Refresh();var sendReview=await run.Use((DraftReview r)=>r.GetAsync(run.Sender,run.Envelope.PublicId));
             Assert.NotNull(await run.Use((SendDraftWorkflow s)=>s.SendAsync(run.Sender,run.Envelope.PublicId,run.Envelope.RowVersion,true,true,SenderSendStatement.Version,"127.0.0.1","Synthetic sender",reviewedRetentionSha256:sendReview!.RetentionSha256)));
-            var last=firstOnly ? 1 : 2;for(var i=1;i<=last;i++)await run.SignNext(i<last || publishLast,i<last || finishLast);
+            var last=firstOnly ? 1 : 2;for(var i=1;i<=last;i++)if(signerOverride is null || !await signerOverride(run,i))await run.SignNext(i<last || publishLast,i<last || finishLast);
             await run.Refresh(); run.Probe=new(run.H.Blobs.Inner); return run;
         }
         private static string Token(Shared h) {var raw=Regex.Match(h.Sender.Last!.Text,"token=([A-Za-z0-9_-]{43})").Groups[1].Value; Assert.Equal(43,raw.Length); return raw;}
-        private async Task SignNext(bool publish,bool finish)
+        internal async Task<VerifiedSigner> SignNext(bool publish,bool finish,string? exactToken=null)
         {
-            Assert.True(await H.Once()); var identity=(await Use((SignerAccess s)=>s.RedeemAsync(Token(H),"127.0.0.1","Synthetic signer")))!; Assert.NotNull(identity);
+            if(exactToken is null)Assert.True(await H.Once()); var identity=(await Use((SignerAccess s)=>s.RedeemAsync(exactToken??Token(H),"127.0.0.1","Synthetic signer")))!; Assert.NotNull(identity);
             var principal=SignerAccessConfiguration.Principal(identity); LastSigner=principal;
             var context=(await Use((SignerAccess s)=>s.GetContextAsync(principal,Envelope.PublicId)))!;
             _=await Use((SignerPdfAccess s)=>s.PrepareAsync(principal,context));
@@ -284,9 +284,10 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
             var review=(await Use((SignerReviewCandidates s)=>s.PrepareAsync(principal,Envelope.PublicId,"127.0.0.1","Synthetic signer")))!;
             LastReviewReceipt=review.Receipt;
             Assert.NotNull(await Use((SignerReviewCandidates s)=>s.ReadAsync(principal,Envelope.PublicId,review.Receipt)));
-            if(!finish)return;
+            if(!finish)return identity;
             Assert.Equal(SignerFinishOutcome.Accepted,(await Use((SignerFinish s)=>s.AcceptAsync(principal,Envelope.PublicId,review.Receipt,true,SignerFinishStatement.Version,"127.0.0.1","Synthetic signer"))).Outcome);
             H.Clock.Advance(TimeSpan.FromSeconds(3)); if(publish)Assert.True(await H.Once());
+            return identity;
         }
         public async Task<CompletionMaterialization?> Collect(CancellationToken ct=default)
         {await using var db=fixture.Open(); return await new CompletionEvidenceCollector(db,new(db,H.Clock),new(Probe,H.Clock),Probe,H.Clock).CollectAsync(Envelope.Id,ct);}
