@@ -26,6 +26,13 @@ public sealed class DemoPurgeSqlTests(SqlDatabaseFixture fixture):IClassFixture<
             seed.Suppressions.Add(new(){Email="global-"+Guid.NewGuid().ToString("N")+"@example.invalid",Reason=SuppressionReason.Bounce});
             seed.Envelopes.Add(new(){Title="Unrelated synthetic record",SenderEmail="neighbor@example.invalid"});
             seed.EmailOutbox.Add(new(){To="pre-envelope@example.invalid"});await seed.SaveChangesAsync();
+            var signer=new Signer{EnvelopeId=f.R.H.Id,Order=99,FullName="Synthetic retired contact",Email="retired-"+Guid.NewGuid().ToString("N")+"@example.invalid"};
+            seed.Signers.Add(signer);await seed.SaveChangesAsync();
+            var first=new SignerContactRevisionRecord{Id=Guid.NewGuid(),EnvelopeId=f.R.H.Id,SignerId=signer.Id,Number=1,ChangedAt=DateTimeOffset.UtcNow,EvidenceJson="{}",RetirementJson="{}"};
+            var second=new SignerContactRevisionRecord{Id=Guid.NewGuid(),EnvelopeId=f.R.H.Id,SignerId=signer.Id,Number=2,PreviousRevisionId=first.Id,ChangedAt=DateTimeOffset.UtcNow,EvidenceJson="{}",RetirementJson="{}"};
+            seed.AddRange(first,second);await seed.SaveChangesAsync();
+            seed.SignerContactSessions.Add(new(){SessionId=Guid.NewGuid(),EnvelopeId=f.R.H.Id,SignerId=signer.Id,RevisionId=second.Id,
+                SessionSha256=new byte[32],CreatedAt=DateTimeOffset.UtcNow,ExpiresAt=DateTimeOffset.UtcNow.AddHours(1)});await seed.SaveChangesAsync();
         }
         foreach(var user in new[]{"app_runtime","app_worker"})await f.User(user,async db=> {
             var error=await Assert.ThrowsAsync<SqlException>(()=>db.Database.ExecuteSqlRawAsync("DELETE FROM dbo.AuditEvents WHERE 1=0"));Assert.Equal(229,error.Number);return true;
@@ -143,7 +150,7 @@ public sealed class DemoPurgeSqlTests(SqlDatabaseFixture fixture):IClassFixture<
             var sweep=await recovery.RecoverBatchAsync();Assert.Equal(0,sweep.Failed);Assert.True(sweep.Deleted>0);
         }finally{await hints.DeleteIfExistsAsync();}
     }
-    private static readonly string[] OwnedTables=["Envelopes","DocumentRetentionSnapshots","AuditEvents","AuthTokens","Fields","Signers","Recipients","SignaturePreviews","SignerReviewCandidates","SignerFinishAcceptances","CompletionCandidates","CompletionSealOutputs","CompletionPublicationIntents","CompletionPublicationResults","EmailOutbox"];
+    private static readonly string[] OwnedTables=["Envelopes","DocumentRetentionSnapshots","AuditEvents","AuthTokens","Fields","Signers","Recipients","SignaturePreviews","SignerReviewCandidates","SignerFinishAcceptances","CompletionCandidates","CompletionSealOutputs","CompletionPublicationIntents","CompletionPublicationResults","EmailOutbox","SignerContactRevisions","SignerContactSessions"];
     private static async Task<int> Count(QuillSignDbContext db,string table,Guid id) {
         // Table names are the fixed test inventory above, never caller input.
         await db.Database.OpenConnectionAsync();await using var command=db.Database.GetDbConnection().CreateCommand();

@@ -105,6 +105,11 @@ public static class DatabasePermissions
             DENY UPDATE, DELETE ON OBJECT::[dbo].[DocumentRetentionSnapshots] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[LookupContactRetentionSnapshots] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[LookupContactRetentionSnapshots] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[SignerContactRevisions] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[SignerContactRevisions] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[SignerContactSessions] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[SignerContactSessions] TO [app_runtime_role];
+            DENY UPDATE ON OBJECT::[dbo].[AuthTokens] ([SignerContactRevisionId]) TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[CompletionCandidates] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[CompletionCandidates] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[CompletionSealOutputs] TO [app_runtime_role];
