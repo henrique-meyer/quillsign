@@ -6,7 +6,7 @@ namespace QuillSign.Email.Pilot;
 
 // No endpoint or transport consumes this foundation yet. A reservation is a
 // nonrefunded accounting event, not a reusable permission to invoke a provider.
-public sealed class EmailPilotLedger(EmailPilotOptions options, EmailOptions email, Func<QuillSignDbContext> database,
+public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOptions email, Func<QuillSignDbContext> database,
     Func<EmailPilotProtection> protection, TimeProvider time)
 {
     private bool Enabled => options.Enabled && !email.Enabled;
@@ -118,9 +118,11 @@ public sealed class EmailPilotLedger(EmailPilotOptions options, EmailOptions ema
         if (rows.Count > 3) throw EmailPilotProtection.Invalid();
         return rows.Select(x => {
             var value = protection().Read<EmailPilotEnrollment>(run.RunId, "enrollment", x.ProtectedBinding, 2048);
-            if (value is null || value != new EmailPilotEnrollment(x.RunId, x.SubjectEnvelopeId, x.Scenario, x.EnrolledAt) ||
+            if (value is null || value.RunId != x.RunId || value.SubjectEnvelopeId != x.SubjectEnvelopeId || value.Scenario != x.Scenario || value.EnrolledAt != x.EnrolledAt ||
                 value.SubjectEnvelopeId == Guid.Empty || !Enum.IsDefined(value.Scenario) || value.EnrolledAt.Offset != TimeSpan.Zero ||
-                value.EnrolledAt < run.CreatedAt || value.EnrolledAt >= run.ExpiresAt || value.EnrolledAt > Now) throw EmailPilotProtection.Invalid();
+                value.EnrolledAt < run.CreatedAt || value.EnrolledAt >= run.ExpiresAt || value.EnrolledAt > Now ||
+                value.Verification is { } v && (v.WorkId == Guid.Empty || !EmailPilotCanonical.Hash(v.DraftSha256) ||
+                    !EmailPilotCanonical.Hash(v.EmailPayloadSha256) || !EmailPilotCanonical.Hash(v.WorkPayloadSha256))) throw EmailPilotProtection.Invalid();
             return value;
         }).ToList();
     }
