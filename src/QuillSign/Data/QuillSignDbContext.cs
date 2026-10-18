@@ -20,6 +20,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     public DbSet<AuthToken> AuthTokens => Set<AuthToken>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
+    public DbSet<LookupContactRetentionSnapshot> LookupContactRetentionSnapshots => Set<LookupContactRetentionSnapshot>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<Suppression> Suppressions => Set<Suppression>();
 
@@ -147,6 +148,10 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<AuditEvent>().ToTable(t => t.HasCheckConstraint("CK_Audit_Chain", "([Sequence] = 1 AND [PrevHash] IS NULL) OR ([Sequence] > 1 AND [PrevHash] IS NOT NULL)"));
 
         model.Entity<EmailOutbox>().HasIndex(x => new { x.Status, x.AvailableAt });
+        model.Entity<LookupContactRetentionSnapshot>().HasKey(x => x.RequestId);
+        model.Entity<LookupContactRetentionSnapshot>().HasOne<EmailOutbox>().WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<LookupContactRetentionSnapshot>().ToTable(t => t.HasCheckConstraint("CK_LookupContactRetention_Interval",
+            "[Days] BETWEEN 1 AND 36500 AND DATEPART(TZOFFSET,[StartedAt]) = 0 AND DATEPART(TZOFFSET,[DeleteAfter]) = 0 AND DATEPART(nanosecond,[StartedAt]) = 0 AND [DeleteAfter] = DATEADD(day,[Days],[StartedAt])"));
         model.Entity<WorkItem>().HasIndex(x => new { x.Status, x.AvailableAt });
         model.Entity<EmailOutbox>().ToTable(t => t.HasCheckConstraint("CK_Email_Lease", "[Attempts] >= 0 AND (([LeaseOwner] IS NULL AND [LeaseExpiresAt] IS NULL) OR ([LeaseOwner] IS NOT NULL AND [LeaseExpiresAt] IS NOT NULL))"));
         model.Entity<WorkItem>().ToTable(t => t.HasCheckConstraint("CK_Work_Lease", "[Attempts] >= 0 AND (([LeaseOwner] IS NULL AND [LeaseExpiresAt] IS NULL) OR ([LeaseOwner] IS NOT NULL AND [LeaseExpiresAt] IS NOT NULL))"));
@@ -197,6 +202,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     private void GuardAuditMutations()
     {
         ChangeTracker.DetectChanges();
+        if(ChangeTracker.Entries<LookupContactRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Lookup contact retention snapshots are immutable. Cleanup requires its privileged path.");
         if(ChangeTracker.Entries<DocumentRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Document retention snapshots are immutable. Purge requires a separate privileged path.");
         if(ChangeTracker.Entries<AuthToken>().Any(x=>x.State==EntityState.Modified &&

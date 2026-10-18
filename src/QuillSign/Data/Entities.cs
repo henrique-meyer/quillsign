@@ -310,6 +310,16 @@ public sealed class AuditEvent
     public byte[] Hash { get; set; } = [];
 }
 
+// Contains technical retention policy only; the mailbox stays in the protected outbox.
+public sealed class LookupContactRetentionSnapshot
+{
+    public Guid RequestId { get; set; }
+    public string PolicyVersion { get; set; } = "";
+    public int Days { get; set; }
+    public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset DeleteAfter { get; set; }
+}
+
 public sealed class EmailOutbox : IVersionedRecord
 {
     public Guid Id { get; set; } = Guid.NewGuid();

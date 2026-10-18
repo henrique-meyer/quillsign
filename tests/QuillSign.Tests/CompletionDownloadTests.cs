@@ -199,6 +199,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
                 var outputRoot=Path.Combine(AppContext.BaseDirectory,"wwwroot");if(Directory.Exists(outputRoot))builder.Environment.WebRootFileProvider=new Microsoft.Extensions.FileProviders.CompositeFileProvider(builder.Environment.WebRootFileProvider,new Microsoft.Extensions.FileProviders.PhysicalFileProvider(outputRoot));
             }
             builder.Services.AddRazorPages();
+            if(lookupBrowser)builder.Configuration["Demo:PurgeAfterDays"]="7";
             builder.Services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(o=>o.Filters.Add<PreparationRetentionExceptionFilter>());
             builder.Services.AddDbContext<QuillSignDbContext>(o=> {o.UseSqlServer(connection).AddInterceptors(f.Faults);if(readFault is not null)o.AddInterceptors(readFault);});
             builder.Services.AddQuillSignEmail(builder.Configuration,builder.Environment); builder.Services.AddQuillSignWork(builder.Configuration,builder.Environment); builder.Services.AddSingleton<TimeProvider>(f.Clock);

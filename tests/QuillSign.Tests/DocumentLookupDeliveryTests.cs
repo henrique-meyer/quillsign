@@ -20,7 +20,7 @@ using QuillSign.Work;
 
 namespace QuillSign.Tests;
 
-public sealed class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
+public sealed partial class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
     [Fact]
     public async Task Delayed_empty_mailbox_delivery_issues_only_at_dispatch_and_repeated_requests_or_wakes_do_not_resend()
@@ -31,7 +31,7 @@ public sealed class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IC
             Assert.False(await h.Tokens(db).AnyAsync());
             var email = await db.EmailOutbox.SingleAsync(x => x.Id == id); var work = await db.WorkItems.SingleAsync(x => x.Id == id);
             Assert.Null(email.EnvelopeId); Assert.Null(work.EnvelopeId); Assert.DoesNotContain(h.Address, email.PayloadJson);
-            Assert.DoesNotContain(h.Address, work.PayloadJson); Assert.DoesNotContain(h.Ip, email.PayloadJson); Assert.Equal(1, h.Signals.Puts);
+            Assert.DoesNotContain(h.Address, work.PayloadJson); Assert.DoesNotContain(h.Ip, email.PayloadJson); Assert.Equal(2, h.Signals.Puts);
         }
         h.Clock.Advance(TimeSpan.FromHours(3)); Assert.True(await h.Once()); Assert.Equal(1, h.Transport.Calls);
         var message = h.Transport.Last!; var code = Code(message); Assert.Contains("/find/access#token=", message.Html);
@@ -47,7 +47,7 @@ public sealed class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IC
         await h.Request(id, "other@example.invalid", "192.0.2.2"); Assert.Equal(1, h.Transport.Calls);
         await using var verify = fixture.Open(); Assert.Equal(h.Address, (await verify.EmailOutbox.SingleAsync(x => x.Id == id)).To);
         Assert.Equal(WorkStatus.Completed, (await verify.WorkItems.SingleAsync(x => x.Id == id)).Status);
-        Assert.False(await verify.Envelopes.AnyAsync());
+        Assert.False(await verify.Envelopes.AnyAsync(x => x.SenderEmail == h.Address));
     }
 
     [Theory]
@@ -67,7 +67,7 @@ public sealed class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IC
         await using var h = new Harness(fixture); h.Limits.DailyRequests = 20; h.Limits.DailyIpRequests = 10; h.Limits.DailyAddressRequests = 2;
         var ids = Enumerable.Range(0, 8).Select(_ => Guid.NewGuid()).ToArray();
         Assert.All(await Task.WhenAll(ids.Select(x => h.Request(x))), x => Assert.Equal(LookupRequestOutcome.Neutral, x));
-        await using var db = fixture.Open(); Assert.Equal(2, await db.EmailOutbox.CountAsync(x => ids.Contains(x.Id))); Assert.Equal(2, h.Signals.Puts);
+        await using var db = fixture.Open(); Assert.Equal(2, await db.EmailOutbox.CountAsync(x => ids.Contains(x.Id))); Assert.Equal(4, h.Signals.Puts);
         h.Clock.Advance(TimeSpan.FromDays(1)); var tomorrow = Guid.NewGuid(); await h.Request(tomorrow);
         Assert.True(await db.EmailOutbox.AnyAsync(x => x.Id == tomorrow)); Assert.Equal(0, h.Transport.Calls);
     }
@@ -151,7 +151,7 @@ public sealed class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IC
     {
         await using var h = new Harness(fixture); var id = Guid.NewGuid(); h.Signals.FailHint = fault == "hint"; h.Faults.Mode = fault;
         await Assert.ThrowsAsync<IOException>(() => h.Request(id)); h.Signals.FailHint = false; h.Faults.Mode = "";
-        await h.Signals.RecoverAsync(h.Clock.GetUtcNow(), default); Assert.True(await h.Once());
+        await h.Signals.RecoverAsync(h.Clock.GetUtcNow(), default); Assert.Equal(fault != "hint", await h.Once());
         Assert.Equal(fault == "request-lost" ? 1 : 0, h.Transport.Calls);
         await using var db = fixture.Open(); Assert.Equal(fault == "request-lost" ? 1 : 0, await db.EmailOutbox.CountAsync(x => x.Id == id));
     }
@@ -254,9 +254,9 @@ public sealed class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IC
         public WebApplication App; public Clock Clock; public readonly DateTimeOffset Start; public Capture Transport = new(); public SignalFaults Signals; public CommitFaults Faults = new(); public Connections Connections = new(); public bool KeysUnavailable;
         public string Address = "lookup-" + Guid.NewGuid().ToString("N") + "@example.invalid", Ip = "192.0.2.1";
         public EmailOptions Email => App.Services.GetRequiredService<EmailOptions>(); public WorkOptions Work => App.Services.GetRequiredService<WorkOptions>(); public LookupDeliveryOptions Limits => App.Services.GetRequiredService<LookupDeliveryOptions>();
-        public Harness(SqlDatabaseFixture fixture) {
+        public Harness(SqlDatabaseFixture fixture, DateTimeOffset? start = null) {
             // Each harness has a later UTC day, isolating global daily counters in the shared fixture database.
-            Start = new DateTimeOffset(DateTimeOffset.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddDays(Interlocked.Increment(ref sequence) * 5); Clock = new(Start);
+            Start = start ?? new DateTimeOffset(DateTimeOffset.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddDays(Interlocked.Increment(ref sequence) * 5); Clock = new(Start);
             var connection = Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!; var name = "lookup-test-" + Guid.NewGuid().ToString("N");
             queue = new(connection, name, new QueueClientOptions(QueueClientOptions.ServiceVersion.V2023_11_03));
             var blobs = new BlobServiceClient(connection, new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03)); hints = blobs.GetBlobContainerClient(name); key = blobs.GetBlobContainerClient("keys").GetBlobClient(name + ".xml");
@@ -265,7 +265,7 @@ public sealed class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IC
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ApplicationName = typeof(EmailOptions).Assembly.FullName, ContentRootPath = AppContext.BaseDirectory, EnvironmentName = "Development" }); builder.Logging.ClearProviders();
             builder.Configuration.AddInMemoryCollection(new Dictionary<string,string?> {
                 ["Storage:Provider"]="Azurite",["Storage:ConnectionString"]=connection,["DataProtection:ApplicationName"]=name,["DataProtection:KeyRingBlobName"]=name+".xml",
-                ["Work:Enabled"]="true",["Work:QueueName"]=name,["Work:HintContainer"]=name,["Email:Enabled"]="true",["Email:Provider"]="Smtp",
+                ["Demo:PurgeAfterDays"]="7",["Work:Enabled"]="true",["Work:QueueName"]=name,["Work:HintContainer"]=name,["Email:Enabled"]="true",["Email:Provider"]="Smtp",
                 ["Email:FromEmail"]="noreply@example.invalid",["Email:BaseUrl"]="https://example.invalid/",["Email:Smtp:Host"]="127.0.0.1",["Email:Smtp:UseStartTls"]="false" });
             using var source = fixture.Open(); var database = source.Database.GetConnectionString();
             builder.Services.AddDbContext<QuillSignDbContext>(o => o.UseSqlServer(database).AddInterceptors(Connections, Faults, Faults.Commands));
@@ -294,8 +294,8 @@ public sealed class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IC
             if (AfterIssue is not null && e.Context!.ChangeTracker.Entries<AuthToken>().Any(x => x.State == EntityState.Added)) issued = true;
             return ValueTask.FromResult(result);
         }
-        public override ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction tx, TransactionEventData e, InterceptionResult result, CancellationToken ct = default) { if (armed && Mode.EndsWith("rejected")) { armed = false; throw new IOException("Synthetic rejected commit."); } return ValueTask.FromResult(result); }
-        public override async Task TransactionCommittedAsync(DbTransaction tx, TransactionEndEventData e, CancellationToken ct = default) { if (issued && AfterIssue is { } callback) { issued = false; AfterIssue = null; await callback(); } if (armed && Mode.EndsWith("lost")) { armed = false; throw new IOException("Synthetic lost commit acknowledgement."); } }
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction tx, TransactionEventData e, InterceptionResult result, CancellationToken ct = default) { if ((armed || Mode.StartsWith("cleanup-")) && Mode.EndsWith("rejected")) { armed = false; throw new IOException("Synthetic rejected commit."); } return ValueTask.FromResult(result); }
+        public override async Task TransactionCommittedAsync(DbTransaction tx, TransactionEndEventData e, CancellationToken ct = default) { if (issued && AfterIssue is { } callback) { issued = false; AfterIssue = null; await callback(); } if ((armed || Mode.StartsWith("cleanup-")) && Mode.EndsWith("lost")) { armed = false; throw new IOException("Synthetic lost commit acknowledgement."); } }
         public sealed class CommandFault(CommitFaults owner) : DbCommandInterceptor { public override ValueTask<int> NonQueryExecutedAsync(DbCommand c, CommandExecutedEventData e, int result, CancellationToken ct = default) { if (owner.Mode.StartsWith("intent-") && c.CommandText.Contains("EmailOutbox") && c.CommandText.Contains("SubmissionStartedAt") && c.CommandText.Contains("PayloadJson")) owner.armed = true; if (owner.Mode == "receipt-lost" && c.CommandText.Contains("UPDATE") && c.CommandText.Contains("ProviderMessageId")) owner.armed = true; return ValueTask.FromResult(result); } }
     }
     private sealed class UnavailableKeys(IDataProtectionProvider inner) : IDataProtectionProvider {
@@ -303,8 +303,8 @@ public sealed class DocumentLookupDeliveryTests(SqlDatabaseFixture fixture) : IC
         private sealed class Unavailable(IDataProtector inner) : IDataProtector { public IDataProtector CreateProtector(string purpose) => new Unavailable(inner.CreateProtector(purpose)); public byte[] Protect(byte[] data) => inner.Protect(data); public byte[] Unprotect(byte[] data) => throw new CryptographicException("Synthetic missing lookup key."); }
     }
     private sealed class SignalFaults(IWorkSignals inner) : IWorkSignals {
-        public int Puts; public bool FailHint;
-        public async Task PutHintAsync(Guid id, DateTimeOffset at, CancellationToken ct) { Interlocked.Increment(ref Puts); await inner.PutHintAsync(id, at, ct); if (FailHint) throw new IOException("Synthetic hint response loss."); }
+        public int Puts; public bool FailHint; public int FailHintAt = 1;
+        public async Task PutHintAsync(Guid id, DateTimeOffset at, CancellationToken ct) { var count = Interlocked.Increment(ref Puts); await inner.PutHintAsync(id, at, ct); if (FailHint && count == FailHintAt) throw new IOException("Synthetic hint response loss."); }
         public Task RemoveHintAsync(Guid id, CancellationToken ct) => inner.RemoveHintAsync(id, ct);
         public Task<DateTimeOffset?> ReadDueAsync(Guid id, CancellationToken ct) => inner.ReadDueAsync(id, ct);
         public Task PublishAsync(Guid id, TimeSpan delay, CancellationToken ct) => inner.PublishAsync(id, delay, ct);
