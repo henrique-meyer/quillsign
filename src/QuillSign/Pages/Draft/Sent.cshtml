@@ -16,6 +16,8 @@
 @if(Model.Void?.CanVoid==true) {<p><a asp-page="/Draft/Void" asp-route-publicId="@data.PublicId">Review void action</a></p>}
 @if(Model.Resend is {Blocked:null}) {<p><a asp-page="/Draft/Resend" asp-route-publicId="@data.PublicId">Review replacement invitation</a></p>}
 else if(Model.Resend?.Blocked is { } blocked) {<p>@QuillSign.Pages.Draft.ResendModel.Message(blocked)</p>}
+@if(Model.Correction is {Blocked:null}) {<p><a asp-page="/Draft/CorrectContact" asp-route-publicId="@data.PublicId">Review current signer's email correction</a></p>}
+else if(Model.Correction?.Blocked is { } correctionBlocked) {<p>@QuillSign.Pages.Draft.CorrectContactModel.Message(correctionBlocked)</p>}
 @if(Model.Final is { } final) {
 <section aria-labelledby="final-heading"><h2 id="final-heading">Final packet</h2>
 <p>Completed at @final.CompletedAt.ToString("u"). Save both files for your records. These downloads verify the saved packet before serving it.</p>
