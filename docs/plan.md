@@ -2,6 +2,15 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-90: Refresh hosted readiness and prepare the lookup release delta
+
+Status: To Do. Documentation only. Prerequisite lookup request PR #94 (QUILS-89) remains in validation; preserve that independent work.
+
+Refresh README and hosted readiness/rollout documentation after approved QUILS-83 staging and merged QUILS-84 through QUILS-88 lookup work, reconciling QUILS-89 before merge. Replace stale claims that disclosures, TSA trust and immutable storage are unconfigured with dated demonstrated readiness and truthful outstanding hosted/email/Office and naturally elapsed retention validation. Keep public docs practical and free of private resource identifiers or deployment-specific operational inventories.
+
+Prepare the concrete minimal current-source lookup release delta: prerequisite release, schema/runtime and worker contact-cleanup grants, compatibility/rollback limits, bounded disabled-email hosted navigation checks and external-provider test limits. Distinguish checked image/schema rollout from any new permission/configuration approval; do not silently broaden the earlier package. Keep hosted email disabled, AI deferred and separate converter/SES feedback ownership intact.
+
+No code behavior, Azure/AWS mutation/deployment, permission grant, actual TSA request, real email, purchase or dependency change in this documentation slice. The matching native Jira story exists before implementation-file research. Validate links/secrets and source facts, commit/push/create/attach/pass checks/merge and native Jira Done.
 ## QUILS-88: Expire and clean up pre-envelope lookup contact data
 
 Status: In Progress (draft PR #93; regression and CI validation pending). Depends on merged QUILS-87 (PR #92) and QUILS-84/85/86. Required before a public lookup request form or real lookup sending. Owned by this chat.
