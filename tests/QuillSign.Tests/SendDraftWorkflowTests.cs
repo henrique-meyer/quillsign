@@ -200,7 +200,7 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         public Clock Clock = new(); public Faults Faults = new(); public FakeSender Sender = new(); public FaultBlobs Blobs = null!; public Signals Signals = null!;
         private QueueClient queue = null!; private BlobContainerClient hints = null!; private BlobClient keyBlob = null!;
         public ClaimsPrincipal Principal => SenderConfiguration.Principal(new(Envelope.Id,Envelope.PublicId,Envelope.SenderEmail));
-        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false,int? browserPort=null,Func<VerifiedSigner?>? syntheticSigner=null)
+        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false,int? browserPort=null,Func<VerifiedSigner?>? syntheticSigner=null,Action<IServiceCollection>? configure=null)
         {
             var run = new Harness(); var name = "sendtest-" + Guid.NewGuid().ToString("N"); var storage = Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
             using var source = fixture.Open(); var connection = source.Database.GetConnectionString();
@@ -229,6 +229,7 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
                 builder.Services.AddScoped<SignaturePreviewProtection>(); builder.Services.AddScoped<SignatureAdoption>(); builder.Services.AddScoped<SignerFields>(); builder.Services.AddScoped<SignerFieldView>();
                 builder.Services.AddScoped<SignerReviewProtection>(); builder.Services.AddScoped<SignerReviewCandidates>(); builder.Services.AddScoped<SignerFinish>(); builder.Services.AddScoped<SignerCheckpointReads>(); builder.Services.AddSignerReviewBrowser();
             }
+            configure?.Invoke(builder.Services);
             run.App=builder.Build();
             using var normalized = new MemoryStream(); var pages = new PdfValidation(new()).Rewrite(new MemoryStream(PdfFixtures.Create(text:"Synthetic NO AGREEMENT")),normalized); run.Source = normalized.ToArray();
             run.Envelope = new Envelope { SenderEmail="sender-"+name+"@example.invalid",Title="<b>Synthetic NO AGREEMENT</b>",Message="<b>Synthetic message</b>",SenderVerifiedAt=run.Clock.GetUtcNow(),PreviewConfirmedAt=run.Clock.GetUtcNow(),PdfBlob=Guid.NewGuid().ToString("N"),PdfSha256=SHA256.HashData(run.Source),PageCount=pages.Count,PageSizesJson=JsonSerializer.Serialize(pages),ExpiresAt=run.Clock.GetUtcNow().AddDays(30) };
