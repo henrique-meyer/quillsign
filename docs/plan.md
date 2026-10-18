@@ -2,6 +2,16 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-87: Deliver private completed-document lookup links through durable mail
+
+Status: To Do. Depends on QUILS-86 private lookup browser flow and merged QUILS-84/85. Owned by this chat; implementation waits for QUILS-86 to merge.
+
+Add the internal request and durable mail producer that delivers a verified-mailbox lookup link to /find/access only through supported email dispatch. This is a source-only dependent slice; no public anonymous email-request endpoint or form yet. Preserve empty/unknown-mailbox indistinguishability at the request boundary, normalized bounded addresses, per-address/IP/global caps and suppression checks, email/work disabled gates, durable idempotence and retry/uncertain-commit recovery. No mailbox or private transport may be returned by an anonymous API or exposed through URLs, logs, telemetry, audit payloads or generic work metadata. Keep protected durable payloads and narrowly scoped dispatch capabilities.
+
+Issue each single-use lookup transport only as part of explicit supported dispatch so queue delays do not consume its useful lifetime. Build the fragment link for the existing scanner-safe destination using configured origin, with a plain manual access-code alternative and existing privacy/retention notices. Recheck current enabled/suppression/cap policy before any captured send; crash/retry must not leak links, double-spend caps or silently replay a potentially consumed issuance. Delayed and uncertain sends must use the established delivery semantics rather than claim exactly-once transport. No attachments or document contents belong in lookup mail.
+
+Before implementation, discover the existing outbox/provider contract and document a concrete small design in this story and docs/plan.md; split further if required rather than expanding into cloud enablement or a public request UI. Validate meaningful scoped SQL/rollback/concurrency/disabled/abuse/expiry/dispatch behavior with captured local services and no real recipient. Preserve immutable completion sources, dedicated lookup identity, original retention and Azure SQL auto-pause. No Azure/AWS mutation, live email enablement, actual TSA request, new purchase, dependency or AI. Commit/push/create/attach/pass checks/merge and native Jira Done.
+
 ## QUILS-85: Allow verified mailbox lookup to open retained final packets
 
 Status: Done on merge. Depends on merged QUILS-84 (PR #89) and the merged completed-record retrieval foundation. Public lookup delivery/browser work remains separate. Owned by this chat.
