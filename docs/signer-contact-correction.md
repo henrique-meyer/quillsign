@@ -32,7 +32,7 @@ The following dependencies make an email update alone unsafe:
 | Existing contract | Required integration |
 | --- | --- |
 | `SignerAccess` derives current identity from the mutable signer row and compares session email, document and disclosure | Check an independently persisted contact epoch on every invitation redemption and authenticated read/mutation. An A to B to A correction must not restore an earlier session. |
-| `VerifiedSigner` has a random session ID and is serialized into consent/adoption/review/Finish evidence bindings | Preserve legacy serialization and already-signed evidence. Introduce a versioned epoch-aware session identity/proof format; do not silently add a serialized property to historical bindings. |
+| `VerifiedSigner` has a random session ID and is serialized into consent/adoption/review/Finish evidence bindings | Preserve the existing serialized identity exactly. Bind each newly redeemed corrected session's random ID and exact identity digest to its immutable contact epoch in a separate registry; do not add a serialized property to historical bindings. |
 | `SignerCheckpointState` verifies each signed predecessor using exact accepted fields, email and adoption | Never correct a finished predecessor. The current accepted PDF and predecessor chain stay byte-for-byte unchanged. |
 | `fields_finalized` hashes field IDs, signing-slot IDs, placement and sender-filled values | Keep the stable `SignerId` as the signing slot and keep field definitions unchanged. Archive prior slot entries before clearing active entry values and adoption references. |
 | `CompletionEvidenceCollector.Metadata` compares the active signer roster to the final pre-Send `signer_*` event | Fold verified append-only corrections over the original roster. Keep the original roster and show the corrected effective party and correction history in the completion evidence. |
@@ -116,7 +116,12 @@ Epoch checks apply to PDF receipts/downloads, decline, signature preview/adoptio
 field apply/clear, review preparation/PDF access, Finish, confirmation and all
 queued notification paths, not just the initial invitation. Legacy sessions for
 unchanged or previously finished slots retain their exact existing bindings.
-New proof serialization uses explicit versions and purposes. Missing, duplicate,
+The existing random session ID already binds old receipt/adoption/review proofs
+to one session. An immutable session-to-contact-epoch registry adds revocation
+without changing their historical identity bytes. Missing registry rows are
+allowed only for proven uncorrected legacy slots; every corrected session must
+match its exact current epoch and identity digest. New correction-specific proofs
+use explicit versions and purposes. Missing, duplicate,
 damaged or cross-envelope revision evidence fails closed, without falling back
 to the original invitation or email comparison.
 
@@ -165,3 +170,13 @@ The canonical record binds retired-entry evidence by hash; it does not create or
 verify the underlying retirement snapshot, authenticate a sender, inspect Finish,
 store revisions, revoke sessions or send an invitation. Those remain mandatory
 integration gates. No active runtime path calls this contract yet.
+
+QUILS-115 adds source-only immutable revision/retirement and corrected-session
+tables plus an envelope-locked verifier. `SignerContactState` exposes current
+parties and exact historical epoch resolution only after verifying the original
+roster, complete bounded audit chain, canonical persisted corrections, retired
+entry digests/definitions and effective projection. Its session registry leaves
+`Signer`, `Envelope` and `VerifiedSigner` serialization unchanged. It remains
+unregistered while correction admission, invitation succession and completion
+integration are pending. Applying its additive migration and scoped runtime
+grants requires a separately approved deployment.

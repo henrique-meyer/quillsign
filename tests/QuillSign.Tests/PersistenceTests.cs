@@ -23,7 +23,7 @@ public sealed class PersistenceTests(SqlDatabaseFixture fixture) : IClassFixture
         await using var db = fixture.Open();
         Assert.False(db.Database.HasPendingModelChanges());
         Assert.Empty(await db.Database.GetPendingMigrationsAsync());
-        Assert.Equal(18, db.Model.GetEntityTypes().Count());
+        Assert.Equal(20, db.Model.GetEntityTypes().Count());
     }
 
     [Fact]

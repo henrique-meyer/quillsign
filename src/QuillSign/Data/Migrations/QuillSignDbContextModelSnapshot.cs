@@ -159,6 +159,9 @@ namespace QuillSign.Data.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
 
+                    b.Property<Guid?>("SignerContactRevisionId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<byte[]>("TokenSha256")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -171,12 +174,12 @@ namespace QuillSign.Data.Migrations
 
                     b.HasIndex("CompletionPublicationId");
 
-                    b.HasIndex("EnvelopeId");
-
                     b.HasIndex("ExpiresAt");
 
                     b.HasIndex("TokenSha256")
                         .IsUnique();
+
+                    b.HasIndex("EnvelopeId", "PartyId", "SignerContactRevisionId");
 
                     b.ToTable("AuthTokens", t =>
                         {
@@ -195,6 +198,8 @@ namespace QuillSign.Data.Migrations
                             t.HasCheckConstraint("CK_AuthToken_TokenSha256", "[TokenSha256] IS NULL OR DATALENGTH([TokenSha256]) = 32");
 
                             t.HasCheckConstraint("CK_Token_CompletionBinding", "([Purpose] = 'CompletionAccess' AND [CompletionPublicationId] IS NOT NULL AND [CompletionRecipeSha256] IS NOT NULL AND [CompletionPartySha256] IS NOT NULL AND [DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL AND (([PartyType] = 'Sender' AND [PartyId] IS NULL) OR ([PartyType] IN ('Signer','Recipient') AND [PartyId] IS NOT NULL))) OR ([Purpose] <> 'CompletionAccess' AND [CompletionPublicationId] IS NULL AND [CompletionRecipeSha256] IS NULL AND [CompletionPartySha256] IS NULL)");
+
+                            t.HasCheckConstraint("CK_Token_ContactRevision", "[SignerContactRevisionId] IS NULL OR ([Purpose]='SignerAccess' AND [PartyType]='Signer' AND [EnvelopeId] IS NOT NULL AND [PartyId] IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_Token_DocumentBinding", "([DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL) OR ([DocumentId] IS NOT NULL AND [DocumentSha256] IS NOT NULL AND [DisclosureSha256] IS NOT NULL)");
 
@@ -1330,6 +1335,96 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.SignerContactRevisionRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ChangedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Number")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("PreviousRevisionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RetirementJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("SignerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeId", "SignerId", "Number")
+                        .IsUnique();
+
+                    b.HasIndex("EnvelopeId", "SignerId", "PreviousRevisionId");
+
+                    b.ToTable("SignerContactRevisions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ContactRevision_Json", "ISJSON([EvidenceJson])=1 AND DATALENGTH([EvidenceJson]) BETWEEN 2 AND 16384 AND ISJSON([RetirementJson])=1 AND DATALENGTH([RetirementJson]) BETWEEN 2 AND 4194304");
+
+                            t.HasCheckConstraint("CK_ContactRevision_Number", "[Number] BETWEEN 1 AND 100 AND (([Number]=1 AND [PreviousRevisionId] IS NULL) OR ([Number]>1 AND [PreviousRevisionId] IS NOT NULL AND [PreviousRevisionId]<>[Id]))");
+
+                            t.HasCheckConstraint("CK_ContactRevision_Time", "DATEPART(TZOFFSET,[ChangedAt])=0");
+
+                            t.HasCheckConstraint("CK_SignerContactRevisionRecord_EvidenceJson", "[EvidenceJson] IS NULL OR ISJSON([EvidenceJson]) = 1");
+
+                            t.HasCheckConstraint("CK_SignerContactRevisionRecord_RetirementJson", "[RetirementJson] IS NULL OR ISJSON([RetirementJson]) = 1");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.SignerContactSession", b =>
+                {
+                    b.Property<Guid>("SessionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("RevisionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("SessionSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("SignerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("SessionId");
+
+                    b.HasIndex("EnvelopeId", "SignerId", "RevisionId");
+
+                    b.ToTable("SignerContactSessions", t =>
+                        {
+                            t.HasCheckConstraint("CK_ContactSession_Identity", "[SessionId]<>'00000000-0000-0000-0000-000000000000' AND DATALENGTH([SessionSha256])=32");
+
+                            t.HasCheckConstraint("CK_ContactSession_Time", "DATEPART(TZOFFSET,[CreatedAt])=0 AND DATEPART(TZOFFSET,[ExpiresAt])=0 AND [ExpiresAt]>[CreatedAt] AND [ExpiresAt]<=DATEADD(hour,24,[CreatedAt])");
+
+                            t.HasCheckConstraint("CK_SignerContactSession_SessionSha256", "[SessionSha256] IS NULL OR DATALENGTH([SessionSha256]) = 32");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.SignerFinishAcceptance", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1721,6 +1816,12 @@ namespace QuillSign.Data.Migrations
                         .WithMany()
                         .HasForeignKey("EnvelopeId")
                         .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("QuillSign.Data.SignerContactRevisionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "PartyId", "SignerContactRevisionId")
+                        .HasPrincipalKey("EnvelopeId", "SignerId", "Id")
+                        .OnDelete(DeleteBehavior.NoAction);
                 });
 
             modelBuilder.Entity("QuillSign.Data.CompletionCandidate", b =>
@@ -1873,6 +1974,44 @@ namespace QuillSign.Data.Migrations
                     b.HasOne("QuillSign.Data.Envelope", null)
                         .WithMany()
                         .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.SignerContactRevisionRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.Signer", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "SignerId")
+                        .HasPrincipalKey("EnvelopeId", "Id")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.SignerContactRevisionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "SignerId", "PreviousRevisionId")
+                        .HasPrincipalKey("EnvelopeId", "SignerId", "Id")
+                        .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("QuillSign.Data.SignerContactSession", b =>
+                {
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.SignerContactRevisionRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId", "SignerId", "RevisionId")
+                        .HasPrincipalKey("EnvelopeId", "SignerId", "Id")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
                 });
