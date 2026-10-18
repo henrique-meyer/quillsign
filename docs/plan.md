@@ -196,9 +196,18 @@ Dependent on QUILS-98 assessment. Investigate and implement a grammar-aware boun
 
 ## QUILS-111: Establish defensible legacy DOC parsing support boundary
 
-Status: To Do. Assigned to ChatGPT Codex. Created from QUILS-98 assessment; implementation is source/local only.
+Status: Done on merge after checks pass. Assigned to ChatGPT Codex. Created from QUILS-98 assessment; implementation is source/local only.
 
 Dependent on QUILS-98 assessment. Legacy DOC remains rejected until a defensible bounded Compound File Binary and WordBinary parser is selected or implemented with permissive licensing and reviewed corpus. Design validator must handle sector allocation cycles/overlap/truncation, mini streams/directory aliases, FIB and table stream consistency, encryption/obfuscation and hidden macro/active/object streams; reject VBA/macros/OLE/embedded packages, external fields/links, unsupported generations and ambiguous/polyglot content. Magic bytes, extension, absence of obvious macro strings or LibreOffice macros-disabled mode are insufficient. Produce evidenced go/no-go parser decision and bounded static profile first; never silently enable DOC from this assessment. Matched implementation and persistence/public slices required after defensible gate. No cloud/hosted/provider/email/TSA/AI/purchases; permissive dependencies, PDFsharp6.2.4, checked design PR/selfmerge/native Done.
+
+
+Decision: no-go for legacy DOC intake in this release. Published the evidence-backed parser/dependency assessment and concrete acceptance/corpus gates in docs/legacy-doc.md. OpenMcdf is a CFB container library with MPL-2.0, NPOI does not establish a reviewed DOC gate and current binaries add fee terms, and Java HWPF is not a proven content-safety boundary for this stack. No dependency, parser, extension, runtime, cloud or paid-service change. DOC remains rejected; future support requires matched implementation and intake/rollout slices, with PDF export as the current path.
+
+## QUILS-124: Integrate supported static Office formats into guarded sender intake
+
+Status: To Do. Assigned to ChatGPT Codex. Depends on QUILS-107/108/109/110 content gates; public source integration only.
+
+Integrate merged content-specific PPTX/XLSX/ODT/RTF gates into sender persistence and private draft upload. New formats stay individually default-off and require supported fixed HTTP transport; the existing hosted DOCX-only sandbox contract remains unchanged. Authorize sender/revision/retention before reading, own exact bounded originals, verify family/derived/normalized hashes and publish original/PDF pair atomically with exact MIME and versioned pipeline provenance. Preserve existing confirmed document, row version and retention cutoff after rejected/stale/CSRF/provider/storage/uncertain-commit failures; explicit exact-PDF confirmation remains required. Never broaden suffix allowlist without invoking the correct content gate. DOC remains rejected per QUILS-111. Test every accepted family and hostile disguised/active variants, SQL/Azurite rollback/concurrency/recovery, ordinary PDF/image/DOCX/TXT regressions and actual local isolated converter desktop/mobile/keyboard upload, all pages, zoom/download/confirmation/replacement flows. Private routes stay unindexed/untracked; read ignored SEO checklist before page content changes. No cloud/resource/grant/settings/deploy/provider/live-email/TSA/AI/purchase or hosted format activation. Commit/push/attach/pass exact-head checks/selfmerge/native Done.
 
 ## QUILS-91: Deploy the approved lookup release and validate hosted flows
 
