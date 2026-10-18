@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using QuillSign.Operations;
+using System.Security.Cryptography;
+using PdfSharp.Pdf;
 
 namespace QuillSign.Tests;
 
@@ -35,5 +37,26 @@ public class StagingCommandTests
         Assert.Equal(2, await StagingCommands.RunAsync([]));
         Assert.Equal(2, await StagingCommands.RunAsync(["seal", "retry"]));
         Assert.Equal(2, await StagingCommands.RunAsync(["unknown"]));
+        Assert.Equal(2, await StagingCommands.RunAsync(["cleanup", "wrong", "wrong", "wrong"]));
+    }
+
+    [Theory]
+    [InlineData("title")][InlineData("hash")][InlineData("pages")]
+    public void Explicit_probe_cleanup_requires_the_nominated_hash_and_synthetic_unsigned_document(string fault)
+    {
+        using var pdf = new PdfDocument();
+        pdf.Info.Title = fault == "title" ? "An ordinary document" : "SYNTHETIC STORAGE AND SEAL CHECK - NO AGREEMENT";
+        pdf.AddPage(); if (fault == "pages") pdf.AddPage();
+        using var output = new MemoryStream(); pdf.Save(output, false); var bytes = output.ToArray();
+        var hash = SHA256.HashData(bytes); if (fault == "hash") hash[0] ^= 1;
+        Assert.Throws<InvalidDataException>(() => StagingCommands.DemandSyntheticDocument(bytes, hash));
+    }
+
+    [Fact]
+    public void Exact_small_synthetic_probe_document_can_be_nominated_for_operator_cleanup()
+    {
+        using var pdf = new PdfDocument(); pdf.Info.Title = "SYNTHETIC STORAGE AND SEAL CHECK - NO AGREEMENT"; pdf.AddPage();
+        using var output = new MemoryStream(); pdf.Save(output, false); var bytes = output.ToArray();
+        StagingCommands.DemandSyntheticDocument(bytes, SHA256.HashData(bytes));
     }
 }

@@ -47,6 +47,23 @@ public sealed class AzureEnvelopePurgeStore(BlobServiceClient service):IEnvelope
                     {
                         var properties=(await client.GetPropertiesAsync(conditions,ct)).Value;authority.Demand(ct);
                         if(properties.HasLegalHold || properties.ImmutabilityPolicy?.ExpiresOn>authority.Now) {held++;continue;}
+                        if(!string.IsNullOrEmpty(item.VersionId))
+                        {
+                            // Azure cannot delete an explicitly addressed current version.
+                            // Detach only this same current version; a changed root must survive.
+                            var root=container.GetBlobClient(item.Name);
+                            BlobProperties? current=null;
+                            try {current=(await root.GetPropertiesAsync(cancellationToken:ct)).Value;}
+                            catch(RequestFailedException error) when(error.Status==404 && error.ErrorCode=="BlobNotFound") { }
+                            authority.Demand(ct);
+                            if(current?.VersionId==item.VersionId)
+                            {
+                                if(current.ETag!=item.Properties.ETag) {changed++;continue;}
+                                if(current.HasLegalHold || current.ImmutabilityPolicy?.ExpiresOn>authority.Now) {held++;continue;}
+                                await root.DeleteIfExistsAsync(conditions:conditions,cancellationToken:ct);
+                                authority.Demand(ct);
+                            }
+                        }
                         // Snapshot/current-version conflicts remain incomplete; a subsequent pass can retry.
                         var result=await client.DeleteIfExistsAsync(conditions:conditions,cancellationToken:ct);authority.Demand(ct);
                         if(result.Value)deleted++;else missing++;

@@ -3,6 +3,7 @@ using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using PdfSharp.Pdf;
+using PdfSharp.Pdf.IO;
 using QuillSign.Sealing;
 using QuillSign.Storage;
 
@@ -13,8 +14,10 @@ public static class StagingCommands
 {
     public static async Task<int> RunAsync(string[] args)
     {
-        if (args.Length != 1 || args[0] is not ("storage" or "seal"))
-        { Console.Error.WriteLine("Usage: staging storage|seal"); return 2; }
+        var cleanup = args.Length == 4 && args[0] == "cleanup" && Guid.TryParseExact(args[1], "N", out _) &&
+            Guid.TryParseExact(args[2], "N", out _) && args[3].Length == 64 && args[3].All(char.IsAsciiHexDigit);
+        if (!cleanup && (args.Length != 1 || args[0] is not ("storage" or "seal")))
+        { Console.Error.WriteLine("Usage: staging storage|seal OR staging cleanup <envelope-N> <object-N> <expected-SHA256>"); return 2; }
         try
         {
             var builder = WebApplication.CreateBuilder();
@@ -25,7 +28,8 @@ public static class StagingCommands
             builder.Services.AddPlatformPdfSeals(builder.Configuration);
             using var app = builder.Build();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
-            if (args[0] == "storage") await VerifyStorageAsync(app.Services, timeout.Token);
+            if (cleanup) await CleanupSyntheticAsync(app.Services, Guid.ParseExact(args[1], "N"), Guid.ParseExact(args[2], "N"), Convert.FromHexString(args[3]), timeout.Token);
+            else if (args[0] == "storage") await VerifyStorageAsync(app.Services, timeout.Token);
             else await VerifySealsAsync(app.Services, timeout.Token);
             Console.WriteLine($"{{\"operation\":\"staging-{args[0]}\",\"status\":\"ok\"}}");
             return 0;
@@ -73,20 +77,25 @@ public static class StagingCommands
         using var downloaded = new MemoryStream();
         await store.ReadAsync(CompletionFinalCapability.ReadFixed(stored, until, time), stored, downloaded, ct);
         if (!downloaded.ToArray().AsSpan().SequenceEqual(source)) throw new InvalidDataException("Readback differs.");
-        var version = services.GetRequiredService<BlobServiceClient>().GetBlobContainerClient("final")
-            .GetBlobClient($"{target.EnvelopeId:N}/executed/{target.ObjectId:N}").WithVersion(stored.VersionId);
+        var root = services.GetRequiredService<BlobServiceClient>().GetBlobContainerClient("final")
+            .GetBlobClient($"{target.EnvelopeId:N}/executed/{target.ObjectId:N}");
+        var version = root.WithVersion(stored.VersionId);
+        var condition = new BlobRequestConditions { IfMatch = new ETag(stored.ETag) };
         try
         {
             await DemandProtectedAsync(() => version.SetMetadataAsync(new Dictionary<string, string> { ["synthetic"] = "mutation-must-fail" },
                 new BlobRequestConditions { IfMatch = new ETag(stored.ETag) }, ct), versionMutation: true);
-            await DemandProtectedAsync(() => version.DeleteAsync(cancellationToken: ct));
+            await DemandProtectedAsync(() => root.DeleteAsync(conditions: condition, cancellationToken: ct));
         }
         finally
         {
             var delay = until.AddSeconds(3) - time.GetUtcNow();
             if (delay > TimeSpan.Zero) await Task.Delay(delay, ct);
             // Exact generated version only; never clear a policy, enumerate or delete a container.
-            await version.DeleteAsync(cancellationToken: ct);
+            var current = (await root.GetPropertiesAsync(condition, ct)).Value;
+            if (current.VersionId != stored.VersionId) throw new InvalidDataException("Synthetic root version changed.");
+            await root.DeleteAsync(conditions: condition, cancellationToken: ct);
+            await version.DeleteAsync(conditions: condition, cancellationToken: ct);
         }
         if (await version.ExistsAsync(ct)) throw new InvalidDataException("Expired synthetic version was not deleted.");
     }
@@ -95,8 +104,38 @@ public static class StagingCommands
     {
         try { await attempt(); }
         catch (RequestFailedException error) when (error.Status == 409 && error.ErrorCode == "BlobImmutableDueToPolicy" ||
-            versionMutation && error.Status == 400 && error.ErrorCode == "OperationNotAllowedOnVersion") { return; }
+            versionMutation && (error.Status == 400 && error.ErrorCode == "OperationNotAllowedOnVersion" ||
+                error.Status == 403 && error.ErrorCode == "OperationNotAllowedOnRootBlob")) { return; }
         throw new InvalidDataException("Azure did not reject an early mutation/deletion with its immutability policy.");
+    }
+
+    // Explicitly nominated operator test data only, independent of enrolled purge.
+    // No discovery, SQL mutation, authority issuance or policy changes.
+    private static async Task CleanupSyntheticAsync(IServiceProvider services, Guid envelope, Guid objectId, byte[] expected, CancellationToken ct)
+    {
+        if (envelope == Guid.Empty || objectId == Guid.Empty) throw new InvalidDataException("Invalid synthetic object.");
+        var root = services.GetRequiredService<BlobServiceClient>().GetBlobContainerClient("final").GetBlobClient($"{envelope:N}/executed/{objectId:N}");
+        var properties = (await root.GetPropertiesAsync(cancellationToken: ct)).Value;
+        if (properties.ContentLength is <16 or >4096 || string.IsNullOrEmpty(properties.VersionId) || properties.HasLegalHold ||
+            properties.ImmutabilityPolicy is not { ExpiresOn: DateTimeOffset until, PolicyMode: BlobImmutabilityPolicyMode.Locked } ||
+            until > services.GetRequiredService<TimeProvider>().GetUtcNow()) throw new InvalidDataException("Synthetic probe protection is not expired.");
+        var condition = new BlobRequestConditions { IfMatch = properties.ETag };
+        var version = root.WithVersion(properties.VersionId);
+        var downloaded = (await version.DownloadContentAsync(new BlobDownloadOptions { Conditions = condition }, ct)).Value.Content.ToArray();
+        DemandSyntheticDocument(downloaded, expected);
+        await root.DeleteAsync(conditions: condition, cancellationToken: ct);
+        await version.DeleteAsync(conditions: condition, cancellationToken: ct);
+        if (await root.ExistsAsync(ct) || await version.ExistsAsync(ct)) throw new InvalidDataException("Synthetic cleanup did not complete.");
+    }
+
+    public static void DemandSyntheticDocument(byte[] bytes, byte[] expected)
+    {
+        if (bytes.Length is <16 or >4096 || expected.Length != 32 || !CryptographicOperations.FixedTimeEquals(SHA256.HashData(bytes), expected))
+            throw new InvalidDataException("Synthetic probe hash differs.");
+        using var input = new MemoryStream(bytes, false);
+        using var pdf = PdfReader.Open(input, PdfDocumentOpenMode.Import);
+        if (pdf.PageCount != 1 || pdf.Info.Title != "SYNTHETIC STORAGE AND SEAL CHECK - NO AGREEMENT" || pdf.Internals.Catalog.Elements.GetDictionary("/AcroForm") is not null)
+            throw new InvalidDataException("Only a nominated unsigned synthetic probe may be removed.");
     }
 
     private static async Task VerifySealsAsync(IServiceProvider services, CancellationToken ct)

@@ -65,4 +65,3 @@ resource dispatch 'Microsoft.App/jobs@2025-07-01' = {
     }
   }
 }
-

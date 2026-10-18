@@ -10,6 +10,8 @@ param purgeRecoveryJobName string
 param hintContainerName string
 param queueName string
 param image string
+@description('Private display name for the narrow version-deletion role.')
+param versionCleanupRoleName string
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = { name: environmentName }
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = { name: storageAccountName }
@@ -129,4 +131,15 @@ resource lifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05
       }]
     }
   }
+}
+
+module versionCleanup './modules/version-cleanup.bicep' = {
+  name: 'document-version-cleanup'
+  params: {
+    storageAccountName: storageAccountName
+    workerIdentityName: workerIdentityName
+    purgeRecoveryJobName: purgeRecoveryJobName
+    versionCleanupRoleName: versionCleanupRoleName
+  }
+  dependsOn: [recovery]
 }
