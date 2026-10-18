@@ -4,7 +4,7 @@ Tasks are recorded here and in Jira before implementation. Private deployment na
 
 ## QUILS-88: Expire and clean up pre-envelope lookup contact data
 
-Status: In Progress. Depends on merged QUILS-87 (PR #92) and QUILS-84/85/86. Required before a public lookup request form or real lookup sending. Owned by this chat.
+Status: In Progress (draft PR #93; regression and CI validation pending). Depends on merged QUILS-87 (PR #92) and QUILS-84/85/86. Required before a public lookup request form or real lookup sending. Owned by this chat.
 
 Depends on merged QUILS-87 (PR #92) and QUILS-84/85/86. Complete source-only lookup contact cleanup before any public request form or real lookup sending. Lookup EmailOutbox/WorkItem records are envelope-null and outside document purge. Use the existing owner-configured Demo:PurgeAfterDays (1..36500); when unset, refuse new lookup admission without SQL/signals. Snapshot the original request UTC second and fixed delete deadline in an immutable LookupContactRetentionSnapshots table. Configuration changes apply only to future enrollments; no invented operator policy or backup-erasure guarantee.
 

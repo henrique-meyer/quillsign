@@ -233,6 +233,26 @@ public sealed partial class DocumentLookupDeliveryTests
         Assert.Null(await h.Signals.ReadDueAsync(LookupContactRetention.WorkId(id), default)); Assert.Equal(0, h.Transport.Calls);
     }
 
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public async Task Legacy_enrollment_refuses_both_live_work_and_outbox_leases_before_saving_a_policy(bool outbox)
+    {
+        await using var h = Past(); var id = Guid.NewGuid(); await h.Request(id); await RemoveEnrollment(id);
+        h.Clock.Advance(DateTimeOffset.UtcNow - h.Clock.GetUtcNow()); var until = h.Clock.GetUtcNow().AddMinutes(5);
+        await using (var db = fixture.Open()) {
+            if (outbox) await db.EmailOutbox.Where(x => x.Id == id).ExecuteUpdateAsync(s => s.SetProperty(x => x.LeaseOwner, Guid.NewGuid()).SetProperty(x => x.LeaseExpiresAt, until));
+            else await db.WorkItems.Where(x => x.Id == id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, WorkStatus.Leased).SetProperty(x => x.LeaseOwner, Guid.NewGuid()).SetProperty(x => x.LeaseExpiresAt, until));
+        }
+        using var scope = h.App.Services.CreateScope(); var retention = scope.ServiceProvider.GetRequiredService<LookupContactRetention>();
+        await Assert.ThrowsAsync<InvalidDataException>(() => retention.ResumeAsync(id));
+        await using (var db = fixture.Open()) {
+            Assert.False(await db.LookupContactRetentionSnapshots.AnyAsync(x => x.RequestId == id)); Assert.False(await db.WorkItems.AnyAsync(x => x.Id == LookupContactRetention.WorkId(id)));
+            if (outbox) await db.EmailOutbox.Where(x => x.Id == id).ExecuteUpdateAsync(s => s.SetProperty(x => x.LeaseExpiresAt, h.Clock.GetUtcNow().AddSeconds(-1)));
+            else await db.WorkItems.Where(x => x.Id == id).ExecuteUpdateAsync(s => s.SetProperty(x => x.LeaseExpiresAt, h.Clock.GetUtcNow().AddSeconds(-1)));
+        }
+        Assert.Equal(LookupContactRetention.WorkId(id), await retention.ResumeAsync(id));
+    }
+
     private Harness Past()
     {
         var h = new Harness(fixture, DateTimeOffset.UtcNow.AddDays(-8 - Interlocked.Increment(ref pastSequence) * 10));

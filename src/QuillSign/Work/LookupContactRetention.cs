@@ -110,7 +110,7 @@ public sealed class LookupContactRetention(QuillSignDbContext db, LookupContactR
                 var email = await db.EmailOutbox.FromSqlInterpolated($"SELECT * FROM [EmailOutbox] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={request}").AsNoTracking().SingleOrDefaultAsync(ct);
                 if (email is null) return null;
                 if (work is null || work.Kind != WorkKind.Email || work.EnvelopeId is not null || work.PayloadJson != JsonSerializer.Serialize(new { emailId = request }) ||
-                    work.Status == WorkStatus.Leased && work.LeaseExpiresAt > time.GetUtcNow()) throw Invalid();
+                    work.LeaseExpiresAt > time.GetUtcNow() || email.LeaseExpiresAt > time.GetUtcNow()) throw Invalid();
                 // Legacy enrollment must first verify the protected original request.
                 if (!await db.LookupContactRetentionSnapshots.AnyAsync(x => x.RequestId == request, ct)) _ = protection.Read(email);
                 policy = await EnrollLockedAsync(email, true, ct); await tx.CommitAsync(ct);
