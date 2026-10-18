@@ -21,6 +21,7 @@ public static class DocumentConfiguration
         services.AddScoped<ImageDocumentWorkflow>();
         var conversion=config.GetSection("Gotenberg").Get<GotenbergOptions>() ?? new();
         services.AddSingleton(conversion);
+        services.AddSandboxDocumentConversion(config,conversion,options);
         services.AddHttpClient<GotenbergDocxConverter>(client=>client.Timeout=Timeout.InfiniteTimeSpan)
             .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(()=>new HttpClientHandler {AllowAutoRedirect=false,UseProxy=false,AutomaticDecompression=System.Net.DecompressionMethods.None,MaxResponseHeadersLength=16});

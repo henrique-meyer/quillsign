@@ -19,7 +19,7 @@ public sealed class TextPdfConverter(DocumentOptions limits, GotenbergOptions op
     public async Task<TextConversion> ConvertAsync(Stream original, long declaredLength, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested(); ArgumentNullException.ThrowIfNull(original);
-        if (options.Endpoint(environment) is null) throw new DocumentConversionUnavailableException("Document conversion is not enabled.");
+        if (!options.IsAvailable(environment)) throw new DocumentConversionUnavailableException("Document conversion is not enabled.");
         if (limits.MaximumBytes is < 1024 or > 64 * 1024 * 1024 || limits.MaximumPages is < 1 or > 200)
             throw new InvalidOperationException("Configure supported document conversion limits.");
         if (declaredLength <= 0 || declaredLength > limits.MaximumBytes) throw Rejected();

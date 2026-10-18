@@ -1,6 +1,6 @@
 # Document conversion and sender upload
 
-The [hosted DOCX setup proposal](hosted-docx-setup.md) describes the isolated Azure pilot, scoped permissions, costs and approval gates. Hosted conversion remains disabled pending that work.
+The [hosted DOCX setup proposal](hosted-docx-setup.md) describes the isolated Azure pilot, scoped permissions, costs and approval gates. The pilot is complete. The selectable application transport below is available in source; hosted enablement and actual hosted sender upload validation remain the separate rollout step.
 
 `GotenbergDocxConverter` sends one DOCX to the configured Gotenberg LibreOffice conversion route, then validates and normalizes the returned PDF with the same PDFsharp byte/page/geometry rules as PDF upload. It returns the exact normalized bytes, original SHA-256, normalized SHA-256 and page geometry. The caller keeps ownership of the original input stream.
 
@@ -9,8 +9,9 @@ The [hosted DOCX setup proposal](hosted-docx-setup.md) describes the isolated Az
 | Setting | Default / requirement |
 | --- | --- |
 | `Gotenberg__Enabled` | `false` |
+| `Gotenberg__Transport` | `Http`; choose `Sandbox` explicitly for the isolated hosted transport below |
 | `Gotenberg__BaseUrl` | Empty; explicit private HTTPS origin when enabled |
-| `Gotenberg__TimeoutSeconds` | 60; allowed range 1–120 |
+| `Gotenberg__TimeoutSeconds` | 60; allowed range 1–120 for HTTP, 1–180 for Sandbox |
 | `Documents__MaximumBytes` | Bounds both DOCX input and returned/normalized PDF |
 | `Documents__MaximumPages` | Bounds the validated converted PDF |
 
@@ -21,6 +22,31 @@ The linked cancellation deadline covers input copying, HTTP and response-body re
 The conversion request asks for flattened exported form fields and tagged PDF structure; it does not claim PDF/UA or archival conformance. See [Gotenberg's LibreOffice route](https://gotenberg.dev/docs/convert-with-libreoffice/convert-to-pdf). Operators still need the pinned, private conversion sidecar and its no-egress controls; client URL validation does not replace network isolation. The existing local Compose service has no published port, uses the conversion-only internal network, disables Chromium/download/webhook routes and denies LibreOffice outbound URLs.
 
 Local verification uses generated synthetic documents with no agreement or personal data. The real pinned sidecar converted an explicit two-page DOCX; both normalized PDF pages were rendered and inspected, and original/normalized hashes and geometry matched. Hosted service enablement and resource changes are outside this slice.
+
+## Isolated sandbox application transport
+
+`Sandbox` reuses the same package gate, original/PDF storage, normalization, private preview and affirmative confirmation. It authenticates directly to the regional sandbox data plane with the configured managed identity. It never falls back to developer credentials, a public converter or the HTTP transport. Provider URLs, tokens, document names and error bodies are excluded from application HTTP logs and public errors. Existing `Azure.Identity` is reused; no new library dependency is added.
+
+| Additional setting | Default / requirement |
+| --- | --- |
+| `Gotenberg__Sandbox__Region` | Empty; approved regional DNS label |
+| `Gotenberg__Sandbox__SubscriptionId` | Empty; approved subscription GUID |
+| `Gotenberg__Sandbox__ResourceGroup` | Empty; dedicated project resource group |
+| `Gotenberg__Sandbox__GroupName` | Empty; approved dedicated sandbox group |
+| `Gotenberg__Sandbox__ManagedIdentityClientId` | Empty; uses the existing storage identity when configured, otherwise system-assigned identity |
+| `Gotenberg__Sandbox__MaximumDailyAttempts` | 10; server UTC, range 1–100 |
+| `Gotenberg__Sandbox__MaximumMonthlyAttempts` | 50; server UTC, range 1–1,000 and at least the daily cap |
+| `Gotenberg__Sandbox__MaintenanceEnabled` | `false`; enable only on the approved storage-only recovery job |
+
+All actual scope and identity values belong in ignored configuration or runtime environment settings. The app identity and, separately, the recovery job require Data Owner access scoped to this group. The application does not assign roles or provision the group.
+
+A protected, non-personal ledger in `originals/conversion-coordination/` shares one finite renewable blob lease across replicas. It contains only scope, UTC counters, random ownership nonce and provider resource IDs. Each attempt reserves quota before image import, including failed or uncertain attempts; cleanup never refunds it. Caps limit attempts, not the Azure invoice, and must complement the approved test budget and operator cost review. Idle maintenance reads only Blob Storage and makes no SQL or provider request.
+
+Each admitted attempt imports the pinned Gotenberg image, starts one bounded 1-CPU/2-GiB sandbox and verifies actual runtime route restrictions, no credentials/environment/ports/volumes/connections, enforced deny-all egress with full inspection and a recorded denial of a benign HTTPS probe before uploading the DOCX. The input uses one fixed authenticated path, its remote SHA-256 must match the validated source, and conversion writes outside the root-owned upload directory. No user-controlled command, origin, callback or download URL is accepted. Import, conversion, response sizes and cleanup have separate finite bounds; normal provisioning/conversion is capped at 150 seconds and cleanup at a further 30 seconds. Provider auto-suspend/delete is a fallback, not evidence of cleanup.
+
+The app deletes and verifies absence of its exact owned sandbox, snapshots and imported image before returning a successful PDF. Unrelated objects are never deleted. A lost creation acknowledgement is reconciled by exact nonce/profile; absence alone cannot prove that an unobserved create will never arrive, so unresolved evidence closes admission across restarts. Ownership loss cancels work. Cleanup retains its own short deadline when the upload caller disconnects. `work purge-recover` optionally recovers this same ledger after its ordinary storage-only purge pass; malformed maintenance settings report pending without skipping that purge pass. An unresolved state requires inspection of private provider evidence, not deleting the ledger or resetting counters.
+
+Tests cover regional API scoping, authentication audience, no retries/redirects/body disclosure, policy/runtime/source mismatches, cancellation, quota persistence, unknown create/delete recovery and preservation of unrelated resources. Real Azurite tests cover separate owners, finite lease fencing, restart/tamper checks and scope aliases. SQL/Azurite upload tests exercise this coordinator through the actual sender handlers with a synthetic provider boundary; these do not claim live hosted connectivity.
 
 ## Internal plain-text conversion
 
