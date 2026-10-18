@@ -108,6 +108,10 @@ public sealed class InvitationLineage(QuillSignDbContext db, SignerInvitationPro
                         revision.DisclosureSha256 != p.DisclosureSha256 || p.SenderEmail != envelope.SenderEmail ||
                         p.AuthorizationSha256 != SignerContactHistory.Digest(revision)) throw Invalid();
                 }
+                if(p.Reason==InvitationSuccessorReason.ManualResend) {
+                    var admission=await CanonicalResendEvidence.FindAsync(db,p.Id,envelope.Id,ct);
+                    if(admission is null || CanonicalResendEvidence.Scope(admission)!=p)throw Invalid();
+                }
             }
             var historical = contacts.Resolve(entry.SignerId, entry.Contact);
             if (historical is null || historical.Email != entry.Recipient || !ids.Add(entry.Id) || !chains.TryGetValue(entry.SignerId, out var chain)) throw Invalid();
