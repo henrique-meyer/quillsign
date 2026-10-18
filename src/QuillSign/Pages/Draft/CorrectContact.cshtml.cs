@@ -84,8 +84,9 @@ public sealed class CorrectContactModel(Func<SignerContactCorrections> action, S
                 notices.Set(HttpContext, NoticeCode.ContactCorrectionQueued); return Redirect(target);
             }
             if (outcome == SignerContactCorrectionOutcome.InvalidContext) return NotFound();
-            if (outcome is SignerContactCorrectionOutcome.Closed or SignerContactCorrectionOutcome.Unavailable or SignerContactCorrectionOutcome.Conflict)
-                Data = null;
+            if (outcome is SignerContactCorrectionOutcome.Closed or SignerContactCorrectionOutcome.Unavailable)
+                DiscardMetadata();
+            else if (outcome == SignerContactCorrectionOutcome.Conflict) Data = null;
             CanReview = outcome is SignerContactCorrectionOutcome.Conflict or SignerContactCorrectionOutcome.InvalidConfirmation or
                 SignerContactCorrectionOutcome.DuplicateAddress or SignerContactCorrectionOutcome.Suppressed or SignerContactCorrectionOutcome.Capped;
             return Failure(outcome == SignerContactCorrectionOutcome.Capped ? 429 : outcome == SignerContactCorrectionOutcome.Unavailable ? 503 : 409,
@@ -96,7 +97,7 @@ public sealed class CorrectContactModel(Func<SignerContactCorrections> action, S
             // Preserve the command ID through an uncertain acknowledgement.
             // The backend, not a new review, resolves an already-admitted request.
             var live = reviews.Read(ReviewProof, ticket.Principal!, publicId, ticket.Properties!.ExpiresUtc!.Value) is not null;
-            if (!live) Data = null;
+            if (!live) DiscardMetadata();
             return Failure(503, "Confirmation could not be verified. Check saved status before retrying this same confirmation; the correction may already be recorded. Inbox delivery is not confirmed.", live);
         }
     }
@@ -135,6 +136,7 @@ public sealed class CorrectContactModel(Func<SignerContactCorrections> action, S
         if (!retry) { ReviewProof = null; ModelState.Remove(nameof(ReviewProof)); }
         ModelState.Remove(nameof(Confirmed)); Response.StatusCode = status; return Result();
     }
+    private void DiscardMetadata() { Data = null; NewEmail = null; ModelState.Remove(nameof(NewEmail)); }
     private IActionResult Result() => SenderConfiguration.WantsJson(HttpContext)
         ? new JsonResult(new { title = Data?.Title, signer = Data is null ? null : new { Data.Review.Name, Data.Review.OldEmail, Data.Review.NewEmail },
             attemptedEmail = NewEmail is { Length: > 254 } ? NewEmail[..254] : NewEmail, canReview = CanReview, canConfirm = CanConfirm, reviewProof = CanConfirm ? ReviewProof : null,

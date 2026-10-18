@@ -126,6 +126,27 @@ public sealed class SenderContactCorrectionPageTests(SqlDatabaseFixture fixture)
         Assert.Equal(before, await Counts(r));
     }
 
+    [Fact]
+    public async Task A_request_voided_after_review_returns_no_saved_party_metadata_or_confirmation_proof_to_json()
+    {
+        await using var r = await Run.Create(fixture); var start = await r.Page(r.Path);
+        using var preview = await r.Review(start); var review = await preview.Content.ReadAsStringAsync();
+        await using (var db = fixture.Open())
+        {
+            var version = await db.Envelopes.Where(x => x.Id == r.H.Envelope.Id).Select(x => x.RowVersion).SingleAsync();
+            using var scope = r.H.App.Services.CreateScope();
+            var closed = await scope.ServiceProvider.GetRequiredService<SenderVoid>().VoidAsync(r.H.Principal, r.H.Envelope.PublicId,
+                r.H.Clock.GetUtcNow().AddHours(2), version, true, SenderVoidStatement.Version, "Synthetic NO AGREEMENT", "127.0.0.1", "synthetic");
+            Assert.Equal(SenderVoidOutcome.Voided, closed.Outcome);
+        }
+        var before = await Counts(r); r.Client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        using var response = await r.Post(review, Confirm(review)); Assert.Equal(HttpStatusCode.Conflict, response.StatusCode); Private(response);
+        using var json = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        foreach (var name in new[] { "title", "signer", "attemptedEmail", "reviewProof" })
+            Assert.Equal(System.Text.Json.JsonValueKind.Null, json.RootElement.GetProperty(name).ValueKind);
+        Assert.Equal(before, await Counts(r));
+    }
+
     private static Dictionary<string, string> Confirm(string page) => new() { ["Step"] = "confirm", ["ReviewProof"] = Forms.Value(page, "ReviewProof"), ["NewEmail"] = Forms.Value(page, "NewEmail"), ["Confirmed"] = "true", ["StatementVersion"] = SignerContactCorrectionStatement.Version };
     private static void Private(HttpResponseMessage response) { Assert.True(response.Headers.CacheControl?.NoStore); Assert.Contains("noindex", Assert.Single(response.Headers.GetValues("X-Robots-Tag"))); Assert.Equal("no-referrer", Assert.Single(response.Headers.GetValues("Referrer-Policy"))); }
     private async Task<string> Counts(Run r) { await using var db = fixture.Open(); var id = r.H.Envelope.Id; return string.Join(':', await db.AuditEvents.CountAsync(x => x.EnvelopeId == id), await db.WorkItems.CountAsync(x => x.EnvelopeId == id), await db.EmailOutbox.CountAsync(x => x.EnvelopeId == id), await db.AuthTokens.CountAsync(x => x.EnvelopeId == id), await db.SignerContactRevisions.CountAsync(x => x.EnvelopeId == id), r.H.Sender.Calls); }
