@@ -17,6 +17,10 @@ Synthetic end-to-end flows have local automated and browser coverage. The approv
 
 ## Technology stack
 
+Optional opt-in Google Analytics can measure visits to the public homepage.
+It is disabled by default and excluded from signing and document flows. See
+[analytics configuration and verification](docs/analytics.md).
+
 | Area | Technology |
 | --- | --- |
 | Application | .NET 10 LTS, C#, ASP.NET Core Razor Pages |

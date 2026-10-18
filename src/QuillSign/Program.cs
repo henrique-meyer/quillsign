@@ -71,7 +71,11 @@ app.Use(async (context, next) =>
 {
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
-    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+    context.Response.OnStarting(() =>
+    {
+        context.Response.Headers["Content-Security-Policy"] = QuillSign.Analytics.PublicAnalytics.ContentSecurityPolicy(context, app.Configuration);
+        return Task.CompletedTask;
+    });
     if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/draft"))
     {
         var body = context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();

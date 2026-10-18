@@ -10,4 +10,6 @@ param enableManagedCertificate = false
 param provisionManagedCertificate = true
 param databaseConnectionSecretUri = ''
 param applicationEnvironment = []
+param analyticsEnabled = false
+param analyticsMeasurementId = ''
 param tsaRootPem = ''

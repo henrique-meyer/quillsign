@@ -2,6 +2,20 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-99: Install and deploy opt-in public-page Google Analytics
+
+Status: In Progress. Owner authorized installation, deployment and Realtime verification on 2026-10-18. The existing selected property/stream has no installed site tag; current CSP blocks external analytics.
+
+Concrete design: only clean successful GET / is eligible. Queries, fragments, non-GET/non-success responses and every other route are excluded. Use a 180-day host-only preference and Analytics cookies; honor Do Not Track/Global Privacy Control. Withdrawal immediately disables collection, clears Analytics cookies and reloads to unload the tag. A local bootstrap script needs no unsafe-inline; allow only named tag/collection endpoints on eligible responses. Web-only Bicep parameters capture the approved runtime setting.
+
+Local validation: 39 focused .NET HTTP/config/CSP/verification-boundary cases and all 20 Node tests pass. Actual local desktop, keyboard and 390-pixel consent/decline/settings flow passes; verification retains no analytics controls. HTTP checks confirm no analytics markup or Google CSP access on query-bearing homepage, verification, lookup access and health. Bicep compiles and staged secret scan passes. Exact-head CI, merge, approved web-only runtime/image rollout and real collection/Realtime verification remain pending. No live provider or cloud setting has been changed during local validation.
+
+Install configurable opt-in GA4 on an explicit deliberately public page allowlist. Discover exact eligible routes before coding. Exclude sender, signer, invitation/consent, lookup/private result, document/PDF, completion, error and operational flows. Disabled/malformed configuration emits no analytics markup or external CSP grants. Keep measurement ID and deployment identity/domain in ignored/operator configuration; examples remain empty.
+
+Provide accessible accept/decline and change-choice controls; no Google request before consent. Send only a controlled public page_view with a fixed page title and clean public URL, no query/fragment/referrer or private data. Disable automatic page/history/enhanced interactions and advertising signals. Preserve security/access/CSRF/cache protections and SQL auto-pause; no dependency, credential, new cloud resource, email/AI/TSA enablement or SEO expansion.
+
+Permit narrowly scoped Google script/connect origins only on eligible enabled public responses. Add the approved web-only configuration to existing Bicep/deployment paths without changing workers or unrelated settings. Validate config/CSP/private exclusion and real browser consent, decline/revoke, sanitized events, mobile and keyboard behavior. Run meaningful regressions, required CI and secrets; commit/push/create/attach/pass checks/merge and native Jira Done. Deploy merged main to the existing dedicated resources, verify actual running revision and distinctive health, correct-ID collection and property Realtime. Distinguish synthetic test activity from the owner's own browser; request a public visit/consent if needed and report privacy/ad-blocking limits honestly.
+
 ## Remaining invitation and Office work — 2026-10-18
 
 Initial assessment: resend is medium-to-high complexity; durable reminders depend on safe replacement delivery; unsigned contact correction is high complexity because immutable evidence and revoked access must coexist. Extra Office formats need content-specific validation, not extension-only enablement. TXT is the first internal conversion slice; package families and legacy binary/rich text follow separately. Hosted DOCX isolation and purge validation remain owned by the parallel chat. No hosted setting or operator policy changes are authorized here.

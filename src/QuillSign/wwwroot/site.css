@@ -50,5 +50,10 @@ select:focus-visible { outline: 3px solid #172d40; outline-offset: 3px; }
 .button-link { display: inline-block; padding: .75rem 1rem; border-radius: .6rem; background: #f26b5e; color: #172d45; font-weight: 700; }
 .start-card textarea { width: 100%; padding: 12px 14px; border: 1px solid #83909a; border-radius: 5px; font: inherit; color: inherit; resize: vertical; }
 textarea:focus-visible { outline: 3px solid #172d40; outline-offset: 3px; }
+.analytics-choice { max-width: 590px; margin-top: 24px; padding: 20px; border: 1px solid #e7d7ca; border-radius: 8px; background: #fff; line-height: 1.6; }
+.analytics-choice h2 { font-size: 20px; }
+.analytics-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+#analytics { margin-top: 24px; }
+#analytics-status { max-width: 590px; line-height: 1.6; }
 .recipient-cards { list-style: none; padding: 0; }
 .document-message { white-space: pre-wrap; overflow-wrap: anywhere; }
