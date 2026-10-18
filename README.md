@@ -47,6 +47,8 @@ Immutable storage is a policy on ordinary Azure Blob Storage, not a separate com
 
 Configure these values through environment variables or private settings, using [the example configuration](src/QuillSign/appsettings.example.json):
 
+Set `PublicSite__Origin` to the public HTTPS origin (without a path, query or fragment) to enable canonical URLs and sharing previews on `/`, `/verify` and `/find/request`. Each page has its own title and description and uses the supplied 1024 × 1024 logo at `/logo.png`. Missing or invalid origin configuration omits preview tags. Private pages, submitted results and query-bearing requests have no preview tags; the SVG favicon is preserved. After deploying, check the page's `og:image` URL and confirm an anonymous request returns `200` with `image/png`. Previously shared WhatsApp cards can remain cached until WhatsApp refreshes them.
+
 | Environment variable | Current purpose |
 | --- | --- |
 | `Seal__TsaUrl` | HTTPS RFC 3161 endpoint; FreeTSA publishes `https://freetsa.org/tsr` |

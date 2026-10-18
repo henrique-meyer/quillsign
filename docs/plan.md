@@ -1448,6 +1448,16 @@ Execute the owner-approved bounded Azure DOCX feasibility pilot following the QU
 
 Pilot evidence: the approved Bicep deployment succeeded, authenticated inventory was initially empty and exact deny-all/Full egress was read back. A real outbound HTTPS attempt returned an explicit denial header and appeared in the provider decision log after a short delay. Two conversion requests were used: the first could not write its output under the root-owned upload directory; the second used a separate writable fixed path and returned the expected two-page synthetic PDF. Existing application DOCX validation and PDF normalization passed, hashes matched and both rendered pages were visually inspected. All pilot sandboxes, snapshots and disk images were deleted with empty final inventories; the temporary operator role was removed and absence verified. The approved group and web-scoped role remain idle. The hosted disk image reported 3,297 MB. Observed sandbox allocation gives an active-compute estimate below USD 0.001; this is not a final Azure invoice and does not assert measured image-import/logging charges. No live email/TSA, feature registration, normal converter enablement or unrelated cloud changes occurred. Add Bicep compilation to CI and finish the checked evidence/source PR. The supported application transport and hosted sender-flow validation remain a later slice.
 
+## QUILS-104: Show existing logo in public WhatsApp sharing previews
+
+Status: Done on merge after exact-head checks pass.
+
+Use the supplied QuillSign logo for public sharing previews. Inventory stable public HTML pages and emit one page-specific title, truthful visible-page description, configured absolute HTTPS canonical and matching Open Graph/Twitter tags. Use the same existing PNG at least 300 by 300 pixels across all public pages; if absent or smaller, export directly from the existing SVG without redrawing. Preserve the favicon. Exclude admin, private transaction/token/result and error pages; never expose private content or derive canonical URLs from request Host. Keep production identifiers in ignored configuration. Follow PLAN.SEO.md and preserve privacy, analytics and access boundaries.
+
+Validate public metadata uniqueness/coverage, origin safety, private exclusions and anonymous PNG 200/image/png; exercise the public browser flow and relevant regressions, secret scan and exact-head CI. Commit, push, open/attach/merge PR and move Jira to Done. Add PublicSite:Origin with an empty example value, validated as an HTTPS origin. Deploy the web image and only its matching PublicSite__Origin setting using the existing web rollout mechanism without new resources or unrelated settings, then open production pages and verify the absolute og:image URL and its image response. Record WhatsApp cache limitations; external message delivery requires a specified recipient.
+
+Validation: Reused the exact supplied 1024 by 1024 assets/logo.png, linked into build/publish output and served anonymously as image/png. All three public entry pages have unique titles/descriptions and consistent canonical, Open Graph and Twitter metadata; the favicon is unchanged. Tests cover missing/malformed origin, hostile request Host, private and unknown routes, POST/results, errors/redirects and query state, plus actual Razor output and PNG bytes/dimensions. Public desktop navigation through homepage, verification and lookup request passed; lookup access entry has zero preview tags. Relevant .NET and browser regression suites and secret checks pass locally. Hosted evidence is recorded privately after release; no claim of a refreshed WhatsApp cache or actual recipient delivery.
+
 ## QUILS-83: Apply approved Azure demo staging and hosted validation
 
 Status: Done in PR #88. Approved staging configuration and provider validation are implemented; current-head checks gate merge and the matching main release is verified separately. Email remains disabled.
@@ -1478,7 +1488,6 @@ Owner requested a real one-hour purge check instead of waiting seven days. Use t
 
 
 Validation completed 2026-10-18: actual elapsed wait 3,602 seconds, premature cleanup rejected, immutable seven-day policy unchanged. The normal worker-role SQL path removed enrolled private rows and owned originals/normalized objects; detached minimal work and persistent authenticated marker remained. An unrelated live control survived, and storage-only recovery removed one late-written object. Both disposable local fixtures were cleaned up and the operator process exited zero. Initial upload time was explicitly synthetic and fixed before enrollment; later observations used actual UTC. This is a local SQL Server/Azurite validation, not a naturally elapsed seven-day or hosted end-to-end purge, and it does not simulate Azure immutable storage. No production setting, schema, runtime code or permissions changed.
-
 
 ## QUILS-102: Integrate bounded sandbox DOCX app transport
 
