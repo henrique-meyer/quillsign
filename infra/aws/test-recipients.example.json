@@ -1,0 +1,9 @@
+{
+  "version": "ses-test-recipients-v1",
+  "accountId": "",
+  "region": "",
+  "projectTag": "",
+  "configurationSet": "",
+  "addresses": ["", "", "", ""],
+  "maximumManagedVerificationMessages": 4
+}
