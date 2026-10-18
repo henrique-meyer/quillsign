@@ -2,6 +2,16 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-86: Add durable verified-mailbox lookup link delivery
+
+Status: To Do. Depends on merged QUILS-84 and QUILS-85; queue implementation until QUILS-85 merges. Owned by this chat.
+
+Add the internal request/durable-delivery foundation for an accountless mailbox lookup link to retained completed documents. An unverified request address is never HTTP data/access authority: return a neutral outcome, keep private transport inside protected durable delivery, and verify mailbox ownership only through explicit later link redemption. Include suppression, bounded per-address/daily abuse controls and safe disabled-email behavior.
+
+Support the complete producer, protected payload validation, existing email dispatch and provider-acceptance/uncertainty lifecycle before enqueueing a new mail kind. Bind delivery eligibility to real current retained frozen party/publication evidence and recheck scope/retention after I/O and across dispatch boundaries. Preserve minimal contact retention and existing purge privacy; do not create fake envelopes or an account table, invent operator policies, expose other parties, fabricate receipt evidence or add automatic replay after uncertain provider acceptance. Inspect existing outbox, recovery, templates and purge contracts only after matching story/plan and prerequisite merge, then finalize concrete storage/anchor/expiry/transaction/rate-cap design in both Jira and plan before implementation.
+
+Use genuine SQL/Azurite completed packets and captured local SMTP/fake-provider flows to verify eligible and unknown mailboxes, all party roles, suppression/caps, disabled state, proof privacy/purpose/expiry, concurrency, retention/source changes, rollback, recovery and uncertain acceptance. No public route/browser change, live email enablement, actual TSA request, Azure/AWS mutation, new service purchase or AI in this slice. Public lookup entry/redemption/list/open UI follows separately. Commit/push/create/attach/pass checks/merge a small PR and native Jira Done.
+
 ## QUILS-84: Add verified-mailbox completed-document lookup foundation
 
 Status: Done on merge. Internal source foundation; public lookup remains a later slice. Depends on merged completion access, publication and retention work. Owned by this chat.
