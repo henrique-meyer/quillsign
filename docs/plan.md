@@ -2,9 +2,23 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-91: Deploy the approved lookup release and validate hosted flows
+
+Status: Done on merge of PR #96. Approved rollout and hosted checks are complete; exact-head CI gates merge. Owner approved the concrete QUILS-90 lookup release grants and rollout on 2026-10-18. Depends on merged QUILS-89 PR #94; readiness documentation PR #95 is separate. Email remains disabled.
+
+Apply the additive lookup-contact migration using the existing deployment identity and a checked main release. The owner approved runtime SELECT/INSERT on the immutable lookup-retention table while retaining UPDATE/DELETE denials, worker-only guarded contact-cleanup EXECUTE, and temporary exact-IP SQL administrator access/removal only if needed. Use existing versioned database commands and preserve all other identities, roles, denials, storage policies, configuration and data. No general deletion authority or new cloud service.
+
+Deploy the same checked main image to web and all three existing jobs. Verify schema/effective runtime denials and worker-only execution, exact images, Running/ready revision and distinctive SQL-free health. Preserve seven-day synthetic demo settings, persistent seal/TSA trust/coordinator/key material, final protection, lifecycle and storage-only schedules. Email and hosted Gotenberg remain disabled. Make zero actual timestamp calls and send zero real email; no AWS, AI, purchase or unrelated resource change.
+
+Exercise real hosted desktop/mobile/keyboard home-to-request unavailable state and existing access-code navigation with clean URLs and private headers; confirm no unintended mail admission. Save private evidence and screenshot proof. Remove temporary access even on failure and preserve cleanup/schema rollback compatibility. Do not backdate enrollment or claim unperformed mailbox signing/completion, attachments or naturally elapsed seven-day purge. Record operational results without private identifiers, validate links/secrets and exact release checks, commit/push/create/attach/pass checks/merge and native Jira Done.
+
+Reconcile README, lookup and rollout guidance with the verified release, keeping detailed resource/identity/permission evidence private. Distinguish applied migration/grants and disabled-email hosted navigation from the still-unperformed mailbox-bound completion and naturally elapsed purge tests.
+
+Validation: approved deployment completed with the lookup runtime on web and all three jobs; Running/ready revision and distinctive HTTPS health verified independently. Migration and scoped grants passed actual SQL checks, including existing managed-identity principal bindings, SELECT/INSERT and direct UPDATE/DELETE denials, worker-only cleanup execution and zero lookup outbox rows at verification. The unique temporary SQL access rule was removed and absence of temporary rules confirmed. Demo/email/converter flags, version protection, lifecycle and SQL free-offer/auto-pause safeguards remain unchanged. Hosted HTTP/privacy checks and real desktop/mobile/keyboard navigation, invalid code rejection, anonymous-list denial and one-use notice consumption passed. The actual 390-pixel page has no horizontal overflow and no browser console warnings/errors were observed. No real email or timestamp request was made; full mailbox completion and naturally elapsed purge remain unclaimed. Current-head documentation links/secrets and CI gate the final PR.
+
 ## QUILS-90: Refresh hosted readiness and prepare the lookup release delta
 
-Status: In Progress. Documentation only. Prerequisite lookup request PR #94 (QUILS-89) is merged; native Jira Done verified.
+Status: Done (PR #95). All 12 exact-head checks passed with 1,975 .NET and 15 Node tests; 115 local Markdown links and secret scans passed. Native Jira Done verified. Documentation only.
 
 Refresh README and hosted readiness/rollout documentation after approved QUILS-83 staging and merged QUILS-84 through QUILS-88 lookup work, reconciling QUILS-89 before merge. Replace stale claims that disclosures, TSA trust and immutable storage are unconfigured with dated demonstrated readiness and truthful outstanding hosted/email/Office and naturally elapsed retention validation. Keep public docs practical and free of private resource identifiers or deployment-specific operational inventories.
 
