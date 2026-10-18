@@ -11,7 +11,7 @@ namespace QuillSign.Pages.Draft;
 
 [Authorize(AuthenticationSchemes = EnvelopeStorageAuthorization.SenderScheme)]
 public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limits, BrowserNotices notices,
-    DocxDocumentWorkflow docx, ImageDocumentWorkflow images, GotenbergOptions conversion,IHostEnvironment environment) : PageModel
+    DocxDocumentWorkflow docx, ImageDocumentWorkflow images, GotenbergOptions conversion,IHostEnvironment environment,TextDocumentWorkflow text) : PageModel
 {
     public Envelope Draft { get; private set; } = null!;
     public DocumentOptions Limits => limits;
@@ -20,7 +20,8 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
     {
         get {if(!ImagesAvailable)return false;try{return conversion.IsAvailable(environment);}catch(InvalidOperationException){return false;}}
     }
-    public string Extensions => ".pdf" + (ImagesAvailable ? ",.png,.jpg,.jpeg" : "") + (DocxAvailable ? ",.docx" : "");
+    public bool TextAvailable => limits.EnableTextUploads && DocxAvailable;
+    public string Extensions => ".pdf" + (ImagesAvailable ? ",.png,.jpg,.jpeg" : "") + (DocxAvailable ? ",.docx" : "") + (TextAvailable ? ",.txt" : "");
     public string? Notice { get; private set; }
     public string? Error { get; private set; }
     public bool RetentionExpired {get;private set;}
@@ -53,6 +54,8 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
             ".pdf" => await documents.UploadAsync(User, publicId, version, Upload.FileName, source, Upload.Length, ip, ua, cancellationToken),
             ".docx" when DocxAvailable => await docx.UploadAsync(User, publicId, version, Upload.FileName, source, Upload.Length, ip, ua, cancellationToken),
             ".docx" => throw new DocumentConversionUnavailableException("DOCX conversion is unavailable. Export your document to PDF and try again."),
+            ".txt" when TextAvailable => await text.UploadAsync(User, publicId, version, Upload.FileName, source, Upload.Length, ip, ua, cancellationToken),
+            ".txt" => throw new DocumentConversionUnavailableException("Text upload is unavailable. Export your document to PDF and try again."),
             ".png" or ".jpg" or ".jpeg" when ImagesAvailable => await images.UploadAsync(User, publicId, version, Upload.FileName, source, Upload.Length, ip, ua, cancellationToken),
             _ => throw new DocumentRejectedException("Choose a supported document shown on the upload form, or export it to PDF.")
         };

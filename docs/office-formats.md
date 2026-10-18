@@ -1,10 +1,10 @@
 # Additional Office format support
 
-This is a source implementation plan, not an announcement of hosted format availability. Public intake currently accepts PDF, supported PNG/JPEG and configured DOCX. QUILS-92 implements internal strict UTF-8 text conversion. QUILS-98 assessed the remaining families on 2026-10-18; the matched stories below are deliberately separate gates.
+This is a source implementation plan, not an announcement of hosted format availability. Public intake accepts PDF, supported PNG/JPEG and configured DOCX. QUILS-92 implements internal strict UTF-8 text conversion; QUILS-106 adds separately opt-in sender TXT intake with defaults disabled. QUILS-98 assessed the remaining families on 2026-10-18; the matched stories below are deliberately separate gates.
 
 | Format | Current boundary | Next scoped story | Main constraint |
 | --- | --- | --- | --- |
-| TXT | Internal converter complete; public intake pending | QUILS-106 | Persist exact UTF-8 original and confirm normalized PDF; never format-sniff raw text |
+| TXT | Optional sender intake implemented; default disabled | QUILS-106 | Persist exact UTF-8 original and confirm normalized PDF; never format-sniff raw text |
 | PPTX | Default-disabled [internal static component](static-pptx.md); public intake rejected | QUILS-107 | Static PresentationML part/relationship allowlist; exclude actions, media and embedded workbooks |
 | XLSX | Default-disabled [internal values-only component](values-xlsx.md); public intake rejected | QUILS-108 | Values-only cells with bounded print ranges; exclude every formula, refresh source and hidden-content ambiguity |
 | ODT | Rejected | QUILS-109 | Independent ODF manifest, namespace and resource validation; not a renamed DOCX gate |
