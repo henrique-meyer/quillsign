@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace QuillSign.Sender;
 
-public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed, SignerSaved, SignerRemoved, SignersReordered, PreviewRequired, DetailsSaved, RecipientSaved, RecipientRemoved, SignatureAdopted, SignerFieldSaved, SignerReviewPrepared, SignerFinishAccepted, RequestSent, RequestVoided, LookupRequested, InvitationResendQueued }
+public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed, SignerSaved, SignerRemoved, SignersReordered, PreviewRequired, DetailsSaved, RecipientSaved, RecipientRemoved, SignatureAdopted, SignerFieldSaved, SignerReviewPrepared, SignerFinishAccepted, RequestSent, RequestVoided, LookupRequested, InvitationResendQueued, ContactCorrectionQueued }
 
 public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvironment environment)
 {
@@ -54,6 +54,7 @@ public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvi
         NoticeCode.SignerReviewPrepared => "Review prepared. Open the exact PDF, check it and confirm your intent before Finish.",
         NoticeCode.SignerFinishAccepted => "Your Finish was accepted. Your entries are frozen.",
         NoticeCode.RequestSent => "The request was sent. Check its private status below.",
+        NoticeCode.ContactCorrectionQueued => "The signer email correction was recorded. That signer's prior links and sessions are invalid. Check saved invitation status below; inbox delivery is not confirmed.",
         NoticeCode.InvitationResendQueued => "A replacement invitation was queued. Older unused links no longer work. Check saved status below; inbox delivery is not confirmed.",
         NoticeCode.RequestVoided => "The request was voided. Further signing has stopped. Check the saved record below; email delivery is not confirmed.",
         _ => "We couldn't complete that request right now. Please try again shortly."
