@@ -20,6 +20,7 @@ public static class DocumentConfiguration
         services.AddScoped<StaticOfficeConverter>();
         services.AddScoped<DocxDocumentWorkflow>();
         services.AddScoped<TextPdfConverter>();
+        services.AddScoped<TextDocumentWorkflow>();
         services.AddScoped<ImagePdfConverter>();
         services.AddScoped<ImageDocumentWorkflow>();
         var conversion=config.GetSection("Gotenberg").Get<GotenbergOptions>() ?? new();
