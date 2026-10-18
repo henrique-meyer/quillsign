@@ -44,3 +44,34 @@ through an approved rollout before deploying code that uses its new token
 column or enabling contact-aware features. This source change does not deploy
 that migration, change cloud resources, enable public email or activate the
 synthetic demo's deferred reminders/contact-correction settings.
+
+QUILS-118 provides the internal delivery path and correction preparation API.
+`InvitationSuccessorJobs.RetirePredecessorLockedAsync` runs before a correction
+is persisted, inside the caller's envelope transaction. It permits settled
+predecessors and can retire queued or leased work only when there is no
+submission intent, provider receipt or ambiguity. Its audit explicitly means
+never submitted, rather than a recall. The caller must roll back the entire
+transaction if admission fails. `PrepareCorrectionAsync` then verifies the
+saved revision, retirement, projection and audit, creates deterministic
+revision-bound work, and puts a durable recovery hint before commit.
+`PublishAsync` runs after commit; a lost queue response does not discard the
+hint. A retry reuses the exact saved admission.
+
+Delivery requires exactly one enabled `IInvitationSuccessorPolicy` for its
+reason. The policy verifies persisted feature authority and cap reservation
+under the caller's envelope lock; it must neither commit nor call transport.
+Acquire any shared cap lock before inserting revision or reservation evidence.
+No reason-specific policy is registered by this slice, so a protected payload
+alone cannot activate delivery. Feature integrations own those policies and
+their bounded admission rules.
+
+The worker revalidates current contact, source, disclosure, canonical latest
+predecessor, deadline, retention, suppression and lease before committing a
+fresh token and protected submission intent. Same-contact replacements retire
+unused links while preserving redeemed sessions. Correction separately retires
+prior contact authority. Transport runs outside SQL. A definite rejection may
+clear its exact intent and retry; uncertain commit, provider or receipt results
+retain evidence and cannot blindly resend. Provider receipts do not claim inbox
+delivery, and already received bounce/complaint state is preserved. Mail copy
+distinguishes reminders, replacement links and corrected contacts; opening any
+of these remains separate from consent or signing.
