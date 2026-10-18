@@ -1,5 +1,7 @@
 # Document conversion and sender upload
 
+The [hosted DOCX setup proposal](hosted-docx-setup.md) describes the isolated Azure pilot, scoped permissions, costs and approval gates. Hosted conversion remains disabled pending that work.
+
 `GotenbergDocxConverter` sends one DOCX to the configured Gotenberg LibreOffice conversion route, then validates and normalizes the returned PDF with the same PDFsharp byte/page/geometry rules as PDF upload. It returns the exact normalized bytes, original SHA-256, normalized SHA-256 and page geometry. The caller keeps ownership of the original input stream.
 
 `DocxDocumentWorkflow` joins package validation, conversion, original/PDF storage, audit and upload retention. The verified-sender upload handler selects this workflow only for a `.docx` filename when conversion is configured. Browser MIME labels grant no trust: the package gate validates the actual content before the ordinary Gotenberg HTTP request. The resulting normalized PDF is previewed/downloaded and requires explicit confirmation before preparation continues. No automatic Conversion work producer is used. Plain text has internal conversion support below; its public upload integration and other Office formats remain future work.
