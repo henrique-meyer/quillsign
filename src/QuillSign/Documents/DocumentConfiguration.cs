@@ -17,6 +17,7 @@ public static class DocumentConfiguration
         services.AddSingleton<DocxPackageValidation>();
         services.AddSingleton<PptxPackageValidation>();
         services.AddSingleton<XlsxPackageValidation>();
+        services.AddSingleton<OdtPackageValidation>();
         services.AddSingleton(config.GetSection("OfficeConversion").Get<OfficeConversionOptions>()??new());
         services.AddScoped<StaticOfficeConverter>();
         services.AddScoped<DocxDocumentWorkflow>();

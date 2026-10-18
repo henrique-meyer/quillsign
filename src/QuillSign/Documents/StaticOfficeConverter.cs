@@ -2,8 +2,8 @@ using System.Security.Cryptography;
 
 namespace QuillSign.Documents;
 
-public enum OfficeSourceKind {Pptx,Xlsx}
-public sealed class OfficeConversionOptions {public bool PptxEnabled {get;set;}public bool XlsxEnabled {get;set;}}
+public enum OfficeSourceKind {Pptx,Xlsx,Odt}
+public sealed class OfficeConversionOptions {public bool PptxEnabled {get;set;}public bool XlsxEnabled {get;set;}public bool OdtEnabled {get;set;}}
 
 // Constructed only by a successful family gate; callers cannot substitute later source bytes.
 public sealed class ValidatedOfficeSource:IDisposable
@@ -29,7 +29,7 @@ public sealed class StaticOfficeConverter(OfficeConversionOptions options,Gotenb
     public async Task<DocxConversion> ConvertAsync(ValidatedOfficeSource package,CancellationToken ct=default)
     {
         ct.ThrowIfCancellationRequested();ArgumentNullException.ThrowIfNull(package);
-        if(!(package.Kind==OfficeSourceKind.Pptx&&options.PptxEnabled||package.Kind==OfficeSourceKind.Xlsx&&options.XlsxEnabled))throw new DocumentConversionUnavailableException("This Office format is not enabled.");
+        if(!(package.Kind==OfficeSourceKind.Pptx&&options.PptxEnabled||package.Kind==OfficeSourceKind.Xlsx&&options.XlsxEnabled||package.Kind==OfficeSourceKind.Odt&&options.OdtEnabled))throw new DocumentConversionUnavailableException("This Office format is not enabled.");
         var originalHash=package.OriginalSha256;var expected=package.ConversionSha256;
         DocxConversion result;
         try {result=await converter.ConvertOfficeAsync(package,ct);}
@@ -37,7 +37,7 @@ public sealed class StaticOfficeConverter(OfficeConversionOptions options,Gotenb
         var matches=CryptographicOperations.FixedTimeEquals(expected,result.OriginalSha256);Array.Clear(expected);
         if(!matches)
         {Array.Clear(result.Pdf);Array.Clear(result.PdfSha256);Array.Clear(result.OriginalSha256);Array.Clear(originalHash);throw new InvalidDataException("Converted source verification failed.");}
-        if(result.Pages.Count!=package.ExpectedPages || result.Pages.Any(x=>x.Rotation!=0||x.UserUnit!=1||Math.Abs(x.Width-package.Width)>.1||Math.Abs(x.Height-package.Height)>.1))
+        if(package.ExpectedPages>0&&result.Pages.Count!=package.ExpectedPages || result.Pages.Any(x=>x.Rotation!=0||x.UserUnit!=1||Math.Abs(x.Width-package.Width)>.1||Math.Abs(x.Height-package.Height)>.1))
         {Array.Clear(result.Pdf);Array.Clear(result.PdfSha256);Array.Clear(result.OriginalSha256);Array.Clear(originalHash);throw new DocumentRejectedException("The converted pages did not match the supported Office print profile. Export a PDF and try again.");}
         Array.Clear(result.OriginalSha256);return result with {OriginalSha256=originalHash};
     }
