@@ -104,6 +104,8 @@ public static class DocumentLookupBrowserConfiguration
     {
         services.TryAddScoped<DocumentLookupBrowser>(); services.TryAddScoped<Func<DocumentLookup>>(sp => () => sp.GetRequiredService<DocumentLookup>());
         services.TryAddScoped<Func<LookupPacketAccess>>(sp => () => sp.GetRequiredService<LookupPacketAccess>());
+        services.TryAddScoped<Func<QuillSign.Work.DocumentLookupRequests>>(sp => () => sp.GetRequiredService<QuillSign.Work.DocumentLookupRequests>());
+        services.TryAddScoped<Func<QuillSign.Sender.BrowserNotices>>(sp => () => sp.GetRequiredService<QuillSign.Sender.BrowserNotices>());
         services.AddAuthentication().AddCookie(DocumentLookupProtection.Scheme, cookie =>
         {
             cookie.Cookie.Name = environment.IsDevelopment() ? "QuillSign.DocumentLookup" : "__Host-QuillSign.DocumentLookup";
