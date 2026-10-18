@@ -17,17 +17,17 @@ public sealed record SignerInvitation(string RawToken,AuthToken Record);
 // Call at actual dispatch, not when work is enqueued. Do not log/store RawToken in plaintext.
 public sealed class SignerInvitationFactory(SignerAccessOptions options,TimeProvider time)
 {
-    public SignerInvitation Create(Guid envelopeId,Guid signerId,string email,DateTimeOffset? envelopeExpiry,Guid documentId,byte[] documentSha256,byte[] disclosureSha256)
+    public SignerInvitation Create(Guid envelopeId,Guid signerId,string email,DateTimeOffset? envelopeExpiry,Guid documentId,byte[] documentSha256,byte[] disclosureSha256,Guid? contactRevisionId=null)
     {
         if (options.InvitationHours is < 1 or > 168) throw new InvalidOperationException("Invalid signer invitation lifetime.");
         if (envelopeId == Guid.Empty || signerId == Guid.Empty) throw new ArgumentException("Supply a signer and envelope.");
-        if(documentId==Guid.Empty || documentSha256 is not { Length:32 } || disclosureSha256 is not { Length:32 })throw new ArgumentException("Supply the exact invitation document/disclosure binding.");
+        if(documentId==Guid.Empty || documentSha256 is not { Length:32 } || disclosureSha256 is not { Length:32 } || contactRevisionId==Guid.Empty)throw new ArgumentException("Supply the exact invitation document/disclosure/contact binding.");
         var now = time.GetUtcNow(); var expires = now.AddHours(options.InvitationHours);
         if (envelopeExpiry is DateTimeOffset end && end < expires) expires = end;
         if (expires <= now) throw new InvalidOperationException("This envelope has expired.");
         var raw = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         return new(raw,new AuthToken { EnvelopeId = envelopeId,PartyId = signerId,PartyType = PartyType.Signer,
-            Purpose = TokenPurpose.SignerAccess,Email = EmailAddress.Normalize(email),ExpiresAt = expires,
+            Purpose = TokenPurpose.SignerAccess,Email = EmailAddress.Normalize(email),ExpiresAt = expires,SignerContactRevisionId=contactRevisionId,
             TokenSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(raw)),DocumentId=documentId,DocumentSha256=documentSha256.ToArray(),DisclosureSha256=disclosureSha256.ToArray() });
     }
     internal static byte[]? TokenHash(string? raw)

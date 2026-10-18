@@ -26,6 +26,7 @@ public sealed class InvitationSuccessorProtection(IDataProtectionProvider provid
     public const string Version = "invitation-successor-v1";
     public const string Template = "signer-invitation-successor";
     public const string Event = "invitation_successor_admitted";
+    public const string ReceiptEvent = "invitation_successor_submitted";
     private const int MaximumJsonLength = 12000;
     private readonly IDataProtector protector = provider.CreateProtector("QuillSign.InvitationSuccessor.Payload.v1");
     private static readonly JsonSerializerOptions Json = new() {
@@ -81,7 +82,7 @@ public sealed class InvitationSuccessorProtection(IDataProtectionProvider provid
     {
         if (mail is null) throw Invalid(); Validate(mail.Scope);
         if (mail.Issued is { } token && (token.Id == Guid.Empty || !Hash(token.Sha256) || token.ExpiresAt.Offset != TimeSpan.Zero ||
-            token.ExpiresAt <= mail.Scope.AdmittedAt || token.ExpiresAt > mail.Scope.AdmittedAt.AddDays(7))) throw Invalid();
+            token.ExpiresAt <= mail.Scope.AdmittedAt || token.ExpiresAt > DayEnd(mail.Scope.AdmittedAt).AddDays(7))) throw Invalid();
     }
     private static void Validate(InvitationSuccessorScope? p)
     {
@@ -92,7 +93,7 @@ public sealed class InvitationSuccessorProtection(IDataProtectionProvider provid
             p.Reason == InvitationSuccessorReason.ContactCorrection && p.Contact.Number == 0 ||
             !Address(p.Recipient) || !Address(p.SenderEmail) || !Hash(p.DocumentSha256) || !Hash(p.DisclosureSha256) || !Hash(p.AuthorizationSha256) ||
             p.AdmittedAt.Offset != TimeSpan.Zero || p.Deadline.Offset != TimeSpan.Zero || p.Deadline <= p.AdmittedAt ||
-            p.AdmittedAt > DateTimeOffset.MaxValue.AddDays(-7) || p.Deadline > DayEnd(p.AdmittedAt)) throw Invalid();
+            p.AdmittedAt > DateTimeOffset.MaxValue.AddDays(-8) || p.Deadline > DayEnd(p.AdmittedAt)) throw Invalid();
     }
     private static DateTimeOffset DayEnd(DateTimeOffset at) => new DateTimeOffset(at.UtcDateTime.Date, TimeSpan.Zero).AddDays(1);
     private static bool Hash(string? value) => value is { Length: 64 } && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');

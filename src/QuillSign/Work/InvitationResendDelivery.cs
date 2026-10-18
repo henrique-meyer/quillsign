@@ -11,7 +11,7 @@ namespace QuillSign.Work;
 
 public sealed class InvitationResendDelivery(QuillSignDbContext db, InvitationResendOptions options, InvitationResendProtection protection,
     SignerAccess access, SignerInvitationFactory tokens, SignerInvitationTemplate template, IEmailSender sender,
-    EmailOptions email, WorkOptions work, AuditWriter audit, TimeProvider time)
+    EmailOptions email, WorkOptions work, AuditWriter audit, TimeProvider time, InvitationLineage? lineage=null)
 {
     private readonly InvitationResendRules rules = new(db, options, protection, time);
     private bool Enabled => options.Enabled && email.Enabled && work.Enabled;
@@ -78,8 +78,19 @@ public sealed class InvitationResendDelivery(QuillSignDbContext db, InvitationRe
         var context = await access.GetEligibleLockedAsync(p.EnvelopeId, p.SignerId, ct) ?? throw Invalid();
         if (context.Identity.Email != p.Email || context.Identity.DocumentId != p.DocumentId || context.Identity.DocumentHash != p.DocumentSha256 ||
             context.Identity.DisclosureHash != p.DisclosureSha256 || await db.Suppressions.AnyAsync(x => x.Email == p.Email, ct)) throw Invalid();
-        var latest = await rules.LatestAsync(p.EnvelopeId, p.SignerId, ct) ?? throw Invalid();
-        if (latest.Mail.Request != p || !await rules.WithinCapsAsync(p, true, ct)) throw Invalid();
+        await InvitationResendRules.VerifyIndexAsync(db,p.EnvelopeId,ct,time);
+        if(await InvitationLineage.RequiresVerifiedHistoryAsync(db,p.EnvelopeId,ct)) {
+            var contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(parent,ct);
+            var current=contacts.Current.SingleOrDefault(x=>x.Id==p.SignerId);
+            var history=await (lineage??throw InvitationSuccessorProtection.Invalid()).ReadLockedAsync(parent,p.SignerId,contacts,ct);
+            if(current is null || current.Epoch!=SignerContactEpoch.Legacy || history is null || history.Latest.Id!=p.Id ||
+                history.Latest.Contact!=current.Epoch || history.Latest.Recipient!=p.Email)throw Invalid();
+        }
+        else {
+            var latest = await rules.LatestAsync(p.EnvelopeId, p.SignerId, ct) ?? throw Invalid();
+            if(latest.Mail.Request!=p)throw Invalid();
+        }
+        if(!await rules.WithinCapsAsync(p,true,ct))throw Invalid();
         return context;
     }
     private async Task<Envelope> ParentAsync(Guid id, CancellationToken ct) => await db.Envelopes

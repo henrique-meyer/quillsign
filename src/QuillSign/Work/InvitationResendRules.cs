@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
+using QuillSign.Signing;
 
 namespace QuillSign.Work;
 
@@ -11,8 +12,23 @@ internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationRes
 {
     // Damaged index keys must not make latest lookups lose an admission.
     // Return one scalar; never load unbounded historical payloads.
-    internal static async Task VerifyIndexAsync(QuillSignDbContext db, Guid envelopeId, CancellationToken ct)
+    internal static async Task VerifyIndexAsync(QuillSignDbContext db, Guid envelopeId, CancellationToken ct, TimeProvider? time=null)
     {
+        var historicalRecipients=false;
+        if(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==envelopeId && x.Event==SignerContactHistory.Event,ct)) {
+            if(time is null)throw Invalid();
+            var parent=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={envelopeId}")
+                .AsNoTracking().SingleOrDefaultAsync(ct)??throw Invalid();
+            var contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(parent,ct);
+            var entries=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==envelopeId && x.Event==InvitationResendProtection.Event)
+                .OrderBy(x=>x.Sequence).Take(513).ToArrayAsync(ct);
+            if(entries.Length>512)throw Invalid();
+            foreach(var entry in entries) {
+                var request=InvitationResendProtection.ReadEvidence(entry);
+                if(contacts.Resolve(request.SignerId,SignerContactEpoch.Legacy)?.Email!=request.Email)throw Invalid();
+            }
+            historicalRecipients=true;
+        }
         var invalid = await db.Database.SqlQuery<int>($"""
             SELECT CAST(CASE WHEN
                 (SELECT COUNT_BIG(*) FROM [AuditEvents] WHERE [EnvelopeId]={envelopeId} AND [Event]='invitation_resend_requested') <>
@@ -29,7 +45,7 @@ internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationRes
                     LEFT JOIN [Signers] s ON s.[Id]=TRY_CONVERT(uniqueidentifier,JSON_VALUE(a.[DataJson],'$.signerId')) AND s.[EnvelopeId]=a.[EnvelopeId]
                     WHERE a.[EnvelopeId]={envelopeId} AND a.[Event]='invitation_resend_requested' AND (
                         DATALENGTH(a.[DataJson])>24000 OR COALESCE(JSON_VALUE(a.[DataJson],'$.version'),'')<>'resend-admission-v1'
-                        OR m.[Id] IS NULL OR s.[Id] IS NULL OR m.[To]<>s.[Email]
+                        OR m.[Id] IS NULL OR s.[Id] IS NULL OR ({historicalRecipients}=0 AND m.[To]<>s.[Email])
                         OR DATALENGTH(m.[PayloadJson])>24000 OR m.[AttachmentsJson]<>'[]'
                         OR COALESCE(JSON_VALUE(a.[DataJson],'$.request.id'),'')<>CONVERT(nvarchar(36),m.[Id])
                         OR COALESCE(JSON_VALUE(a.[DataJson],'$.request.signerId'),'')<>CONVERT(nvarchar(36),s.[Id])
@@ -125,7 +141,11 @@ internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationRes
             row.Provider is null && row.ProviderMessageId is null && row.LastError != "submission-ambiguous" && work.LastError != "submission-ambiguous") return true;
         if (work.Status != WorkStatus.Completed || row.Status is not (EmailStatus.Sent or EmailStatus.Bounced or EmailStatus.Complained) ||
             row.SubmissionStartedAt is null || row.SubmissionStartedAt > time.GetUtcNow() || tokenId is null || string.IsNullOrWhiteSpace(row.Provider) || string.IsNullOrWhiteSpace(row.ProviderMessageId)) return false;
-        var name = row.Template == InvitationResendProtection.Template ? "invitation_resend_submitted" : "invitation_submitted";
+        var name = row.Template switch {
+            InvitationResendProtection.Template => "invitation_resend_submitted",
+            InvitationSuccessorProtection.Template => InvitationSuccessorProtection.ReceiptEvent,
+            "signer-invitation" => "invitation_submitted", _ => throw Invalid()
+        };
         var receipts = await db.AuditEvents.FromSqlInterpolated($"""
             SELECT * FROM [AuditEvents] WHERE [EnvelopeId]={row.EnvelopeId} AND [Event]={name}
             AND JSON_VALUE([DataJson],'$.emailId')={row.Id.ToString()}

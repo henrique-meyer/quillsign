@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
@@ -7,7 +8,12 @@ using QuillSign.Email;
 using QuillSign.Signing;
 namespace QuillSign.Work;
 
-public sealed record SignerInvitationPayload(Guid SignerId,Guid? LastTokenId = null,Guid DocumentId=default,string? DocumentSha256=null,string? DisclosureSha256=null);
+public sealed record SignerInvitationPayload(Guid SignerId,Guid? LastTokenId = null,Guid DocumentId=default,string? DocumentSha256=null,string? DisclosureSha256=null,
+    [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingDefault)] Guid ContactRevisionId=default,
+    [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingDefault)] int ContactRevisionNumber=0)
+{
+    internal SignerContactEpoch Contact=>new(ContactRevisionId,ContactRevisionNumber);
+}
 public sealed class SignerInvitationProtection(IDataProtectionProvider provider)
 {
     private readonly IDataProtector protector = provider.CreateProtector("QuillSign.SignerInvitationPayload.v1");
@@ -25,8 +31,15 @@ public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSigna
         var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==envelopeId,ct);
         var source=await new SignerCheckpointState(db,time).CurrentAsync(envelope,ct) ?? throw new InvalidDataException("Current invitation document is unavailable.");
         if(envelope.ErsdSha256 is not { Length:32 })throw new InvalidDataException("Current invitation disclosure is unavailable.");
+        var contact=SignerContactEpoch.Legacy;
+        if(await InvitationLineage.RequiresVerifiedHistoryAsync(db,envelopeId,ct)) {
+            var contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(envelope,ct);
+            var party=contacts.Current.SingleOrDefault(x=>x.Id==signerId)??throw InvitationSuccessorProtection.Invalid();
+            if(party.Email!=recipient)throw InvitationSuccessorProtection.Invalid();contact=party.Epoch;
+        }
         var row = new EmailOutbox { EnvelopeId = envelopeId,To = EmailAddress.Normalize(recipient),Template = "signer-invitation",
-            PayloadJson = protection.Protect(new(signerId,DocumentId:source.ObjectId,DocumentSha256:Convert.ToHexStringLower(source.Sha256),DisclosureSha256:Convert.ToHexStringLower(envelope.ErsdSha256))),AvailableAt = time.GetUtcNow() };
+            PayloadJson = protection.Protect(new(signerId,DocumentId:source.ObjectId,DocumentSha256:Convert.ToHexStringLower(source.Sha256),DisclosureSha256:Convert.ToHexStringLower(envelope.ErsdSha256),
+                ContactRevisionId:contact.RevisionId,ContactRevisionNumber:contact.Number)),AvailableAt = time.GetUtcNow() };
         if(invitationId is Guid id) { if(id==Guid.Empty)throw new ArgumentException("Invalid invitation ID."); row.Id=id; }
         db.EmailOutbox.Add(row); db.WorkItems.Add(new WorkItem { Id = row.Id,EnvelopeId = envelopeId,Kind = WorkKind.Email,AvailableAt = row.AvailableAt });
         await db.SaveChangesAsync(ct); await signals().PutHintAsync(row.Id,row.AvailableAt,ct); return row.Id;
@@ -39,7 +52,7 @@ public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSigna
     }
 }
 public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess access,SignerInvitationFactory tokens,
-    SignerInvitationProtection protection,SignerInvitationTemplate template,IEmailSender sender,EmailOptions options,AuditWriter audit,TimeProvider time)
+    SignerInvitationProtection protection,SignerInvitationTemplate template,IEmailSender sender,EmailOptions options,AuditWriter audit,TimeProvider time,InvitationLineage? lineage=null)
 {
     public async Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)
     {
@@ -56,8 +69,16 @@ public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess 
             // All sender/signer mutations use envelope first. Never lock work before this scope.
             var eligible = await access.GetEligibleLockedAsync(envelopeId,payload.SignerId,ct);
             if (eligible is null || eligible.Identity.Email != email.To) return new(WorkOutcome.Failed,"invitation-unavailable"); context = eligible;
-            await InvitationResendRules.VerifyIndexAsync(db,envelopeId,ct);
+            await InvitationResendRules.VerifyIndexAsync(db,envelopeId,ct,time);
             if(await InvitationResendRules.LatestAuditAsync(db,envelopeId,payload.SignerId,ct) is not null)return new(WorkOutcome.Failed,"invitation-replaced");
+            if(payload.Contact!=SignerContactEpoch.Legacy || await InvitationLineage.RequiresVerifiedHistoryAsync(db,envelopeId,ct)) {
+                var parent=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==envelopeId,ct);
+                var contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(parent,ct);
+                var history=await (lineage??throw InvitationSuccessorProtection.Invalid()).ReadLockedAsync(parent,payload.SignerId,contacts,ct);
+                var current=contacts.Current.SingleOrDefault(x=>x.Id==payload.SignerId);
+                if(history is null || history.Latest.Id!=email.Id || current is null || current.Epoch!=payload.Contact || current.Email!=email.To)
+                    return new(WorkOutcome.Failed,"invitation-replaced");
+            }
             if(payload.DocumentId!=context.Identity.DocumentId || payload.DocumentSha256!=context.Identity.DocumentHash || payload.DisclosureSha256!=context.Identity.DisclosureHash)
                 return new(WorkOutcome.Failed,"invitation-source-changed");
             if (await db.Suppressions.AnyAsync(x => x.Email == email.To,ct)) return new(WorkOutcome.Failed,"recipient-suppressed");
@@ -65,7 +86,8 @@ public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess 
             var now = time.GetUtcNow();
             if (owned.Status != WorkStatus.Leased || owned.LeaseOwner != lease.Owner || owned.LeaseExpiresAt <= now) throw new InvalidOperationException("Work lease is no longer owned.");
             var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == envelopeId,ct);
-            invitation = tokens.Create(envelopeId,payload.SignerId,email.To,envelope.ExpiresAt,context.Identity.DocumentId,context.DocumentSha256,context.Disclosure.Sha256);
+            invitation = tokens.Create(envelopeId,payload.SignerId,email.To,envelope.ExpiresAt,context.Identity.DocumentId,context.DocumentSha256,context.Disclosure.Sha256,
+                payload.ContactRevisionNumber==0 ? null : payload.ContactRevisionId);
             outgoing = await template.RenderAsync(context,envelope.Message,invitation.RawToken,invitation.Record.ExpiresAt,ct);
             if (invitation.Record.ExpiresAt <= time.GetUtcNow()) return new(WorkOutcome.Failed,"invitation-expired");
             var protectedScope = protection.Protect(payload with { LastTokenId = invitation.Record.Id });
