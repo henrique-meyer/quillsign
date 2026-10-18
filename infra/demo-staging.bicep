@@ -12,6 +12,12 @@ param queueName string
 param image string
 @description('Private display name for the narrow version-deletion role.')
 param versionCleanupRoleName string
+@description('Enable only after approval of this existing job configuration and its dedicated sandbox-group grant.')
+param sandboxMaintenanceEnabled bool = false
+@description('Approved sandbox regional DNS label, supplied privately when maintenance is enabled.')
+param sandboxMaintenanceRegion string = ''
+@description('Existing approved sandbox group in this deployment resource group; supplied privately.')
+param sandboxGroupName string = ''
 
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = { name: environmentName }
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = { name: storageAccountName }
@@ -36,47 +42,28 @@ resource workerDocuments 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }]
 
-resource recovery 'Microsoft.App/jobs@2025-07-01' = {
-  name: purgeRecoveryJobName
-  location: location
-  tags: { project: 'quillsign', component: 'purge-recovery' }
-  identity: { type: 'SystemAssigned' }
-  properties: {
+module recovery './modules/purge-recovery-job.bicep' = {
+  name: 'purge-recovery-job-configuration'
+  params: {
+    location: location
     environmentId: environment.id
-    workloadProfileName: 'Consumption'
-    configuration: {
-      triggerType: 'Schedule'
-      replicaTimeout: 90
-      replicaRetryLimit: 0
-      scheduleTriggerConfig: { cronExpression: '0 * * * *', parallelism: 1, replicaCompletionCount: 1 }
-    }
-    template: {
-      containers: [{
-        name: 'purge-recovery'
-        image: image
-        command: ['dotnet', 'QuillSign.dll', 'work', 'purge-recover', '32']
-        resources: { cpu: json('0.25'), memory: '0.5Gi' }
-        env: [
-          { name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }
-          { name: 'Work__Enabled', value: 'true' }
-          { name: 'Work__QueueServiceUri', value: storage.properties.primaryEndpoints.queue }
-          { name: 'Work__QueueName', value: queueName }
-          { name: 'Work__HintContainer', value: hintContainerName }
-          { name: 'Storage__Provider', value: 'Azure' }
-          { name: 'Storage__BlobServiceUri', value: storage.properties.primaryEndpoints.blob }
-          { name: 'DataProtection__ApplicationName', value: 'QuillSign:Production' }
-          { name: 'DataProtection__KeyVaultKeyIdentifier', value: '${vault.properties.vaultUri}keys/${dataProtectionKeyName}' }
-          { name: 'Email__Enabled', value: 'false' }
-        ]
-      }]
-    }
+    purgeRecoveryJobName: purgeRecoveryJobName
+    queueServiceUri: storage.properties.primaryEndpoints.queue
+    blobServiceUri: storage.properties.primaryEndpoints.blob
+    dataProtectionKeyIdentifier: '${vault.properties.vaultUri}keys/${dataProtectionKeyName}'
+    hintContainerName: hintContainerName
+    queueName: queueName
+    image: image
+    sandboxMaintenanceEnabled: sandboxMaintenanceEnabled
+    sandboxMaintenanceRegion: sandboxMaintenanceRegion
+    sandboxGroupName: sandboxGroupName
   }
 }
 resource recoveryDocuments 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for (name, i) in documentContainers: {
   scope: containers[i]
   name: guid(containers[i].id, purgeRecoveryJobName, 'purge-recovery-documents')
   properties: {
-    principalId: recovery.identity.principalId
+    principalId: recovery.outputs.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   }
@@ -85,7 +72,7 @@ resource recoveryHints 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: hints
   name: guid(hints.id, purgeRecoveryJobName, 'purge-recovery-hints')
   properties: {
-    principalId: recovery.identity.principalId
+    principalId: recovery.outputs.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   }
@@ -94,7 +81,7 @@ resource recoveryKeys 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: keys
   name: guid(keys.id, purgeRecoveryJobName, 'purge-recovery-keys')
   properties: {
-    principalId: recovery.identity.principalId
+    principalId: recovery.outputs.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   }
@@ -103,7 +90,7 @@ resource recoveryCrypto 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: key
   name: guid(key.id, purgeRecoveryJobName, 'purge-recovery-key-encryption')
   properties: {
-    principalId: recovery.identity.principalId
+    principalId: recovery.outputs.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'e147488a-f6f5-4113-8e2d-b22465e65bf6')
   }

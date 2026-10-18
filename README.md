@@ -33,7 +33,7 @@ It is disabled by default and excluded from signing and document flows. See
 | Background work | SQL durable work/outbox records, Azure Storage Queues and Blob recovery hints; finite Container Apps jobs |
 | Email | Amazon SES v2 and SMTP/Mailpit; ACS remains a future optional adapter |
 | Hosting and delivery | Azure Container Apps Consumption, GitHub Actions, GHCR and Bicep; CloudFormation for AWS resources |
-| Office conversion | Gotenberg/LibreOffice sidecar for validated DOCX packages when configured; sender upload, normalized PDF preview and explicit confirmation |
+| Office conversion | Gotenberg/LibreOffice through an isolated local sidecar or the optional [Azure sandbox application transport](docs/document-conversion.md#isolated-sandbox-application-transport); validated DOCX upload, normalized PDF preview and explicit confirmation |
 | Image conversion | [Validated PNG/JPEG sender upload and PDF preview](docs/image-conversion.md) with StbImageSharp (MIT) and PDFsharp |
 | Deferred enhancement | Azure OpenAI suggestions, after the remaining project work is complete |
 
@@ -98,7 +98,7 @@ The initializer generates local SQL and Azurite credentials in ignored `.env` co
 | SMTP capture | `localhost:1025` | `mailpit:1025` |
 | Gotenberg | Through the app container only | `gotenberg:3000` |
 
-The app shows the verification form when database, storage, email, and background work are configured; otherwise it shows an email-unavailable notice. Verified senders can upload and review PDFs and supported images. DOCX upload also requires the configured, isolated converter; hosted DOCX conversion remains disabled.
+The app shows the verification form when database, storage, email, and background work are configured; otherwise it shows an email-unavailable notice. Verified senders can upload and review PDFs and supported images. DOCX upload also requires the configured, isolated converter; the approved bounded demo now enables DOCX through the isolated sandbox transport, with email still disabled. Real synthetic desktop/mobile upload, preview, exact-byte download and keyboard confirmation checks passed; ordinary mailbox-based entry remains gated by email readiness.
 
 Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
 
