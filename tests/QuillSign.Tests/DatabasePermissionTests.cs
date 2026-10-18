@@ -31,11 +31,15 @@ public sealed class DatabasePermissionTests(SqlDatabaseFixture fixture) : IClass
                     command.Parameters.Clear();
                     command.Parameters.AddWithValue("@object", "dbo." + table);
                     command.Parameters.AddWithValue("@permission", permission);
-                    var expected = permission == "ALTER" || (table is "AuditEvents" or "DocumentRetentionSnapshots" or "LookupContactRetentionSnapshots" or "CompletionCandidates" or "CompletionSealOutputs" or "CompletionPublicationIntents" or "CompletionPublicationResults" && permission is "UPDATE" or "DELETE") || (table is "SignaturePreviews" or "SignerReviewCandidates" or "SignerFinishAcceptances" && permission == "UPDATE") ? 0 : 1;
-                    Assert.Equal(expected, Convert.ToInt32(await command.ExecuteScalarAsync()));
+                    var expected = permission == "ALTER" || (table is "SignerContactRevisions" or "SignerContactSessions" or "AuditEvents" or "DocumentRetentionSnapshots" or "LookupContactRetentionSnapshots" or "CompletionCandidates" or "CompletionSealOutputs" or "CompletionPublicationIntents" or "CompletionPublicationResults" && permission is "UPDATE" or "DELETE") || (table is "AuthTokens" or "SignaturePreviews" or "SignerReviewCandidates" or "SignerFinishAcceptances" && permission == "UPDATE") ? 0 : 1;
+                    Assert.True(expected == Convert.ToInt32(await command.ExecuteScalarAsync()), $"Unexpected runtime {permission} permission on {table}.");
                 }
             }
             command.Parameters.Clear();
+            command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.AuthTokens', 'OBJECT', 'UPDATE', 'UsedAt', 'COLUMN')";
+            Assert.Equal(1,Convert.ToInt32(await command.ExecuteScalarAsync()));
+            command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.AuthTokens', 'OBJECT', 'UPDATE', 'SignerContactRevisionId', 'COLUMN')";
+            Assert.Equal(0,Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.SignaturePreviews', 'OBJECT', 'UPDATE', 'UsedAt', 'COLUMN')";
             Assert.Equal(1,Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT HAS_PERMS_BY_NAME('dbo.SignaturePreviews', 'OBJECT', 'UPDATE', 'SignatureSha256', 'COLUMN')";
