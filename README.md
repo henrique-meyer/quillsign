@@ -33,7 +33,7 @@ It is disabled by default and excluded from signing and document flows. See
 | Background work | SQL durable work/outbox records, Azure Storage Queues and Blob recovery hints; finite Container Apps jobs |
 | Email | Amazon SES v2 and SMTP/Mailpit; ACS remains a future optional adapter |
 | Hosting and delivery | Azure Container Apps Consumption, GitHub Actions, GHCR and Bicep; CloudFormation for AWS resources |
-| Office conversion | Gotenberg/LibreOffice sidecar for validated DOCX packages when configured; sender upload, normalized PDF preview and explicit confirmation |
+| Office conversion | Gotenberg/LibreOffice through an isolated local sidecar or the optional [Azure sandbox application transport](docs/document-conversion.md#isolated-sandbox-application-transport); validated DOCX upload, normalized PDF preview and explicit confirmation |
 | Image conversion | [Validated PNG/JPEG sender upload and PDF preview](docs/image-conversion.md) with StbImageSharp (MIT) and PDFsharp |
 | Deferred enhancement | Azure OpenAI suggestions, after the remaining project work is complete |
 
