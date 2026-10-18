@@ -177,6 +177,7 @@ public sealed class SenderSendPageTests(SqlDatabaseFixture fixture) : IClassFixt
         public async Task<HttpResponseMessage> Send(string page,Dictionary<string,string>? values=null,bool csrf=true,bool json=false) {
             Client.DefaultRequestHeaders.Accept.Clear(); if(json)Client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
             var form=new Dictionary<string,string> { ["Version"]=Value(page,"Version"),["ExclusionsAcknowledged"]="true",["SendAcknowledged"]="true",["StatementVersion"]=SenderSendStatement.Version };
+            var reminder=Value(page,"ReminderSha256");if(reminder.Length>0)form["ReminderSha256"]=reminder;
             if(values is not null)foreach(var pair in values)form[pair.Key]=pair.Value;
             if(csrf)form["__RequestVerificationToken"]=SignaturePageTests.Browser.Token(page);
             var response=await Client.PostAsync(Path+"?handler=Send",new FormUrlEncodedContent(form)); Take(response); return response;
