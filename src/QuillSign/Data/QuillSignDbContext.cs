@@ -21,6 +21,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
     public DbSet<LookupContactRetentionSnapshot> LookupContactRetentionSnapshots => Set<LookupContactRetentionSnapshot>();
+    public DbSet<SignerContactRevisionRecord> SignerContactRevisions => Set<SignerContactRevisionRecord>();
+    public DbSet<SignerContactSession> SignerContactSessions => Set<SignerContactSession>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<Suppression> Suppressions => Set<Suppression>();
 
@@ -50,6 +52,29 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         model.Entity<Signer>().HasIndex(x => new { x.EnvelopeId, x.Order }).IsUnique();
         model.Entity<Signer>().HasAlternateKey(x => new { x.EnvelopeId, x.Id });
         model.Entity<Signer>().ToTable(t => t.HasCheckConstraint("CK_Signer_Order", "[Order] > 0"));
+        model.Entity<SignerContactRevisionRecord>().ToTable("SignerContactRevisions", t =>
+        {
+            t.HasCheckConstraint("CK_ContactRevision_Number", "[Number] BETWEEN 1 AND 100 AND (([Number]=1 AND [PreviousRevisionId] IS NULL) OR ([Number]>1 AND [PreviousRevisionId] IS NOT NULL AND [PreviousRevisionId]<>[Id]))");
+            t.HasCheckConstraint("CK_ContactRevision_Time", "DATEPART(TZOFFSET,[ChangedAt])=0");
+            t.HasCheckConstraint("CK_ContactRevision_Json", "ISJSON([EvidenceJson])=1 AND DATALENGTH([EvidenceJson]) BETWEEN 2 AND 16384 AND ISJSON([RetirementJson])=1 AND DATALENGTH([RetirementJson]) BETWEEN 2 AND 4194304");
+        });
+        model.Entity<SignerContactRevisionRecord>().HasKey(x => x.Id);
+        model.Entity<SignerContactRevisionRecord>().HasAlternateKey(x => new { x.EnvelopeId, x.SignerId, x.Id });
+        model.Entity<SignerContactRevisionRecord>().HasIndex(x => new { x.EnvelopeId, x.SignerId, x.Number }).IsUnique();
+        model.Entity<SignerContactRevisionRecord>().HasOne<Signer>().WithMany().HasForeignKey(x => new { x.EnvelopeId, x.SignerId })
+            .HasPrincipalKey(x => new { x.EnvelopeId, x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<SignerContactRevisionRecord>().HasOne<SignerContactRevisionRecord>().WithMany().HasForeignKey(x => new { x.EnvelopeId, x.SignerId, x.PreviousRevisionId })
+            .HasPrincipalKey(x => new { x.EnvelopeId, x.SignerId, x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<SignerContactRevisionRecord>().Property(x => x.EvidenceJson).HasColumnType("nvarchar(max)");
+        model.Entity<SignerContactRevisionRecord>().Property(x => x.RetirementJson).HasColumnType("nvarchar(max)");
+        model.Entity<SignerContactSession>().HasKey(x => x.SessionId);
+        model.Entity<SignerContactSession>().HasOne<SignerContactRevisionRecord>().WithMany().HasForeignKey(x => new { x.EnvelopeId, x.SignerId, x.RevisionId })
+            .HasPrincipalKey(x => new { x.EnvelopeId, x.SignerId, x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<SignerContactSession>().ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_ContactSession_Identity", "[SessionId]<>'00000000-0000-0000-0000-000000000000' AND DATALENGTH([SessionSha256])=32");
+            t.HasCheckConstraint("CK_ContactSession_Time", "DATEPART(TZOFFSET,[CreatedAt])=0 AND DATEPART(TZOFFSET,[ExpiresAt])=0 AND [ExpiresAt]>[CreatedAt] AND [ExpiresAt]<=DATEADD(hour,24,[CreatedAt])");
+        });
         model.Entity<SignaturePreview>().HasOne<Signer>().WithMany()
             .HasForeignKey(x => new { x.EnvelopeId,x.SignerId }).HasPrincipalKey(x => new { x.EnvelopeId,x.Id }).OnDelete(DeleteBehavior.NoAction);
         model.Entity<SignaturePreview>().HasIndex(x => new { x.EnvelopeId,x.SignerId,x.ExpiresAt });
@@ -139,6 +164,9 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         });
         model.Entity<AuthToken>().HasIndex(x => x.TokenSha256).IsUnique();
         model.Entity<AuthToken>().HasIndex(x => x.ExpiresAt);
+        model.Entity<AuthToken>().HasOne<SignerContactRevisionRecord>().WithMany().HasForeignKey(x => new { x.EnvelopeId, x.PartyId, x.SignerContactRevisionId })
+            .HasPrincipalKey(x => new { x.EnvelopeId, x.SignerId, x.Id }).OnDelete(DeleteBehavior.NoAction);
+        model.Entity<AuthToken>().ToTable(t => t.HasCheckConstraint("CK_Token_ContactRevision", "[SignerContactRevisionId] IS NULL OR ([Purpose]='SignerAccess' AND [PartyType]='Signer' AND [EnvelopeId] IS NOT NULL AND [PartyId] IS NOT NULL)"));
         model.Entity<AuthToken>().HasOne<CompletionPublicationResult>().WithMany().HasForeignKey(x=>x.CompletionPublicationId).OnDelete(DeleteBehavior.NoAction);
         model.Entity<AuthToken>().ToTable(t => t.HasCheckConstraint("CK_Token_Scope", "[Purpose] = 'Lookup' OR [EnvelopeId] IS NOT NULL"));
         model.Entity<AuthToken>().ToTable(t=>t.HasCheckConstraint("CK_Token_DocumentBinding","([DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL) OR ([DocumentId] IS NOT NULL AND [DocumentSha256] IS NOT NULL AND [DisclosureSha256] IS NOT NULL)"));
@@ -202,6 +230,11 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     private void GuardAuditMutations()
     {
         ChangeTracker.DetectChanges();
+        if(ChangeTracker.Entries<AuthToken>().Any(x => x.State == EntityState.Modified && x.Property(t => t.SignerContactRevisionId).IsModified))
+            throw new InvalidOperationException("Issued signer token contact epochs are immutable.");
+        if(ChangeTracker.Entries<SignerContactRevisionRecord>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<SignerContactSession>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Signer contact revisions and session bindings are immutable. Purge requires its privileged path.");
         if(ChangeTracker.Entries<LookupContactRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Lookup contact retention snapshots are immutable. Cleanup requires its privileged path.");
         if(ChangeTracker.Entries<DocumentRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
