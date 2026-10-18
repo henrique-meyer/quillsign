@@ -14,6 +14,9 @@ param hintContainerName string
 param image string
 param databaseConnectionSecretUri string = ''
 param deployJobs bool = false
+param applicationEnvironment array = []
+@secure()
+param tsaRootPem string = ''
 
 var tags = { project: 'quillsign' }
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = { name: environmentName }
@@ -99,50 +102,22 @@ var signalEnvironment = [
   { name: 'Storage__Provider', value: 'Azure' }
   { name: 'Storage__BlobServiceUri', value: storage.properties.primaryEndpoints.blob }
 ]
-resource dispatch 'Microsoft.App/jobs@2025-07-01' = if (deployJobs) {
-  name: dispatchJobName
-  location: location
-  tags: union(tags, { component: 'dispatch' })
-  identity: { type: 'UserAssigned', userAssignedIdentities: { '${worker.id}': {} } }
-  properties: {
-    environmentId: environment.id
-    workloadProfileName: 'Consumption'
-    configuration: {
-      triggerType: 'Event'
-      replicaTimeout: 300
-      replicaRetryLimit: 0
-      secrets: [{ name: 'database-connection', keyVaultUrl: databaseConnectionSecretUri, identity: worker.id }]
-      eventTriggerConfig: {
-        parallelism: 1
-        replicaCompletionCount: 1
-        scale: {
-          minExecutions: 0
-          maxExecutions: 1
-          pollingInterval: 60
-          rules: [{
-            name: 'work-queue'
-            type: 'azure-queue'
-            identity: worker.id
-            metadata: { accountName: storageAccountName, queueName: queueName, queueLength: '1', queueLengthStrategy: 'visibleonly' }
-          }]
-        }
-      }
-    }
-    template: {
-      containers: [{
-        name: 'dispatch'
-        image: image
-        command: ['dotnet', 'QuillSign.dll', 'work', 'once']
-        resources: { cpu: json('0.25'), memory: '0.5Gi' }
-        env: concat(signalEnvironment, [
-          { name: 'Storage__ManagedIdentityClientId', value: worker.properties.clientId }
-          { name: 'ConnectionStrings__Database', secretRef: 'database-connection' }
-          { name: 'DataProtection__ApplicationName', value: 'QuillSign:Production' }
-          { name: 'DataProtection__KeyVaultKeyIdentifier', value: '${vault.properties.vaultUri}keys/${dataProtectionKeyName}' }
-          { name: 'Email__Enabled', value: 'false' }
-        ])
-      }]
-    }
+module dispatch './modules/dispatch.bicep' = if (deployJobs) {
+  name: 'dispatch-application'
+  params: {
+    location: location
+    environmentName: environmentName
+    storageAccountName: storageAccountName
+    workerIdentityName: workerIdentityName
+    dispatchJobName: dispatchJobName
+    queueName: queueName
+    databaseConnectionSecretUri: databaseConnectionSecretUri
+    image: image
+    signalEnvironment: signalEnvironment
+    applicationEnvironment: applicationEnvironment
+    dataProtectionKeyName: dataProtectionKeyName
+    vaultName: vaultName
+    tsaRootPem: tsaRootPem
   }
   dependsOn: [workerQueue, workerHints, workerKeys, workerCrypto, workerSecrets]
 }

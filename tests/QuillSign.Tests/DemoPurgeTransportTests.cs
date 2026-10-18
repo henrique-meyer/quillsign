@@ -64,6 +64,43 @@ public sealed class DemoPurgeTransportTests(SqlDatabaseFixture fixture):IClassFi
         else await Assert.ThrowsAsync<RequestFailedException>(()=>store.SweepAsync(cap,3));
         Assert.Equal(0,handler.Deletes);
     }
+    [Theory]
+    [InlineData("current",2)][InlineData("current-new",1)][InlineData("current-absent",1)]
+    public async Task Current_version_is_detached_conditionally_before_version_delete_but_newer_root_survives(string mode,int deletes)
+    {
+        await using var r=await Run.Create(fixture);using var handler=new Handler(r,mode);
+        var result=await Store(handler).SweepAsync(await r.Authorize(),3);
+        Assert.Equal(1,result.Deleted);Assert.Equal(deletes,handler.Deletes);
+        var requests=handler.Requests.Where(x=>x.Method==HttpMethod.Delete).ToArray();
+        Assert.Equal(Handler.Version,requests[^1].Version);
+        if(mode=="current")Assert.Empty(requests[0].Version);
+        Assert.All(requests,x=>Assert.Equal(Handler.Tag,x.Match));
+        Assert.DoesNotContain(handler.Requests,x=>x.Method==HttpMethod.Put || x.Comp=="immutabilitypolicy" || x.Permanent);
+    }
+    [Theory]
+    [InlineData("current-race",false,1)][InlineData("current-etag",false,0)]
+    [InlineData("current-held-root",true,0)][InlineData("current-future-root",true,0)]
+    public async Task Fresh_current_protection_or_concurrent_replacement_cannot_be_deleted(string mode,bool held,int deletes)
+    {
+        await using var r=await Run.Create(fixture);using var handler=new Handler(r,mode);
+        var result=await Store(handler).SweepAsync(await r.Authorize(),3);
+        Assert.Equal(0,result.Deleted);Assert.Equal(held ? 1 : 0,result.Protected);Assert.Equal(held ? 0 : 1,result.Changed);
+        Assert.Equal(deletes,handler.Deletes);Assert.DoesNotContain(handler.Requests,x=>x.Method==HttpMethod.Delete && x.Version.Length>0);
+    }
+    [Fact]
+    public async Task Lost_root_delete_ack_recovers_without_deleting_any_changed_root_or_reporting_false_success()
+    {
+        await using var r=await Run.Create(fixture);using var handler=new Handler(r,"current-lost-root");var store=Store(handler);var cap=await r.Authorize();
+        await Assert.ThrowsAsync<RequestFailedException>(()=>store.SweepAsync(cap,3));Assert.Equal(1,handler.Deletes);
+        Assert.Equal(1,(await store.SweepAsync(cap,3)).Deleted);Assert.Equal(2,handler.Deletes);
+    }
+    [Fact]
+    public async Task Expired_authority_after_root_delete_cannot_continue_to_the_retained_version()
+    {
+        await using var r=await Run.Create(fixture);using var handler=new Handler(r,"current-expire-root");var store=Store(handler);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(async()=>await store.SweepAsync(await r.Authorize(),3));Assert.Equal(1,handler.Deletes);
+        Assert.Equal(1,(await store.SweepAsync(await r.Authorize(),3)).Deleted);
+    }
     private static AzureEnvelopePurgeStore Store(Handler handler) {
         var options=new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03) {Transport=new HttpClientTransport(new HttpClient(handler))};
         options.Retry.MaxRetries=0;options.Diagnostics.IsLoggingEnabled=false;options.Diagnostics.IsLoggingContentEnabled=false;options.Diagnostics.IsDistributedTracingEnabled=false;
@@ -75,7 +112,7 @@ public sealed class DemoPurgeTransportTests(SqlDatabaseFixture fixture):IClassFi
     private sealed class Handler(Run run,string mode,CancellationTokenSource? cancel=null):HttpMessageHandler
     {
         internal const string Tag="\"synthetic-etag\"",Version="2028-03-01T00:00:00.0000000Z";
-        internal List<Request> Requests=[];internal int Deletes;private bool present=true;
+        internal List<Request> Requests=[];internal int Deletes;private bool present=true;private bool rootPresent=mode!="current-absent";
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             var q=QueryHelpers.ParseQuery(request.RequestUri!.Query);string Q(string name)=>q.TryGetValue(name,out var value) ? value.ToString() : "";
@@ -88,24 +125,39 @@ public sealed class DemoPurgeTransportTests(SqlDatabaseFixture fixture):IClassFi
                 if(mode=="traversal")name=$"{run.H.Id:N}/../outside";
                 var properties=new XElement("Properties",new XElement("Last-Modified",run.Time.Now.UtcDateTime.ToString("R")),new XElement("Etag",Tag),new XElement("Content-Length",32),new XElement("BlobType","BlockBlob"));
                 var blob=new XElement("Blob",new XElement("Name",name),properties);
-                if(mode=="version")blob.Add(new XElement("VersionId",Version));if(mode=="snapshot")blob.Add(new XElement("Snapshot",Version));
+                if(mode=="version" || mode.StartsWith("current"))blob.Add(new XElement("VersionId",Version));if(mode=="snapshot")blob.Add(new XElement("Snapshot",Version));
                 var body=new XElement("EnumerationResults",new XAttribute("ServiceEndpoint","https://storage.example.invalid/"),new XAttribute("ContainerName",request.RequestUri.AbsolutePath.Trim('/')),
                     new XElement("Prefix",Q("prefix")),new XElement("MaxResults",Q("maxresults")),new XElement("Blobs",present && request.RequestUri.AbsolutePath=="/originals" ? blob : null),new XElement("NextMarker",""));
                 if(mode=="expire-list")run.Time.Now=run.Time.Now.AddMinutes(3);
                 return Task.FromResult(Reply(HttpStatusCode.OK,body.ToString()));
             }
-            Assert.Equal(Tag,match);
+            var versioned=mode=="version" || mode.StartsWith("current");
+            var root=versioned && Q("versionid")=="";
+            if(request.Method==HttpMethod.Head && root)Assert.Empty(match);else Assert.Equal(Tag,match);
             if(request.Method==HttpMethod.Head) {
+                if(root && !rootPresent)return Task.FromResult(Error(HttpStatusCode.NotFound,"BlobNotFound"));
                 if(mode=="missing")return Task.FromResult(Error(HttpStatusCode.NotFound,"BlobNotFound"));
                 if(mode=="permission")return Task.FromResult(Error(HttpStatusCode.Forbidden,"AuthorizationPermissionMismatch"));
                 var result=Reply(HttpStatusCode.OK,"");result.Content.Headers.ContentLength=32;result.Headers.TryAddWithoutValidation("ETag",Tag);
                 result.Headers.TryAddWithoutValidation("Last-Modified",run.Time.Now.UtcDateTime.ToString("R"));result.Headers.TryAddWithoutValidation("x-ms-blob-type","BlockBlob");
                 result.Headers.TryAddWithoutValidation("x-ms-legal-hold",mode=="hold" ? "true" : "false");
+                if(versioned)result.Headers.TryAddWithoutValidation("x-ms-version-id",root && (mode=="version" || mode=="current-new") ? Version+"new" : Version);
+                if(root && mode=="current-etag") {result.Headers.Remove("ETag");result.Headers.TryAddWithoutValidation("ETag","\"new-etag\"");}
+                if(root && mode=="current-held-root") {result.Headers.Remove("x-ms-legal-hold");result.Headers.TryAddWithoutValidation("x-ms-legal-hold","true");}
+                if(root && mode=="current-future-root") {result.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date",run.Time.Now.AddDays(1).UtcDateTime.ToString("R"));result.Headers.TryAddWithoutValidation("x-ms-immutability-policy-mode","locked");}
                 if(mode=="future") {result.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date",run.Time.Now.AddDays(1).UtcDateTime.ToString("R"));result.Headers.TryAddWithoutValidation("x-ms-immutability-policy-mode","locked");}
                 if(mode=="expire-head")run.Time.Now=run.Time.Now.AddMinutes(3);if(mode=="cancel-head")cancel!.Cancel();
                 return Task.FromResult(result);
             }
             Assert.Equal(HttpMethod.Delete,request.Method);Deletes++;
+            if(root) {
+                if(mode=="current-race")return Task.FromResult(Error(HttpStatusCode.PreconditionFailed,"ConditionNotMet"));
+                rootPresent=false;
+                if(mode=="current-expire-root")run.Time.Now=run.Time.Now.AddMinutes(3);
+                if(mode=="current-lost-root")return Task.FromResult(Error(HttpStatusCode.InternalServerError,"SyntheticLostDeleteAcknowledgement"));
+                return Task.FromResult(Reply(HttpStatusCode.Accepted,""));
+            }
+            if(versioned && rootPresent && mode!="version" && mode!="current-new")return Task.FromResult(Error(HttpStatusCode.Forbidden,"OperationNotAllowedOnRootBlob"));
             if(mode=="changed")return Task.FromResult(Error(HttpStatusCode.PreconditionFailed,"ConditionNotMet"));
             if(mode=="server-hold")return Task.FromResult(Error(HttpStatusCode.Conflict,"BlobImmutableDueToLegalHold"));
             present=false;if(mode=="expire-delete")run.Time.Now=run.Time.Now.AddMinutes(3);

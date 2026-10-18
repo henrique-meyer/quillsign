@@ -10,3 +10,4 @@ param enableManagedCertificate = false
 param provisionManagedCertificate = true
 param databaseConnectionSecretUri = ''
 param applicationEnvironment = []
+param tsaRootPem = ''

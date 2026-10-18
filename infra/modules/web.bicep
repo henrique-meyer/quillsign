@@ -10,6 +10,9 @@ param enableManagedCertificate bool = false
 param provisionManagedCertificate bool = true
 param databaseConnectionSecretUri string = ''
 param applicationEnvironment array = []
+@secure()
+@description('Approved public TSA root, supplied privately. Mount is read-only and optional.')
+param tsaRootPem string = ''
 var tags = { project: 'quillsign' }
 // ARM still validates conditional resource IDs when certificate creation is disabled.
 var certificateResourceName = empty(managedCertificateName) ? '${webAppName}-tls' : managedCertificateName
@@ -25,11 +28,11 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: environment.id
     configuration: {
       activeRevisionsMode: 'Single'
-      secrets: empty(databaseConnectionSecretUri) ? [] : [{
+      secrets: concat(empty(databaseConnectionSecretUri) ? [] : [{
         name: 'database-connection'
         keyVaultUrl: databaseConnectionSecretUri
         identity: runtime.id
-      }]
+      }], empty(tsaRootPem) ? [] : [{ name: 'tsa-root', value: tsaRootPem }])
       ingress: {
         external: true
         targetPort: 8080
@@ -47,6 +50,7 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
         name: 'web'
         image: image
         resources: { cpu: json('0.5'), memory: '1Gi' }
+        volumeMounts: empty(tsaRootPem) ? [] : [{ volumeName: 'tsa-trust', mountPath: '/app/trust' }]
         env: concat([{ name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }], empty(databaseConnectionSecretUri) ? [] : [{
           name: 'ConnectionStrings__Database'
           secretRef: 'database-connection'
@@ -60,6 +64,7 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
           failureThreshold: probe == 'Startup' ? 30 : 3
         }]
       }]
+      volumes: empty(tsaRootPem) ? [] : [{ name: 'tsa-trust', storageType: 'Secret', secrets: [{ secretRef: 'tsa-root', path: 'tsa-root.pem' }] }]
       scale: { minReplicas: 0, maxReplicas: 2, rules: [{ name: 'http', http: { metadata: { concurrentRequests: '20' } } }] }
     }
   }

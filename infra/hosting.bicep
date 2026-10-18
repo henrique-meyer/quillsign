@@ -24,6 +24,10 @@ param enableManagedCertificate bool = false
 param databaseConnectionSecretUri string = ''
 param applicationEnvironment array = []
 param provisionManagedCertificate bool = true
+@description('Set true only after the approved, verified final-container migration.')
+param finalVersionSupportEnabled bool = false
+@secure()
+param tsaRootPem string = ''
 
 var tags = { project: 'quillsign' }
 
@@ -91,7 +95,7 @@ var documentContainers = [ 'originals', 'normalized', 'previews', 'checkpoints',
 resource containers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for container in concat(documentContainers, ['keys']): {
   parent: blobs
   name: container
-  properties: { publicAccess: 'None' }
+  properties: union({ publicAccess: 'None' }, container == 'final' && finalVersionSupportEnabled ? { immutableStorageWithVersioning: { enabled: true } } : {})
 }]
 
 resource lifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = {
@@ -101,7 +105,7 @@ resource lifecycle 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05
     policy: {
       rules: [{
         name: 'demo-document-purge'
-        enabled: true
+        enabled: false
         type: 'Lifecycle'
         definition: {
           filters: { blobTypes: ['blockBlob'], prefixMatch: [for container in documentContainers: '${container}/'] }
@@ -238,6 +242,7 @@ module web './modules/web.bicep' = if (deployWeb) {
     databaseConnectionSecretUri: databaseConnectionSecretUri
     applicationEnvironment: applicationEnvironment
     provisionManagedCertificate: provisionManagedCertificate
+    tsaRootPem: tsaRootPem
   }
 }
 

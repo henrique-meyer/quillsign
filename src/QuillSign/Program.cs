@@ -9,6 +9,12 @@ using QuillSign.Sealing;
 using QuillSign.Completion;
 using QuillSign.Verification;
 
+if (args.Length > 0 && args[0] == "staging")
+{
+    Environment.ExitCode = await QuillSign.Operations.StagingCommands.RunAsync(args[1..]);
+    return;
+}
+
 if (args.Length > 0 && args[0] == "database")
 {
     Environment.ExitCode = await DatabaseCommands.RunAsync(args[1..]);
