@@ -34,6 +34,7 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
         if(envelope is null || envelope.PublicId!=publicId || envelope.SenderEmail!=identity.Value.Email || envelope.SenderVerifiedAt is null || envelope.Status==EnvelopeStatus.Draft)return null;
         var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct);
         var sent=await ReadSentAsync(db,envelope,reviewedVersion,ct);
+        await InvitationResendRules.VerifyIndexAsync(db,envelope.Id,ct);
         if(await checkpoints.CurrentAsync(envelope,ct) is null)throw new InvalidDataException("The saved signing state could not be verified.");
         var signers=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id).OrderBy(x=>x.Order).Take(101).ToArrayAsync(ct);
         if(signers.Length is <1 or >100 || signers.Where((s,i)=>s.Order!=i+1 || !Enum.IsDefined(s.Status)).Any())throw new InvalidDataException("Invalid saved signing order.");

@@ -43,6 +43,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         var scope = await ScopeAsync(identity.Value.Id, identity.Value.Email, publicId, ct); if (scope is null) return null;
         InvitationResendOutcome? blocked = null;
         if (availability) {
+            await InvitationResendRules.VerifyIndexAsync(db, scope.Value.Envelope.Id, ct);
             if (scope.Value.Deadline < InvitationResendProtection.DayEnd(time.GetUtcNow())) blocked = InvitationResendOutcome.Unavailable;
             else if (await db.Suppressions.AnyAsync(x => x.Email == scope.Value.Context.Identity.Email, ct)) blocked = InvitationResendOutcome.Suppressed;
             else if (await PreviousAsync(scope.Value.Context, ct) is null) blocked = InvitationResendOutcome.Busy;
@@ -73,6 +74,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         InvitationResendOutcome outcome;
         await using (var tx = await db.Database.BeginTransactionAsync(ct)) {
             var scope = await ScopeAsync(envelopeId, senderEmail, publicId, ct); if (scope is null) return InvitationResendOutcome.Closed;
+            await InvitationResendRules.VerifyIndexAsync(db, envelopeId, ct);
             if (Review(scope.Value) != reviewed) return InvitationResendOutcome.Conflict;
             await InvitationResendRules.LockAsync(db, ct);
             var existing = await rules.FindAsync(id, envelopeId, ct);

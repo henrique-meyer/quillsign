@@ -223,6 +223,7 @@ public sealed class SenderResendPageTests(SqlDatabaseFixture fixture) : IClassFi
     }
 
     [Theory][InlineData("audit")][InlineData("payload")][InlineData("work")]
+    [InlineData("audit-json")][InlineData("audit-signer")][InlineData("missing-audit")][InlineData("missing-work")]
     public async Task Corrupt_latest_replacement_fails_closed_in_status_and_JSON_never_exposes_private_evidence(string kind)
     {
         await using var r = await Run.Create(fixture); var page = await r.Page(r.Path); using (var posted = await r.Post(page)) Assert.Equal(HttpStatusCode.Redirect, posted.StatusCode); var id = await r.LatestId();
@@ -230,9 +231,14 @@ public sealed class SenderResendPageTests(SqlDatabaseFixture fixture) : IClassFi
             if (kind == "audit") await db.AuditEvents.Where(x => x.EnvelopeId == r.H.Envelope.Id && x.Event == "invitation_resend_requested").ExecuteUpdateAsync(s => s.SetProperty(x => x.Hash, new byte[32]));
             if (kind == "payload") await db.EmailOutbox.Where(x => x.Id == id).ExecuteUpdateAsync(s => s.SetProperty(x => x.PayloadJson, "{}"));
             if (kind == "work") await db.WorkItems.Where(x => x.Id == id).ExecuteUpdateAsync(s => s.SetProperty(x => x.PayloadJson, "{}"));
+            if (kind == "audit-json") await db.AuditEvents.Where(x => x.EnvelopeId == r.H.Envelope.Id && x.Event == "invitation_resend_requested").ExecuteUpdateAsync(s => s.SetProperty(x => x.DataJson, "{}"));
+            if (kind == "audit-signer") { var row = await db.AuditEvents.AsNoTracking().SingleAsync(x => x.EnvelopeId == r.H.Envelope.Id && x.Event == "invitation_resend_requested"); var json = System.Text.Json.Nodes.JsonNode.Parse(row.DataJson)!; json["signerId"] = r.H.Second.Id; var value = json.ToJsonString(); await db.AuditEvents.Where(x => x.Id == row.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.DataJson, value)); }
+            if (kind == "missing-audit") await db.AuditEvents.Where(x => x.EnvelopeId == r.H.Envelope.Id && x.Event == "invitation_resend_requested").ExecuteDeleteAsync();
+            if (kind == "missing-work") await db.WorkItems.Where(x => x.Id == id).ExecuteDeleteAsync();
         }
         r.Client.DefaultRequestHeaders.Accept.ParseAdd("application/json"); using var response = await r.Client.GetAsync(r.Status); Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode); Private(response);
         var body = await response.Content.ReadAsStringAsync(); Assert.Contains("could not be verified", body); Assert.DoesNotContain(r.H.First.Email, body); Assert.DoesNotContain("Synthetic NO AGREEMENT", body);
+        var before = await Counts(r); using var preview = await r.Client.GetAsync(r.Path); Assert.Equal(HttpStatusCode.ServiceUnavailable, preview.StatusCode); Assert.Equal(before, await Counts(r));
     }
 
     [Theory][InlineData(false)][InlineData(true)]
