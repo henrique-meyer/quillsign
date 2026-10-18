@@ -75,3 +75,25 @@ retain evidence and cannot blindly resend. Provider receipts do not claim inbox
 delivery, and already received bounce/complaint state is preserved. Mail copy
 distinguishes reminders, replacement links and corrected contacts; opening any
 of these remains separate from consent or signing.
+
+QUILS-122 extends deliberate manual resend to the verified current contact
+epoch. Untouched legacy reviews and v1 admission/payload bytes keep their
+existing bridge. A canonical review uses a separate protected browser purpose
+and binds the current immutable epoch and predecessor, including when an email
+address returns to an earlier value. Its canonical manual admission records the
+original sender-ticket lifetime, exact review/source/recipient, IP reservation
+and fixed statement. The generic successor binds that admission's exact digest.
+Missing or mismatched admission cannot fall back to the original invitation.
+
+Both legacy and canonical manual requests use the same bounded UTC-day cap
+reader and transaction application lock. New templates or epochs do not create
+another allowance. The lock is taken before audit writes; correction admission
+shares that serialization order while retaining its separate feature limits.
+Queued, failed and uncertain reservations still count. A retry reuses the saved
+command and durable hint without another reservation. The established resend
+review promise is preserved: unused old links expire at admission even if a
+later delivery fails, while redeemed same-contact sessions retain their original
+expiry. Later contact correction retires that epoch's authority. The supported
+successor worker retains its exact current-source and no-blind-retry checks.
+Existing resend settings remain disabled by default; this source change enables
+no hosted or demo feature.
