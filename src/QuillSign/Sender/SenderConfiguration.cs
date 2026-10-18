@@ -37,6 +37,8 @@ public static class SenderConfiguration
         services.AddScoped<Func<SenderWorkflow>>(sp => () => sp.GetRequiredService<SenderWorkflow>());
         services.AddScoped<AuditWriter>();
         services.AddScoped<BrowserNotices>();
+        services.AddScoped<InvitationResendReviewProtection>();
+        services.AddScoped<Func<InvitationResends>>(sp=>()=>sp.GetRequiredService<InvitationResends>());
         services.AddAuthentication(EnvelopeStorageAuthorization.SenderScheme).AddCookie(EnvelopeStorageAuthorization.SenderScheme, cookie =>
         {
             cookie.Cookie.Name = environment.IsDevelopment() ? "QuillSign.Sender" : "__Host-QuillSign.Sender";
@@ -67,6 +69,12 @@ public static class SenderConfiguration
             limiter.OnRejected = async (rejected,ct) =>
             {
                 var context=rejected.HttpContext;
+                if(IsResend(context.Request.Path)) {
+                    PrivateStatusHeaders(context);
+                    const string message="Too many resend actions. Wait before retrying and check saved request status first; no new replacement is confirmed by this response.";
+                    if(WantsJson(context))await context.Response.WriteAsJsonAsync(new {message},ct);
+                    else {context.Response.ContentType="text/html; charset=utf-8";await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\""+System.Net.WebUtility.HtmlEncode(context.Request.Path.Value![..^6]+"sent")+"\">Check saved request status</a></p></main></body></html>",ct);}return;
+                }
                 if(QuillSign.Verification.VerificationBrowser.IsPath(context)) {
                     await QuillSign.Verification.VerificationBrowser.Error(context,429,"Verification is busy or its request limit was reached. Wait before selecting and submitting your PDF again; no integrity result is confirmed.",ct);return;
                 }
@@ -123,6 +131,9 @@ public static class SenderConfiguration
                     (context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/review",StringComparison.Ordinal)==true && HttpMethods.IsPost(context.Request.Method)) ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(IsResend(context.Request.Path))
+                    return RateLimitPartition.GetFixedWindowLimiter((HttpMethods.IsPost(context.Request.Method) ? "sender-resend-action:" : "sender-resend-read:")+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=options.RequestsPerWindow,Window=TimeSpan.FromMinutes(options.WindowMinutes),QueueLimit=0,AutoReplenishment=true });
                 if(context.Request.Path.StartsWithSegments("/find/request") && HttpMethods.IsPost(context.Request.Method))
                     return RateLimitPartition.GetFixedWindowLimiter("lookup-request:"+address,_=>new FixedWindowRateLimiterOptions {
                         PermitLimit=options.RequestsPerWindow,Window=TimeSpan.FromMinutes(options.WindowMinutes),QueueLimit=0,AutoReplenishment=true });
@@ -175,6 +186,14 @@ public static class SenderConfiguration
     }
 
     public static bool WantsJson(HttpContext context) => context.Request.Headers.Accept.ToString().Contains("application/json", StringComparison.OrdinalIgnoreCase);
+    private static bool IsResend(PathString path) => path.StartsWithSegments("/draft") && path.Value?.EndsWith("/resend",StringComparison.Ordinal)==true;
+    // Called before authorization/CSRF/rate rejection as well as page handlers.
+    public static void PrivateStatusHeaders(HttpContext context)
+    {
+        if(!IsResend(context.Request.Path) && !(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/sent",StringComparison.Ordinal)==true))return;
+        context.Response.Headers.CacheControl="no-store";context.Response.Headers["Referrer-Policy"]="no-referrer";
+        context.Response.Headers["X-Robots-Tag"]="noindex, nofollow, noarchive";
+    }
     private static bool IsFinalFile(PathString path) {
         var parts=path.Value?.Split('/'); return parts is {Length:5} && parts[1] is "draft" or "sign" && parts[3]=="final";
     }

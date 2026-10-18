@@ -21,7 +21,7 @@ public sealed class PublicAnalyticsTests
     private const string SyntheticId = "G-TEST123456";
 
     [Theory]
-    [InlineData("/draft/opaque")][InlineData("/sign/access")][InlineData("/find")]
+    [InlineData("/draft/opaque")][InlineData("/draft/opaque/resend")][InlineData("/draft/opaque/sent")][InlineData("/sign/access")][InlineData("/find")]
     [InlineData("/find/request")][InlineData("/find/access")][InlineData("/find/documents")]
     [InlineData("/verify")][InlineData("/completed/access")][InlineData("/health")]
     [InlineData("/document.pdf")][InlineData("/error")][InlineData("/Index")][InlineData("//")]

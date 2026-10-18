@@ -69,6 +69,7 @@ app.UseForwardedHeaders();
 
 app.Use(async (context, next) =>
 {
+    SenderConfiguration.PrivateStatusHeaders(context);
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
     context.Response.OnStarting(() =>

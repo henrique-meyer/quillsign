@@ -14,6 +14,8 @@
 <p>Email delivery is not confirmed by this record.</p></section>
 }
 @if(Model.Void?.CanVoid==true) {<p><a asp-page="/Draft/Void" asp-route-publicId="@data.PublicId">Review void action</a></p>}
+@if(Model.Resend is {Blocked:null}) {<p><a asp-page="/Draft/Resend" asp-route-publicId="@data.PublicId">Review replacement invitation</a></p>}
+else if(Model.Resend?.Blocked is { } blocked) {<p>@QuillSign.Pages.Draft.ResendModel.Message(blocked)</p>}
 @if(Model.Final is { } final) {
 <section aria-labelledby="final-heading"><h2 id="final-heading">Final packet</h2>
 <p>Completed at @final.CompletedAt.ToString("u"). Save both files for your records. These downloads verify the saved packet before serving it.</p>
@@ -23,13 +25,17 @@
 <p>Downloads use your current verified session. Preparing a download does not confirm receipt or saving. Completion email delivery is not confirmed by this page.</p></section>
 }
 else if(data.Status==QuillSign.Data.EnvelopeStatus.Completed) { <p class="notice" role="status">Final downloads are unavailable in this session. Refresh manually to retry.</p> }
-<p>The first signing invitation was queued. Submission to an email provider does not confirm inbox delivery.</p>
+<p>Submission to an email provider does not confirm inbox delivery. Check each signer's latest invitation status below.</p>
 @if(data.ExpiresAt is { } expires) { <p>Request expiry: @expires.ToString("u").</p> }
 @if(!string.IsNullOrEmpty(data.Message)) { <p class="document-message">@data.Message</p> }
 <h2>Sequential signing progress</h2>
 <ol class="signer-cards">@foreach(var signer in data.Signers) {
 <li class="signer-card" value="@signer.Order"><strong>@signer.Name</strong><span class="signer-email">@signer.Email</span>
 @if(!string.IsNullOrEmpty(signer.Role)) { <p>@signer.Role</p> }<p>@signer.State</p>
+@if(signer.Invitation is {Kind:"Replacement"} invitation) {
+@if(invitation.State!=signer.State) {<p>Latest invitation: @invitation.State</p>}
+<p>Replacement requested at @invitation.RequestedAt?.ToString("u") (UTC). Older unused links were invalidated; already-opened sessions keep their original expiry.</p>
+}
 @if(signer.SignedAt is { } signed) { <p>Signed at @signed.ToString("u").</p> }
 </li> }</ol>
 <h2>Completion recipients</h2><p>The sender and signers are included in the completed packet distribution.</p>

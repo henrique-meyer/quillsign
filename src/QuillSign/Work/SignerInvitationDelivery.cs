@@ -56,6 +56,7 @@ public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess 
             // All sender/signer mutations use envelope first. Never lock work before this scope.
             var eligible = await access.GetEligibleLockedAsync(envelopeId,payload.SignerId,ct);
             if (eligible is null || eligible.Identity.Email != email.To) return new(WorkOutcome.Failed,"invitation-unavailable"); context = eligible;
+            await InvitationResendRules.VerifyIndexAsync(db,envelopeId,ct);
             if(await InvitationResendRules.LatestAuditAsync(db,envelopeId,payload.SignerId,ct) is not null)return new(WorkOutcome.Failed,"invitation-replaced");
             if(payload.DocumentId!=context.Identity.DocumentId || payload.DocumentSha256!=context.Identity.DocumentHash || payload.DisclosureSha256!=context.Identity.DisclosureHash)
                 return new(WorkOutcome.Failed,"invitation-source-changed");
