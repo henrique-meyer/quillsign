@@ -15,6 +15,11 @@ public static class DocumentConfiguration
         services.AddSingleton(options); services.AddScoped<PdfValidation>(); services.AddScoped<DocumentWorkflow>();
         services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(mvc=>mvc.Filters.Add<PreparationRetentionExceptionFilter>());
         services.AddSingleton<DocxPackageValidation>();
+        services.AddSingleton<PptxPackageValidation>();
+        services.AddSingleton<XlsxPackageValidation>();
+        services.AddSingleton<OdtPackageValidation>();
+        services.AddSingleton(config.GetSection("OfficeConversion").Get<OfficeConversionOptions>()??new());
+        services.AddScoped<StaticOfficeConverter>();
         services.AddScoped<DocxDocumentWorkflow>();
         services.AddScoped<TextPdfConverter>();
         services.AddScoped<TextDocumentWorkflow>();
