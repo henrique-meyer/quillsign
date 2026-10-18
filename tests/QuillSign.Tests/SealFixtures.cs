@@ -33,7 +33,10 @@ internal sealed class SealFixtures : IAsyncDisposable
         if(initialTime is { } start)f.Time.Advance(start-f.Time.GetUtcNow());
         f.RootKey=RSA.Create(2048); f.TsaKey=RSA.Create(tsaKind=="weak" ? 1024 : 2048); using var sealKey=RSA.Create(certificateKind=="weak" ? 1024 : 2048);
         using var ecKey=certificateKind=="ec" ? ECDsa.Create(ECCurve.NamedCurves.nistP256) : null;
-        var now=f.Time.GetUtcNow(); var rootRequest=new CertificateRequest("CN=QuillSign synthetic TSA root",f.RootKey,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
+        // Independent authorities need distinct issuer names when a reader trusts
+        // several fixtures. OpenSSL may select the wrong same-name root otherwise.
+        // https://github.com/dotnet/runtime/issues/85830
+        var now=f.Time.GetUtcNow(); var rootRequest=new CertificateRequest("CN=QuillSign synthetic TSA root "+Guid.NewGuid().ToString("N"),f.RootKey,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
         rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true,false,0,true));
         rootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign|X509KeyUsageFlags.CrlSign,true));
         f.Root=rootRequest.CreateSelfSigned(now.AddDays(-2),now.AddDays(10));

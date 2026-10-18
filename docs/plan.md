@@ -2,6 +2,24 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-84: Add verified-mailbox completed-document lookup foundation
+
+Status: Done on merge. Internal source foundation; public lookup remains a later slice. Depends on merged completion access, publication and retention work. Owned by this chat.
+
+Add the source-only internal foundation for accountless completed-document lookup while records remain retained. Verify mailbox ownership through a dedicated, purpose-bound single-use lookup token and short-lived read-only identity; persist only token hashes and keep capabilities private. Return a bounded list of currently published completed envelopes only for the verified mailbox's actual frozen sender/signer/recipient membership, with minimal own-document metadata and current retention/purge/integrity checks. Do not accept a bare caller email as authorization or restore sender/signing authority.
+
+Inspect existing token/completion access and purge boundaries after matching plan creation and refine this story/plan before implementation as needed. Test true published records, every party role, wrong mailbox/purpose, replay/concurrency/expiry, malformed proofs, retention/purge, changed membership/publication and failure recovery. Reuse permissive dependencies and preserve PDFsharp/MigraDoc 6.2.4.
+
+This slice adds no public page, mail producer, reminder, cloud change, live TSA call or actual email sending. Lookup redemption UI and delivery follow in separately planned slices. Keep hosted email disabled. Validate meaningful local behavior, secrets and CI, commit/push/open/attach/merge a small PR and move native Jira Done.
+
+Lookup design refinement (QUILS-84): Concrete design: reuse the existing Lookup purpose with envelope/party/document/publication fields absent. Store only the random 256-bit token hash and technical lifecycle fields; keep the mailbox solely inside protected link/session payloads, so lookup adds no orphaned mailbox data beyond envelope purge. The protected issuance transport binds normalized mailbox, token/hash, issuance time, original expiry and issuance row revision. Any write to the token invalidates the original link, including a reset of UsedAt after consumption. Redeem once under the token lock and return a separate nonce/revision-bound read-only receipt after confirmed commit. Reject legacy bare hashes and cross-purpose/mixed principals. Unknown commit returns no transport/session; an explicitly issued fresh link is the recovery path.
+
+Use bounded 15-minute link and 30-minute session defaults (maximum 60 minutes each), an independent original session expiry, and protected session-bound keyset cursors. Each finite page considers at most five candidates by default (maximum ten), with a completion-time snapshot ceiling. Verify each current publication/frozen party and actual final pair using existing completion verification, recheck saved first-upload retention and current source after I/O, and authenticate again before returning minimal title/public ID/completion/retention metadata. Deduplicate envelopes with overlapping party roles. Listing does not issue final-access links or create download/edit authority. No schema change is needed; extend the existing token EF mutation guard to Lookup. Validate SQL translation, pagination and genuine published evidence locally. Public delivery/rate limiting and UI remain dependent work.
+
+Validation: the initial 29 SQL/Azurite cases passed, including genuine multi-publication pagination, every frozen party role, corrupted/missing storage, expiry, concurrent redemption and failed commits. Three final-revision regressions passed after issuance-revision binding and fixture consolidation, covering reset/rewrite rejection, unpublished/later-completed snapshots and rollback/unknown-commit recovery. Release builds, 11 Node cases, pinned PDF.js/interact.js/signature_pad checks, the EF pending-model check and staged/full-history secret scans passed. Exact-head full CI is required before merging. No public UI, cloud change, live timestamp call or email enablement in this slice.
+
+Cross-platform validation refinement: the first full Linux run passed 1,852/1,853 tests but the genuine two-publication lookup test rejected a synthetic TSA chain when its two independent test roots shared the same distinguished name. Give each synthetic seal fixture a distinct root subject, preserving strict production chain verification, configured trust, signature and timestamp checks. Reproduce the affected lookup and seal checks on Linux and Windows and require a fresh exact-head full CI pass. No live TSA or provider-policy change.
+
 ## QUILS-3: Create QuillSign SVG logos and matching PNG exports
 
 Status: Done. Branding PRs merged and Jira story closed, including the coral-red product accent.
