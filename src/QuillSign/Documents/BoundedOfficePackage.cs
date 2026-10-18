@@ -12,6 +12,11 @@ internal sealed class BoundedOfficePackage(byte[] original,Dictionary<string,byt
     private byte[]? owned=original;
     internal Dictionary<string,byte[]> Parts {get;}=parts;
     internal byte[] DetachOriginal(){var result=owned??throw new ObjectDisposedException(nameof(BoundedOfficePackage));owned=null;return result;}
+    internal void RequireFirstStored(string name,ReadOnlySpan<byte> value)
+    {
+        var data=(owned??throw new ObjectDisposedException(nameof(BoundedOfficePackage))).AsSpan();var encoded=Encoding.ASCII.GetBytes(name);
+        if(data.Length<30+encoded.Length+value.Length||U32(data,0)!=0x04034b50||U16(data,8)!=0||(U16(data,6)&8)!=0||U16(data,26)!=encoded.Length||U16(data,28)!=0||!data.Slice(30,encoded.Length).SequenceEqual(encoded)||!data.Slice(30+encoded.Length,value.Length).SequenceEqual(value)||U32(data,18)!=value.Length||U32(data,22)!=value.Length)throw Rejected();
+    }
     public void Dispose(){foreach(var part in Parts.Values)Array.Clear(part);if(owned is not null)Array.Clear(owned);owned=null;}
     private const int MaximumEntries=2048,MaximumPart=16*1024*1024,MaximumXml=8*1024*1024,MaximumExpanded=64*1024*1024;
     private static readonly uint[] CrcTable=CreateCrcTable();

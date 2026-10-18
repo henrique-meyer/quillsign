@@ -180,9 +180,13 @@ Validation: 198 focused XLSX/PPTX/DOCX/package/transport cases pass. Real pinned
 
 ## QUILS-109: Validate and convert bounded static ODT packages
 
-Status: To Do. Assigned to ChatGPT Codex. Created from QUILS-98 assessment; implementation is source/local only.
+Status: Done on merge after exact-head checks pass. Assigned to ChatGPT Codex. Created from QUILS-98 assessment; implementation is source/local only.
 
 Dependent on QUILS-98 assessment. Implement internal owned bounded ODF text-package gate: exact first stored mimetype, manifest/content type/path/CRC/ZIP/XML graph consistency, literal paragraphs/styles/tables and content-verified internal PNG/JPEG only. Reject encrypted/signed packages, scripts/event listeners, embedded objects/packages, external xlink resources (including styles/backgrounds), linked sections/images, forms, fields capable of loading content, XInclude, unknown active namespaces/extension markup, duplicate aliases and mismatched manifest members. Bound structural and image/render expansion. No raw untrusted package goes to LibreOffice before gate; no-egress remains defense in depth. Internal conversion first; persistence/intake separate. Validate real isolated Gotenberg output and hostile callbacks/no-egress with synthetic documents, exact original/normalized hashes and limits. No cloud/hosted/provider/email/TSA/AI/purchases. Permissive dependencies, checks/secrets/small PR/selfmerge/native Done.
+
+Implementation profile: default-false internal fixed-name HTTP ODT, exact first stored mimetype/manifest graph and owned original SHA-256. Accept bounded static paragraphs/tables/styles/verified raster only with fixed portrait A4 layout; output page count is bounded by PDF limits rather than inferred from flowing text, and every page geometry is checked. No public intake/storage/sandbox source extension or hosted setting. Reject unsupported content before converter; no silent stripping.
+
+Validation: Real isolated pinned Gotenberg produced two portrait A4 pages for literal text/tables and two for the verified raster variant; every page was rendered and inspected with exact input/PDF hashes and literal Unicode/resource-looking text retained. Adversarial manifest, first-entry ZIP, active/resource/unknown content, hidden expansion, style cycles, numeric/image/page work and transport/output limits fail closed. Existing DOCX/PPTX/XLSX package regressions pass; no hosted call, public source kind or dependency change.
 
 ## QUILS-110: Implement a conservative literal static RTF conversion profile
 
