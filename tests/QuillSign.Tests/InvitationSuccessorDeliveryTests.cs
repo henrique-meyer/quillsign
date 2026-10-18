@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using QuillSign.Data;
 using QuillSign.Email;
 using QuillSign.Signing;
@@ -24,6 +25,13 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
         { Checks++;if(BeforeCheck is not null)await BeforeCheck(scope);return Allowed; }
     }
     private static Policy Reminder()=>new(InvitationSuccessorReason.Reminder);
+    private static void ReplacePolicy(IServiceCollection services,Policy policy)
+    {
+        // These transport-contract fixtures deliberately supply their own test
+        // authority. Isolate it from runtime policy registration; duplicate real
+        // authorities must continue to fail closed in production.
+        services.RemoveAll<IInvitationSuccessorPolicy>();services.AddSingleton<IInvitationSuccessorPolicy>(policy);
+    }
     private static async Task<WorkResult> Execute(Run r,Guid id)
     {
         using var scope=r.H.App.Services.CreateScope();var store=scope.ServiceProvider.GetRequiredService<WorkStore>();
@@ -45,7 +53,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     [Fact]
     public async Task Reminder_replaces_unused_links_preserves_redeemed_authority_and_has_exact_receipt()
     {
-        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));
+        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>ReplacePolicy(s,policy));
         var original=Token(r.H.Sender.Last!.Text);using(var scope=r.H.App.Services.CreateScope()) {
             Assert.NotNull(await scope.ServiceProvider.GetRequiredService<SignerAccess>().RedeemAsync(original,null,null));
         }
@@ -67,7 +75,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     [InlineData("suppressed")][InlineData("changed-contact")][InlineData("terminal")][InlineData("deadline")]
     public async Task Changed_authority_before_intent_never_reaches_transport(string changed)
     {
-        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));
+        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>ReplacePolicy(s,policy));
         var p=await r.Admit();
         if(changed=="disabled")r.H.App.Services.GetRequiredService<EmailOptions>().Enabled=false;
         if(changed=="work-disabled")r.H.App.Services.GetRequiredService<WorkOptions>().Enabled=false;
@@ -88,7 +96,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     [Theory][InlineData("definite")][InlineData("unknown")][InlineData("intent")][InlineData("receipt")]
     public async Task Only_known_non_submission_is_retried_and_unknown_intent_never_resends(string kind)
     {
-        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));var p=await r.Admit();
+        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>ReplacePolicy(s,policy));var p=await r.Admit();
         if(kind=="definite")r.H.Sender.Failure=new EmailNotSubmittedException(true);
         if(kind=="unknown")r.H.Sender.Failure=new IOException("synthetic unknown acceptance");
         if(kind=="receipt") {r.H.Faults.Event=InvitationSuccessorProtection.ReceiptEvent;r.H.Faults.FailCommit=true;}
@@ -110,7 +118,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     [Theory][InlineData(false)][InlineData(true)]
     public async Task Lease_loss_or_policy_change_during_render_rolls_back_all_intent(bool lostLease)
     {
-        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));var p=await r.Admit();
+        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>ReplacePolicy(s,policy));var p=await r.Admit();
         policy.BeforeCheck=async _=> {
             if(policy.Checks==2) {
                 if(lostLease)r.H.Clock.Advance(TimeSpan.FromMinutes(6));else policy.Allowed=false;
@@ -126,7 +134,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     [Fact]
     public async Task Correction_preparation_requires_reason_policy_and_is_exactly_idempotent_after_commit()
     {
-        var policy=new Policy(InvitationSuccessorReason.ContactCorrection);await using var r=await Run.Create(fixture,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));
+        var policy=new Policy(InvitationSuccessorReason.ContactCorrection);await using var r=await Run.Create(fixture,configure:s=>ReplacePolicy(s,policy));
         var revision=await r.Correct("corrected@example.invalid");var id=await Prepare(r,revision.Id);var hints=r.H.Signals.HintCalls;
         Assert.Equal(id,await Prepare(r,revision.Id));Assert.Equal(hints,r.H.Signals.HintCalls);
         Assert.Equal(InvitationSuccessorJobs.CorrectionWorkId(revision.Id),id);Assert.Equal(WorkOutcome.Completed,(await Execute(r,id)).Outcome);
@@ -140,7 +148,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     public async Task Failed_correction_preparation_leaves_no_partial_mail_or_admission(string fault)
     {
         var policy=new Policy(InvitationSuccessorReason.ContactCorrection);await using var r=await Run.Create(fixture,
-            configure:s=>{if(fault!="none")s.AddSingleton<IInvitationSuccessorPolicy>(policy);});
+            configure:s=>{if(fault!="none")ReplacePolicy(s,policy);});
         var revision=await r.Correct("corrected@example.invalid");if(fault=="refused")policy.Allowed=false;
         if(fault=="hint")r.H.Signals.FailHint=true;
         if(fault=="audit") {r.H.Faults.Event=InvitationSuccessorProtection.Event;r.H.Faults.FailAudit=true;}
@@ -153,7 +161,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     [Fact]
     public async Task Lost_preparation_commit_reuses_exact_saved_revision_work_and_durable_hint()
     {
-        var policy=new Policy(InvitationSuccessorReason.ContactCorrection);await using var r=await Run.Create(fixture,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));
+        var policy=new Policy(InvitationSuccessorReason.ContactCorrection);await using var r=await Run.Create(fixture,configure:s=>ReplacePolicy(s,policy));
         var revision=await r.Correct("corrected@example.invalid");r.H.Faults.Event=InvitationSuccessorProtection.Event;r.H.Faults.FailCommit=true;
         await Assert.ThrowsAsync<IOException>(()=>Prepare(r,revision.Id));r.H.Faults.FailCommit=false;
         var hints=r.H.Signals.HintCalls;var id=await Prepare(r,revision.Id);Assert.Equal(hints,r.H.Signals.HintCalls);
@@ -165,7 +173,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     [Theory][InlineData(false)][InlineData(true)]
     public async Task A_stolen_or_replayed_lease_never_submits_another_message(bool replay)
     {
-        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));var p=await r.Admit();
+        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>ReplacePolicy(s,policy));var p=await r.Admit();
         using var scope=r.H.App.Services.CreateScope();var store=scope.ServiceProvider.GetRequiredService<WorkStore>();var lease=(await store.ClaimAsync(p.Id,default)).Lease!;
         var delivery=scope.ServiceProvider.GetRequiredService<InvitationSuccessorDelivery>();
         using(var competing=r.H.App.Services.CreateScope())Assert.Null((await competing.ServiceProvider.GetRequiredService<WorkStore>().ClaimAsync(p.Id,default)).Lease);
@@ -177,7 +185,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     [Fact]
     public async Task Feedback_received_during_provider_submission_is_not_rewritten_as_delivered()
     {
-        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));var p=await r.Admit();
+        var policy=Reminder();await using var r=await Run.Create(fixture,configure:s=>ReplacePolicy(s,policy));var p=await r.Admit();
         r.H.Sender.BeforeReturn=async()=> {await using var db=fixture.Open();await db.EmailOutbox.Where(x=>x.Id==p.Id)
             .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Status,EmailStatus.Bounced));};
         Assert.Equal(WorkOutcome.Completed,(await Execute(r,p.Id)).Outcome);await using var inspect=fixture.Open();
@@ -209,7 +217,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
     [Fact]
     public async Task Local_Mailpit_captures_reminder_copy_and_only_new_unused_link_redeems()
     {
-        var policy=Reminder();await using var r=await Run.Create(fixture,smtp:true,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));
+        var policy=Reminder();await using var r=await Run.Create(fixture,smtp:true,configure:s=>ReplacePolicy(s,policy));
         var p=await r.Admit();Assert.Equal(WorkOutcome.Completed,(await Execute(r,p.Id)).Outcome);
         using var http=new HttpClient {BaseAddress=new Uri("http://127.0.0.1:"+Environment.GetEnvironmentVariable("QUILLSIGN_TEST_MAIL_PORT"))};
         using var found=JsonDocument.Parse(await http.GetStringAsync("/api/v1/search?query="+Uri.EscapeDataString("to:"+r.H.First.Email)));
@@ -230,7 +238,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
         await tx.CommitAsync();return id;
     }
 
-    // Loopback-only browser host fixture. No production route or fake policy.
+    // Loopback-only transport-contract browser fixture with isolated test policy.
     public sealed class BrowserSession:IAsyncDisposable
     {
         private readonly Run run;
@@ -238,7 +246,7 @@ public sealed class InvitationSuccessorDeliveryTests(SqlDatabaseFixture fixture)
         public string PublicId=>run.H.Envelope.PublicId;
         public static async Task<BrowserSession> Start(SqlDatabaseFixture fixture,int port)
         {
-            var policy=Reminder();var r=await Run.Create(fixture,browserPort:port,smtp:true,configure:s=>s.AddSingleton<IInvitationSuccessorPolicy>(policy));
+            var policy=Reminder();var r=await Run.Create(fixture,browserPort:port,smtp:true,configure:s=>ReplacePolicy(s,policy));
             var p=await r.Admit();Assert.Equal(WorkOutcome.Completed,(await Execute(r,p.Id)).Outcome);
             using var http=new HttpClient {BaseAddress=new Uri("http://127.0.0.1:"+Environment.GetEnvironmentVariable("QUILLSIGN_TEST_MAIL_PORT"))};
             using var found=JsonDocument.Parse(await http.GetStringAsync("/api/v1/search?query="+Uri.EscapeDataString("to:"+r.H.First.Email)));
