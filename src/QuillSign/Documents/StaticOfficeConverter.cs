@@ -2,8 +2,8 @@ using System.Security.Cryptography;
 
 namespace QuillSign.Documents;
 
-public enum OfficeSourceKind {Pptx,Xlsx,Odt}
-public sealed class OfficeConversionOptions {public bool PptxEnabled {get;set;}public bool XlsxEnabled {get;set;}public bool OdtEnabled {get;set;}}
+public enum OfficeSourceKind {Pptx,Xlsx,Odt,Rtf}
+public sealed class OfficeConversionOptions {public bool PptxEnabled {get;set;}public bool XlsxEnabled {get;set;}public bool OdtEnabled {get;set;}public bool RtfEnabled {get;set;}}
 
 // Constructed only by a successful family gate; callers cannot substitute later source bytes.
 public sealed class ValidatedOfficeSource:IDisposable
@@ -29,7 +29,7 @@ public sealed class StaticOfficeConverter(OfficeConversionOptions options,Gotenb
     public async Task<DocxConversion> ConvertAsync(ValidatedOfficeSource package,CancellationToken ct=default)
     {
         ct.ThrowIfCancellationRequested();ArgumentNullException.ThrowIfNull(package);
-        if(!(package.Kind==OfficeSourceKind.Pptx&&options.PptxEnabled||package.Kind==OfficeSourceKind.Xlsx&&options.XlsxEnabled||package.Kind==OfficeSourceKind.Odt&&options.OdtEnabled))throw new DocumentConversionUnavailableException("This Office format is not enabled.");
+        if(!(package.Kind==OfficeSourceKind.Pptx&&options.PptxEnabled||package.Kind==OfficeSourceKind.Xlsx&&options.XlsxEnabled||package.Kind==OfficeSourceKind.Odt&&options.OdtEnabled||package.Kind==OfficeSourceKind.Rtf&&options.RtfEnabled))throw new DocumentConversionUnavailableException("This Office format is not enabled.");
         var originalHash=package.OriginalSha256;var expected=package.ConversionSha256;
         DocxConversion result;
         try {result=await converter.ConvertOfficeAsync(package,ct);}

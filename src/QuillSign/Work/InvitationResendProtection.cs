@@ -65,7 +65,7 @@ public sealed class InvitationResendProtection(IDataProtectionProvider provider)
             row.DataJson != Evidence(p) || IpHash(row.Ip) != p.IpHash) throw Invalid();
         return p;
     }
-    private static void Validate(ResendRequest? p)
+    internal static void Validate(ResendRequest? p)
     {
         if (p is null || p.Version != "resend-request-v1" || p.Id == Guid.Empty || p.EnvelopeId == Guid.Empty || p.SignerId == Guid.Empty ||
             p.PreviousId == Guid.Empty || p.PreviousId == p.Id || p.DocumentId == Guid.Empty || !Hash(p.IpHash) || !Hash(p.DocumentSha256) || !Hash(p.DisclosureSha256) ||

@@ -1,8 +1,8 @@
 # Sequential signer reminders
 
-This is the design for optional automatic reminders. Reminders are not yet
-dispatched by the application. The public synthetic demo keeps reminders off,
-and this work does not enable hosted email or add a cloud schedule.
+Optional automatic reminders use the durable work queue and shared invitation
+successor delivery. They remain off by default. The public synthetic demo always
+freezes an empty reminder policy; no hosted email or cloud schedule is enabled.
 
 ## Authority and schedule
 
@@ -19,7 +19,7 @@ is created by that policy slice.
 The generic application's existing day offsets are 3 and 7; an empty schedule
 disables reminders. A demo envelope always freezes an empty schedule. An
 operator must explicitly enable reminders and configure bounded daily global,
-sender and recipient limits before a future producer can admit any mail. No
+sender and recipient limits before the producer can admit any mail. No
 invented IP identity or sender-ticket lifetime belongs in system admission.
 
 Offsets are positive whole elapsed UTC days from the current signer's original
@@ -35,10 +35,10 @@ frozen policy hash and signing/retention deadlines. One deterministic work ID
 per epoch and day offset supplies idempotence. Only create an epoch for the
 current unfinished signer. Send creates the first epoch; successful checkpoint
 publication creates the next one in the same SQL transaction as its invitation.
-An explicitly confirmed contact correction creates a new epoch bound to its immutable contact revision, even when an address changes away and back; its earlier
-epoch remains evidence and cannot authorize another message to the old address.
-The correction's own reviewed policy determines whether it restarts the clock;
-do not infer that policy from a mutable signer email.
+Contact correction retires the old epoch, even when an address changes away and
+back. The current correction workflow has no reviewed reminder restart policy:
+no reminder epoch is created automatically for the corrected address. This does
+not prevent its deliberate correction invitation or manual resend.
 
 Do not schedule a due time at or beyond either the signing deadline or the
 immutable retention cutoff. Dispatch may occur late after service interruption,
@@ -55,7 +55,7 @@ authoritative row. Storage recovery must not enumerate SQL while idle, and a
 queue's seven-day delay limit must not change the intended SQL due time.
 Early or duplicate deliveries use existing work deferral and leasing.
 
-Dispatch takes the envelope lock before work/outbox/token locks. Verify the
+Dispatch takes the envelope and shared admission lock before work/outbox/token locks. Verify the
 frozen policy and exact epoch against canonical audit evidence, immutable sent
 evidence and the verified current-copy chain. Recheck current signer and email,
 absence of accepted Finish, envelope state, current time, suppression, explicit
@@ -83,7 +83,8 @@ revocation; a reminder cannot perform or reverse a contact correction.
 No external mail call occurs inside the SQL transaction. A known pre-submission
 rejection clears only its verified intent and expires that unused token. An
 unknown provider outcome retains intent and never triggers a blind second
-send. Record `reminder_submitted` only after a supported provider receipt;
+send. Record the shared `invitation_successor_submitted` receipt, bound to the
+protected `Reminder` scope, only after a supported provider receipt;
 provider acceptance is not proof of inbox delivery. SNS feedback attaches to
 the exact outbox row and existing suppression rules. Do not report a scheduled,
 queued or ambiguously submitted reminder as delivered.
@@ -118,3 +119,36 @@ terminal states, unknown commits, lease loss, provider ambiguity, retention
 cleanup, and storage-hint recovery. A captured fresh link must redeem through
 the normal consent/PDF flow while old unused links fail and redeemed sessions
 remain usable. Hosted enablement and operator caps require separate approval.
+
+## Supported runtime protocol
+
+QUILS-123 adds a separate `signer-reminder-runtime-v1` approval to the private
+Send review. A nonempty policy needs both its exact policy hash and that runtime
+version. Old QUILS-121 policy-only reviews must be refreshed; historical sent
+records without the runtime version create no work even if they contain a
+nonempty policy. The mutable envelope day array remains irrelevant.
+
+The Send transaction and each successful current-copy checkpoint create at most
+two `Reminder` work rows plus canonical system schedule evidence. A verified
+legacy contact is represented by its original empty-ID/zero-number epoch from
+the full contact-history verifier, never an invented baseline revision. Storage
+hints contain only the deterministic work ID and due time. The required schema
+change only extends the existing work-kind constraint; a checked application
+release still needs a separately approved hosted migration and configuration.
+
+At due time, only the latest overdue offset may admit mail, preventing a burst
+after downtime. A disabled due job is abandoned rather than revived later.
+Pending or ambiguous prior invitations block admission under the existing retry
+bound. Actual-day global, sender and address reservations include queued, failed
+and uncertain requests. Reservations cannot outlive their retained evidence:
+admission is refused when retention ends before that UTC day ends. A schedule
+row and its mail row have distinct deterministic IDs. A lost commit response
+recovers that same admission and never allocates another reminder for the offset.
+
+Reminder admission has no sender session, IP address or reused sender proof.
+The exact current policy, contact, PDF, disclosure and schedule are checked again
+before submission. Fresh links expire prior unused links; opened sessions and
+signing evidence are preserved. Provider acceptance is displayed separately from
+inbox delivery using the existing feedback/status path. Optional operational
+limits can prevent a reviewed reminder, so the sender review makes no delivery
+promise. There is no background SQL polling while idle.

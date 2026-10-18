@@ -39,6 +39,8 @@ public static class SenderConfiguration
         services.AddScoped<BrowserNotices>();
         services.AddScoped<InvitationResendReviewProtection>();
         services.AddScoped<Func<InvitationResends>>(sp=>()=>sp.GetRequiredService<InvitationResends>());
+        services.AddQuillSignSignerContactCorrections(config);
+        services.AddScoped<SignerContactCorrectionBrowser>();
         services.AddAuthentication(EnvelopeStorageAuthorization.SenderScheme).AddCookie(EnvelopeStorageAuthorization.SenderScheme, cookie =>
         {
             cookie.Cookie.Name = environment.IsDevelopment() ? "QuillSign.Sender" : "__Host-QuillSign.Sender";
@@ -69,6 +71,12 @@ public static class SenderConfiguration
             limiter.OnRejected = async (rejected,ct) =>
             {
                 var context=rejected.HttpContext;
+                if(IsContactCorrection(context.Request.Path)) {
+                    PrivateStatusHeaders(context);
+                    const string message="Too many contact correction actions. Wait and check saved request status before retrying; this response does not confirm a correction.";
+                    if(WantsJson(context))await context.Response.WriteAsJsonAsync(new {message},ct);
+                    else {context.Response.ContentType="text/html; charset=utf-8";await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\""+System.Net.WebUtility.HtmlEncode(context.Request.Path.Value!.TrimEnd('/')[..^15]+"sent")+"\">Check saved request status</a></p></main></body></html>",ct);}return;
+                }
                 if(IsResend(context.Request.Path)) {
                     PrivateStatusHeaders(context);
                     const string message="Too many resend actions. Wait before retrying and check saved request status first; no new replacement is confirmed by this response.";
@@ -131,6 +139,9 @@ public static class SenderConfiguration
                     (context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/review",StringComparison.Ordinal)==true && HttpMethods.IsPost(context.Request.Method)) ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(IsContactCorrection(context.Request.Path))
+                    return RateLimitPartition.GetFixedWindowLimiter((HttpMethods.IsPost(context.Request.Method) ? "sender-contact-correction-action:" : "sender-contact-correction-read:")+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=options.RequestsPerWindow,Window=TimeSpan.FromMinutes(options.WindowMinutes),QueueLimit=0,AutoReplenishment=true });
                 if(IsResend(context.Request.Path))
                     return RateLimitPartition.GetFixedWindowLimiter((HttpMethods.IsPost(context.Request.Method) ? "sender-resend-action:" : "sender-resend-read:")+address,_=>new FixedWindowRateLimiterOptions {
                         PermitLimit=options.RequestsPerWindow,Window=TimeSpan.FromMinutes(options.WindowMinutes),QueueLimit=0,AutoReplenishment=true });
@@ -186,11 +197,12 @@ public static class SenderConfiguration
     }
 
     public static bool WantsJson(HttpContext context) => context.Request.Headers.Accept.ToString().Contains("application/json", StringComparison.OrdinalIgnoreCase);
+    private static bool IsContactCorrection(PathString path) => path.StartsWithSegments("/draft") && path.Value?.TrimEnd('/').EndsWith("/correct-contact",StringComparison.OrdinalIgnoreCase)==true;
     private static bool IsResend(PathString path) => path.StartsWithSegments("/draft") && path.Value?.EndsWith("/resend",StringComparison.Ordinal)==true;
     // Called before authorization/CSRF/rate rejection as well as page handlers.
     public static void PrivateStatusHeaders(HttpContext context)
     {
-        if(!IsResend(context.Request.Path) && !(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/sent",StringComparison.Ordinal)==true))return;
+        if(!IsContactCorrection(context.Request.Path) && !IsResend(context.Request.Path) && !(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/sent",StringComparison.Ordinal)==true))return;
         context.Response.Headers.CacheControl="no-store";context.Response.Headers["Referrer-Policy"]="no-referrer";
         context.Response.Headers["X-Robots-Tag"]="noindex, nofollow, noarchive";
     }
