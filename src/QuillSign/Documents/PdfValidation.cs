@@ -8,6 +8,7 @@ public sealed class DocumentOptions
 {
     public long MaximumBytes { get; set; } = 10 * 1024 * 1024;
     public int MaximumPages { get; set; } = 20;
+    public bool EnableTextUploads { get; set; }
 }
 public sealed class DocumentRejectedException(string message) : Exception(message);
 public sealed class DocumentConflictException() : Exception("This draft changed. Reload it before trying again.");
