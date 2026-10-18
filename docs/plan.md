@@ -18,6 +18,8 @@ Use bounded 15-minute link and 30-minute session defaults (maximum 60 minutes ea
 
 Validation: the initial 29 SQL/Azurite cases passed, including genuine multi-publication pagination, every frozen party role, corrupted/missing storage, expiry, concurrent redemption and failed commits. Three final-revision regressions passed after issuance-revision binding and fixture consolidation, covering reset/rewrite rejection, unpublished/later-completed snapshots and rollback/unknown-commit recovery. Release builds, 11 Node cases, pinned PDF.js/interact.js/signature_pad checks, the EF pending-model check and staged/full-history secret scans passed. Exact-head full CI is required before merging. No public UI, cloud change, live timestamp call or email enablement in this slice.
 
+Cross-platform validation refinement: the first full Linux run passed 1,852/1,853 tests but the genuine two-publication lookup test rejected a synthetic TSA chain when its two independent test roots shared the same distinguished name. Give each synthetic seal fixture a distinct root subject, preserving strict production chain verification, configured trust, signature and timestamp checks. Reproduce the affected lookup and seal checks on Linux and Windows and require a fresh exact-head full CI pass. No live TSA or provider-policy change.
+
 ## QUILS-3: Create QuillSign SVG logos and matching PNG exports
 
 Status: Done. Branding PRs merged and Jira story closed, including the coral-red product accent.
