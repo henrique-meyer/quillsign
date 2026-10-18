@@ -2,6 +2,16 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-91: Deploy the approved lookup release and validate hosted flows
+
+Status: To Do. Owner approved the concrete QUILS-90 lookup release grants and rollout on 2026-10-18. Depends on merged QUILS-89 PR #94; readiness documentation PR #95 is separate. Email remains disabled.
+
+Apply the additive lookup-contact migration using the existing deployment identity and a checked main release. The owner approved runtime SELECT/INSERT on the immutable lookup-retention table while retaining UPDATE/DELETE denials, worker-only guarded contact-cleanup EXECUTE, and temporary exact-IP SQL administrator access/removal only if needed. Use existing versioned database commands and preserve all other identities, roles, denials, storage policies, configuration and data. No general deletion authority or new cloud service.
+
+Deploy the same checked main image to web and all three existing jobs. Verify schema/effective runtime denials and worker-only execution, exact images, Running/ready revision and distinctive SQL-free health. Preserve seven-day synthetic demo settings, persistent seal/TSA trust/coordinator/key material, final protection, lifecycle and storage-only schedules. Email and hosted Gotenberg remain disabled. Make zero actual timestamp calls and send zero real email; no AWS, AI, purchase or unrelated resource change.
+
+Exercise real hosted desktop/mobile/keyboard home-to-request unavailable state and existing access-code navigation with clean URLs and private headers; confirm no unintended mail admission. Save private evidence and screenshot proof. Remove temporary access even on failure and preserve cleanup/schema rollback compatibility. Do not backdate enrollment or claim unperformed mailbox signing/completion, attachments or naturally elapsed seven-day purge. Record operational results without private identifiers, validate links/secrets and exact release checks, commit/push/create/attach/pass checks/merge and native Jira Done.
+
 ## QUILS-89: Request private completed-document lookup links
 
 Status: In Progress. Depends on merged QUILS-88 (PR #93) and QUILS-84/85/86/87. Owned by this chat. Hosted email stays disabled.
