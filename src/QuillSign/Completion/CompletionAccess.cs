@@ -14,6 +14,7 @@ namespace QuillSign.Completion;
 
 public sealed record CompletionReaderView(CompletionReaderIdentity Identity,string Title,DateTimeOffset CompletedAt,DateTimeOffset? RetainedUntil);
 public sealed record CompletionReaderFile(byte[] Pdf,string Title,string Sha256,FinalDocumentKind Kind);
+internal sealed record CompletionReaderPreparation(CompletionReaderSession Session,DateTimeOffset? Deadline);
 
 // Trusted issuance and readonly authentication. HTTP entry authenticates the dedicated
 // scheme and keeps Receipt private; arbitrary claims never replace its protected proof.
@@ -73,13 +74,27 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         var located=await db.AuthTokens.AsNoTracking().SingleOrDefaultAsync(x=>x.TokenSha256==hash,ct);
         if(!Shape(located) || located!.UsedAt is not null || located.ExpiresAt<=time.GetUtcNow())return null;
         var prepared=await state.PrepareAsync(located.EnvelopeId!.Value,ct); if(prepared is null)return null;
-        await using var tx=await db.Database.BeginTransactionAsync(ct); await state.RecheckLockedAsync(prepared.Saved,ct);
-        var token=await db.AuthTokens.FromSqlInterpolated($"SELECT * FROM [AuthTokens] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={located.Id}").AsNoTracking().SingleOrDefaultAsync(ct);
-        if(!Shape(token) || token!.UsedAt is not null || token.ExpiresAt<=time.GetUtcNow() || !Same(token.TokenSha256,hash))return null;
+        await using var tx=await db.Database.BeginTransactionAsync(ct);
+        var reader=await RedeemLockedAsync(prepared,new(located.Id,raw!,located.ExpiresAt),null,ct); if(reader is null)return null;
+        // Never recover an unknown commit by replaying this consumed link into another session.
+        await tx.CommitAsync(ct);DocumentRetentionAccess.Check(reader.Deadline,time);
+        return reader.Session.Identity.ExpiresAt>time.GetUtcNow() ? reader.Session : null;
+    }
+
+    // Internal handoff only: the caller commits issuance, consumption and its own
+    // authorization evidence together, and must never return this uncommitted receipt.
+    internal async Task<CompletionReaderPreparation?> RedeemLockedAsync(CompletionAccessPreparation prepared,CompletionAccessLink link,
+        DateTimeOffset? sessionLimit,CancellationToken ct)
+    {
+        options.Validate(); if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Completion consumption requires its caller's transaction.");
+        var hash=SignerInvitationFactory.TokenHash(link.RawToken); if(hash is null || prepared.Until<=time.GetUtcNow())return null;
+        await state.RecheckLockedAsync(prepared.Saved,ct);
+        var token=await db.AuthTokens.FromSqlInterpolated($"SELECT * FROM [AuthTokens] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={link.TokenId}").AsNoTracking().SingleOrDefaultAsync(ct);
+        if(!Shape(token) || token!.UsedAt is not null || token.ExpiresAt<=time.GetUtcNow() || token.ExpiresAt!=link.ExpiresAt || !Same(token.TokenSha256,hash))return null;
         var member=await Member(token,prepared.Saved,ct); if(member is null || !await Issuance(token,ct))return null;
         var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==prepared.Saved.EnvelopeId,ct);
         var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct);
-        var now=time.GetUtcNow(); var until=new[]{now.AddHours(options.SessionHours),prepared.Saved.PurgeAfter??DateTimeOffset.MaxValue,deadline??DateTimeOffset.MaxValue}.Min(); if(until<=now)return null;
+        var now=time.GetUtcNow(); var until=new[]{now.AddHours(options.SessionHours),sessionLimit??DateTimeOffset.MaxValue,prepared.Saved.PurgeAfter??DateTimeOffset.MaxValue,deadline??DateTimeOffset.MaxValue}.Min(); if(until<=now)return null;
         var consumed=await db.AuthTokens.Where(x=>x.Id==token.Id && x.UsedAt==null).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.UsedAt,now),ct); if(consumed!=1)return null;
         var revision=await db.AuthTokens.AsNoTracking().Where(x=>x.Id==token.Id).Select(x=>x.RowVersion).SingleAsync(ct);
         var identity=new CompletionReaderIdentity(token.Id,Convert.ToBase64String(revision),prepared.Saved.EnvelopeId,prepared.Saved.PublicId,member.Type,member.Id,member.Email,
@@ -88,8 +103,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         var receipt=protection.Protect(identity);
         DocumentRetentionAccess.Check(deadline,time);
         if(prepared.Until<=time.GetUtcNow() || until<=time.GetUtcNow())throw Invalid();
-        // Never recover an unknown commit by replaying this consumed link into another session.
-        await tx.CommitAsync(ct);DocumentRetentionAccess.Check(deadline,time);return new(identity,receipt);
+        return new(new(identity,receipt),deadline);
     }
 
     public async Task<CompletionReaderView?> AuthenticateAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct=default)
