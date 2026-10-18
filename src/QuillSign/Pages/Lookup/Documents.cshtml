@@ -1,0 +1,26 @@
+@page "/find/documents/{handler?}"
+@model QuillSign.Pages.Lookup.DocumentsModel
+@{ ViewData["Title"] = "Your completed documents"; }
+@section Styles { <link rel="stylesheet" href="~/review.css" asp-append-version="true" /><link rel="stylesheet" href="~/lookup.css" asp-append-version="true" /> }
+<section class="draft-review">
+<p class="eyebrow">Private document access</p><h1>Your completed documents</h1>
+<p>Open a document to save its executed PDF and completion certificate. All times below are in UTC.</p>
+@if (Model.Message is not null) { <p class="document-error" role="alert">@Model.Message</p> }
+@if (Model.Until is { } end) { <p>This lookup view ends at @end.ToString("u"). Opening a document does not extend that time.</p> }
+@if (Model.Documents is { } documents) {
+    @if (documents.Entries.Count == 0) { <p>No retained completed documents are available in this view.</p> }
+    <ol class="lookup-list">
+    @foreach (var entry in documents.Entries) {
+        <li><h2>@entry.Title</h2><p>Completed at @entry.CompletedAt.ToString("u").</p>
+        @if (entry.RetainedUntil is { } until) { <p>Available until @until.ToString("u"). Save your copies before then.</p> }
+        <form method="post" asp-page-handler="Open"><input type="hidden" name="publicId" value="@entry.PublicId" /><button type="submit">Open document</button></form></li>
+    }
+    </ol>
+    @if (documents.NextCursor is { } next) {
+        <form method="post" asp-page-handler="Next"><input type="hidden" name="cursor" value="@next" /><button type="submit">Next documents</button></form>
+    }
+}
+<div class="lookup-actions">
+<form method="post" asp-page-handler="First"><button type="submit">Start at first document</button></form>
+<a href="/find/documents">Refresh this view</a><a href="/find/access">Use another lookup link</a>
+</div></section>

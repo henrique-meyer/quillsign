@@ -187,7 +187,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
         public SendDraftWorkflowTests.Clock Clock=>Run.Signing.H.Clock; public Guid Id=>Run.Signing.Envelope.Id; public string PublicId=>Run.Signing.Envelope.PublicId;
         public string PagePath=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+(Role=="sender" ? "/sent" : "/confirmed");
         public string Resource(string kind)=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+"/final"+(kind.Length==0 ? "" : "/"+kind);
-        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false,bool completionNotifications=false,bool publish=true,bool senderAlsoSigns=false,bool verificationBrowser=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DbCommandInterceptor? readFault=null,int? browserPort=null,string? mailbox=null)
+        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false,bool completionNotifications=false,bool publish=true,bool senderAlsoSigns=false,bool verificationBrowser=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DbCommandInterceptor? readFault=null,int? browserPort=null,string? mailbox=null,bool lookupBrowser=false)
         {
             var f=new Flow {fixture=fixture,Run=await Run.Create(fixture,senderAlsoSigns:senderAlsoSigns,uploadRetentionDays:uploadRetentionDays,afterUploadDelay:afterUploadDelay,mailbox:mailbox),CompletionNotifications=completionNotifications}; f.Store=new(f.Clock); _=await f.Run.Prepare();
             await using var db=fixture.Open(); if(publish)f.Published=(await f.Publication(db).PublishAsync(f.Id))!;
@@ -207,6 +207,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
             builder.Services.AddScoped<SignerCheckpointReads>(); builder.Services.AddScoped<SignerReviewProtection>(); builder.Services.AddSignerReviewBrowser(); builder.Services.AddScoped<SenderSentStatus>();
             builder.Services.AddCompletionDownloads(); builder.Services.AddScoped<CompletionEvidenceCollector>(sp=>f.Run.Collector(sp.GetRequiredService<QuillSignDbContext>()));
             if(completionReaders) {builder.Services.AddCompletionAccess(builder.Configuration);builder.Services.AddCompletionReaderBrowser(builder.Environment);}
+            if(lookupBrowser) {builder.Services.AddDocumentLookup(builder.Configuration);builder.Services.AddDocumentLookupBrowser(builder.Environment);}
             if(chunkedReader)builder.Services.Configure<Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationOptions>(CompletionAccessProtection.Scheme,
                 o=> {o.Cookie.Name="QuillSign.CustomReader";o.CookieManager=new Microsoft.AspNetCore.Authentication.Cookies.ChunkingCookieManager {ChunkSize=900};});
             if(completionNotifications)builder.Services.AddSingleton<IWorkSignals>(f.Run.Signing.H.Signals);
@@ -222,7 +223,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
                 f.App.Use(async(http,next)=> {http.Response.Headers["X-Content-Type-Options"]="nosniff";http.Response.Headers["Referrer-Policy"]="no-referrer";http.Response.Headers["Content-Security-Policy"]="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";await next();});
                 f.App.UseStaticFiles();
             }
-            f.App.UseRouting(); f.App.UseRateLimiter();if(verificationBrowser)f.App.UseMiddleware<VerificationUploadBoundary>(); f.App.UseAuthentication(); f.App.UseAuthorization(); f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
+            f.App.UseRouting(); if(lookupBrowser)f.App.UseDocumentLookupBrowser(); f.App.UseRateLimiter();if(verificationBrowser)f.App.UseMiddleware<VerificationUploadBoundary>(); f.App.UseAuthentication(); f.App.UseAuthorization(); f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
             f.App.MapGet("/fixture/{role}",async (HttpContext http,string role,SignerReviewBrowser browser)=> {
                 if(role=="sender") {
                     var sender=f.Run.Signing.Sender.Clone(); if(f.PaddedSender)((ClaimsIdentity)sender.Identity!).AddClaim(new("synthetic-padding",new string('x',6000)));
@@ -231,7 +232,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
                 else {var identity=SignerAccessConfiguration.ReadIdentity(f.Run.Signing.LastSigner,f.Clock.GetUtcNow())!; await http.SignInAsync(SignerAccessConfiguration.Scheme,f.Run.Signing.LastSigner,SignerAccessConfiguration.Ticket(identity));
                     browser.Put(http,SignerReviewBrowser.AcceptedCookie,f.Run.Signing.LastReviewReceipt,identity);} return "Synthetic fixture";
             });
-            await f.App.StartAsync(); f.Client=browserPort is null ? f.App.GetTestClient() : new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){BaseAddress=new Uri("http://127.0.0.1:"+browserPort)};return f;
+            await f.App.StartAsync(); f.Client=browserPort is null ? f.App.GetTestClient() : new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){BaseAddress=new Uri(f.App.Urls.Single())};return f;
         }
         internal CompletionPublication Publication(QuillSignDbContext db)=>new(db,Run.Candidates(db),Run.Service(db),Run.Collector(db),Store,new(db,Clock),Clock,
             new() {DemoPurgeAfterDays=7,AllowDevelopmentWriteOnce=true},Run.Seal.App.Environment,notifications:CompletionNotifications ? ()=>new(db,new(db,Run.Collector(db),()=>Publication(db),Clock),
@@ -250,14 +251,15 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
     }
     internal sealed class FinalStore(TimeProvider time) : ICompletionFinalStore
     {
-        private readonly Dictionary<FinalDocument,byte[]> files=[]; private readonly Dictionary<FinalDocument,FinalStoredDocument> records=[]; public int Writes,Reads; public string? Fault; public Func<Task>? AfterRead;
+        private readonly Dictionary<FinalDocument,byte[]> files=[]; private readonly Dictionary<FinalDocument,FinalStoredDocument> records=[]; public int Writes,Reads; public string? Fault; public Func<Task>? AfterRead; internal FinalStore? Other;
         public async Task<FinalStoredDocument> WriteAsync(ClaimsPrincipal p,FinalDocument target,Stream source,long length,byte[] hash,DateTimeOffset? until,CancellationToken ct=default) {
             Demand("DemandWrite",p,target,length,hash,until); using var bytes=new MemoryStream(); await source.CopyToAsync(bytes,ct);
             if(records.TryGetValue(target,out var existing)) {Assert.Equal(files[target],bytes.ToArray());Assert.Equal(existing.Length,length);Assert.Equal(existing.Sha256,hash);return existing;}
             Writes++;files.Add(target,bytes.ToArray());var record=new FinalStoredDocument(target,length,hash,"synthetic-version","synthetic-etag",FinalProtection.DevelopmentWriteOnce,null,time.GetUtcNow());records.Add(target,record);return record;
         }
         public async Task ReadAsync(ClaimsPrincipal p,FinalStoredDocument stored,Stream output,CancellationToken ct=default) {
-            Demand("DemandRead",p,stored); Reads++; if(Fault=="missing")throw new IOException("Synthetic missing final file"); var bytes=files[stored.Document].ToArray();
+            Demand("DemandRead",p,stored); Reads++; if(Fault=="missing")throw new IOException("Synthetic missing final file");
+            if(!files.ContainsKey(stored.Document) && Other is not null) {await Other.ReadAsync(p,stored,output,ct);return;} var bytes=files[stored.Document].ToArray();
             if(Fault=="corrupt")bytes[^1]^=1; await output.WriteAsync(bytes,ct); if(AfterRead is not null)await AfterRead();
         }
         private static void Demand(string method,params object?[] args) {try {typeof(IBlobStore).Assembly.GetType("QuillSign.Storage.CompletionFinalCapability",true)!.GetMethod(method,BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,args);}

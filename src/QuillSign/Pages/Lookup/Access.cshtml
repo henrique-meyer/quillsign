@@ -1,0 +1,22 @@
+@page "/find/access/{handler?}"
+@model QuillSign.Pages.Lookup.AccessModel
+@{ ViewData["Title"] = "Open your completed documents"; }
+<section class="start-card">
+<p class="eyebrow">Private document access</p><h1>Open your completed documents</h1>
+<p>Use your document lookup link or enter its access code. No account is needed.</p>
+@if (Model.Message is not null) { <p class="document-error" role="alert">@Model.Message</p> }
+<p id="lookup-link-status" role="status" hidden></p>
+<form method="post" asp-page-handler="Begin" id="lookup-code-form">
+    <label for="lookup-code">Access code</label>
+    <input id="lookup-code" name="code" type="password" maxlength="3800" autocomplete="off" spellcheck="false" autocapitalize="none" />
+    <button type="submit" id="lookup-begin">Continue with access code</button>
+</form>
+@if (Model.PendingNonce is { } nonce) {
+    <section id="lookup-pending">
+        <p>A lookup link is ready. Choose Open my documents to use this single-use link.</p>
+        <form method="post" asp-page-handler="Redeem"><input type="hidden" name="nonce" value="@nonce.ToString("N")" /><button type="submit">Open my documents</button></form>
+    </section>
+}
+<p><a href="/find/access">Return to access entry</a> · <a href="/find/documents">Return to your document list</a></p>
+</section>
+@section Scripts { <script src="~/lookup-access.js" asp-append-version="true" defer></script> }
