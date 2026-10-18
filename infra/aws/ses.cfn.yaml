@@ -15,6 +15,25 @@ Parameters:
     Type: String
   ProjectTagValue:
     Type: String
+  EnableFeedbackSubscription:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: Enable only after the exact HTTPS handler and owner-approved rollout are ready.
+  FeedbackEndpoint:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^https://[A-Za-z0-9.-]+(?::443)?/webhooks/ses$'
+    Description: Private exact application origin plus the fixed signed-feedback path.
+Rules:
+  FeedbackEndpointRequired:
+    Assertions:
+      - Assert: !Or
+          - !Equals [!Ref EnableFeedbackSubscription, 'false']
+          - !Not [!Equals [!Ref FeedbackEndpoint, '']]
+        AssertDescription: An enabled feedback subscription requires its approved HTTPS endpoint.
+Conditions:
+  FeedbackSubscriptionEnabled: !Equals [!Ref EnableFeedbackSubscription, 'true']
 Resources:
   ConfigurationSet:
     Type: AWS::SES::ConfigurationSet
@@ -84,6 +103,25 @@ Resources:
         MatchingEventTypes: [send, delivery, bounce, complaint, reject, renderingFailure, deliveryDelay]
         SnsDestination:
           TopicARN: !Ref FeedbackTopic
+  FeedbackSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: FeedbackSubscriptionEnabled
+    Properties:
+      TopicArn: !Ref FeedbackTopic
+      Protocol: https
+      Endpoint: !Ref FeedbackEndpoint
+      RawMessageDelivery: false
+      DeliveryPolicy:
+        healthyRetryPolicy:
+          minDelayTarget: 60
+          maxDelayTarget: 60
+          numRetries: 5
+          numNoDelayRetries: 0
+          numMinDelayRetries: 5
+          numMaxDelayRetries: 0
+          backoffFunction: linear
+        throttlePolicy:
+          maxReceivesPerSecond: 1
   SenderUser:
     Type: AWS::IAM::User
     Properties:
