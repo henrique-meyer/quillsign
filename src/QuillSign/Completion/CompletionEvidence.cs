@@ -12,7 +12,12 @@ public sealed record CompletionSigner(Guid Id,int Order,string Name,string Email
     Guid? AdoptionId,CompletionMark? Signature,CompletionMark? Initials);
 public sealed record CompletionRecipient(string? Name,string Email);
 public sealed record CompletionEvent(long Sequence,DateTimeOffset At,string Event,string ActorType,string? Actor,
-    string? Ip,string? UserAgent,byte[] PreviousHash,byte[] Hash);
+    string? Ip,string? UserAgent,byte[] PreviousHash,byte[] Hash)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public CompletionContactCorrection? ContactCorrection {get;init;}
+}
+public sealed record CompletionContactCorrection(Guid SignerId,string Name,string OldEmail,string NewEmail,Guid RevisionId,int Number,string RetirementSha256);
 public sealed record CompletionEvidence(Guid EnvelopeId,DateTimeOffset PreparedAt,bool Demo,bool Synthetic,
     CompletionDocument Document,CompletionSender Sender,string DisclosureVersion,byte[] DisclosureSha256,
     IReadOnlyList<CompletionSigner> Signers,IReadOnlyList<CompletionRecipient> Recipients,
