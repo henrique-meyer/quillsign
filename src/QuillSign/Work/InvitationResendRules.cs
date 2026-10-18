@@ -17,11 +17,18 @@ internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationRes
 
     // Also used by original dispatch under the envelope lock: an old original
     // invitation must never become active again after a replacement was admitted.
-    internal static Task<AuditEvent?> LatestAuditAsync(QuillSignDbContext db, Guid envelopeId, Guid signerId, CancellationToken ct) =>
+    private static IQueryable<AuditEvent> LatestAuditQuery(QuillSignDbContext db, Guid envelopeId, Guid signerId) =>
         db.AuditEvents.FromSqlInterpolated($"""
             SELECT TOP(1) * FROM [AuditEvents] WHERE [EnvelopeId]={envelopeId} AND [Event]='invitation_resend_requested'
             AND JSON_VALUE([DataJson],'$.signerId')={signerId.ToString()} ORDER BY [Sequence] DESC
-            """).AsNoTracking().SingleOrDefaultAsync(ct);
+            """).AsNoTracking();
+    internal static async Task<AuditEvent?> LatestAuditAsync(QuillSignDbContext db, Guid envelopeId, Guid signerId, CancellationToken ct)
+    {
+        var query = LatestAuditQuery(db, envelopeId, signerId);
+        var size = await query.Select(x => EF.Functions.DataLength(x.DataJson)).SingleOrDefaultAsync(ct);
+        if (size > 24000) throw Invalid();
+        return await query.SingleOrDefaultAsync(ct);
+    }
 
     internal async Task<ResendSaved?> LatestAsync(Guid envelopeId, Guid signerId, CancellationToken ct)
     {
@@ -37,9 +44,11 @@ internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationRes
         if (events.Length > 1) throw Invalid();
         return events.Length == 0 ? null : await FromAuditAsync(events[0], ct);
     }
-    private async Task<ResendSaved> FromAuditAsync(AuditEvent audit, CancellationToken ct)
+    internal async Task<ResendSaved> FromAuditAsync(AuditEvent audit, CancellationToken ct)
     {
         var p = InvitationResendProtection.ReadEvidence(audit);
+        var size = await db.EmailOutbox.Where(x => x.Id == p.Id).Select(x => new { Payload = EF.Functions.DataLength(x.PayloadJson), Attachments = EF.Functions.DataLength(x.AttachmentsJson) }).SingleOrDefaultAsync(ct);
+        if (size is null || size.Payload > 24000 || size.Attachments != 4) throw Invalid();
         var row = await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == p.Id, ct) ?? throw Invalid();
         var mail = protection.Read(row);
         var work = await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x => x.Id == p.Id, ct) ?? throw Invalid();

@@ -18,10 +18,12 @@ public static class InvitationResendStatement
     public static string Sha256 => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Text)));
 }
 public sealed record InvitationResendReview(Guid SignerId, string Name, string Email, string Version, Guid DocumentId, string DocumentSha256, string DisclosureSha256);
+public sealed record InvitationResendPreview(string Title, InvitationResendReview Review, InvitationResendOutcome? Blocked);
 public enum InvitationResendOutcome { Queued, AlreadyRequested, Unavailable, InvalidContext, InvalidConfirmation, Conflict, Closed, Busy, Capped, Suppressed }
 
-// Internal API. Its future HTTP caller must supply the protected authentication
-// ticket's original expiry and enforce CSRF/rate limits; form values are not authority.
+// Trusted callers supply the protected authentication ticket's original expiry.
+// The browser caller also supplies its protected review deadline and enforces
+// CSRF/rate limits; form values are not authority.
 public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOptions options, EmailOptions email, WorkOptions work,
     InvitationResendProtection protection, SignerInvitationProtection invitations, SignerAccess access, AuditWriter audit,
     Func<IWorkSignals> signals, TimeProvider time)
@@ -29,31 +31,43 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
     private readonly InvitationResendRules rules = new(db, options, protection, time);
     private bool Enabled => options.Enabled && email.Enabled && work.Enabled;
     public async Task<InvitationResendReview?> ReviewAsync(ClaimsPrincipal sender, string publicId, DateTimeOffset ticketExpiresAt, CancellationToken ct = default)
+        => (await ReadAsync(sender, publicId, ticketExpiresAt, false, ct))?.Review;
+    public Task<InvitationResendPreview?> PreviewAsync(ClaimsPrincipal sender, string publicId, DateTimeOffset ticketExpiresAt, CancellationToken ct = default)
+        => ReadAsync(sender, publicId, ticketExpiresAt, true, ct);
+    private async Task<InvitationResendPreview?> ReadAsync(ClaimsPrincipal sender, string publicId, DateTimeOffset ticketExpiresAt, bool availability, CancellationToken ct)
     {
         options.Validate(); if (!Enabled) return null;
         var identity = SendDraftWorkflow.Identity(sender, publicId); if (identity is null || ticketExpiresAt <= time.GetUtcNow()) return null;
         Clean(); await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var scope = await ScopeAsync(identity.Value.Id, identity.Value.Email, publicId, ct); if (scope is null) return null;
+        InvitationResendOutcome? blocked = null;
+        if (availability) {
+            if (scope.Value.Deadline < InvitationResendProtection.DayEnd(time.GetUtcNow())) blocked = InvitationResendOutcome.Unavailable;
+            else if (await db.Suppressions.AnyAsync(x => x.Email == scope.Value.Context.Identity.Email, ct)) blocked = InvitationResendOutcome.Suppressed;
+            else if (await PreviousAsync(scope.Value.Context, ct) is null) blocked = InvitationResendOutcome.Busy;
+        }
         if (ticketExpiresAt <= time.GetUtcNow() || scope.Value.Envelope.ExpiresAt <= time.GetUtcNow()) return null;
         DocumentRetentionAccess.Check(scope.Value.Deadline, time);
         await tx.CommitAsync(ct); DocumentRetentionAccess.Check(scope.Value.Deadline, time);
-        return ticketExpiresAt > time.GetUtcNow() ? Review(scope.Value) : null;
+        return Enabled && ticketExpiresAt > time.GetUtcNow() ? new(scope.Value.Envelope.Title!, Review(scope.Value), blocked) : null;
     }
     public async Task<InvitationResendOutcome> RequestAsync(ClaimsPrincipal sender, string publicId, DateTimeOffset ticketExpiresAt,
-        Guid requestId, InvitationResendReview reviewed, bool confirmed, string? statementVersion, string? ip, string? userAgent, CancellationToken ct = default)
+        Guid requestId, InvitationResendReview reviewed, bool confirmed, string? statementVersion, string? ip, string? userAgent, CancellationToken ct = default,
+        DateTimeOffset? reviewExpiresAt = null)
     {
         options.Validate(); if (!Enabled) return InvitationResendOutcome.Unavailable;
         var identity = SendDraftWorkflow.Identity(sender, publicId);
         if (identity is null || ticketExpiresAt <= time.GetUtcNow()) return InvitationResendOutcome.InvalidContext;
         if (!confirmed || statementVersion != InvitationResendStatement.Version) return InvitationResendOutcome.InvalidConfirmation;
         if (requestId == Guid.Empty || reviewed is null || !InvitationResendProtection.RowVersion(reviewed.Version)) return InvitationResendOutcome.Conflict;
+        if (reviewExpiresAt <= time.GetUtcNow() || reviewExpiresAt > ticketExpiresAt) return InvitationResendOutcome.Conflict;
         var ipHash = InvitationResendProtection.IpHash(ip); Clean();
-        try { return await CoreAsync(identity.Value.Id, identity.Value.Email, publicId, ticketExpiresAt.ToUniversalTime(), requestId, reviewed, ipHash, ip, userAgent, ct); }
+        try { return await CoreAsync(identity.Value.Id, identity.Value.Email, publicId, ticketExpiresAt.ToUniversalTime(), requestId, reviewed, ipHash, ip, userAgent, reviewExpiresAt?.ToUniversalTime(), ct); }
         finally { db.ChangeTracker.Clear(); }
     }
     private async Task<InvitationResendOutcome> CoreAsync(Guid envelopeId, string senderEmail, string publicId, DateTimeOffset until,
-        Guid id, InvitationResendReview reviewed, string ipHash, string? ip, string? ua, CancellationToken ct)
+        Guid id, InvitationResendReview reviewed, string ipHash, string? ip, string? ua, DateTimeOffset? reviewExpiresAt, CancellationToken ct)
     {
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
         InvitationResendOutcome outcome;
@@ -97,6 +111,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
             if (scope.Value.Envelope.ExpiresAt <= time.GetUtcNow()) return InvitationResendOutcome.Closed;
             var saved = await rules.FindAsync(id, envelopeId, ct) ?? throw InvitationResendRules.Invalid();
             if (saved.Mail.Request.Deadline <= time.GetUtcNow()) return InvitationResendOutcome.Closed;
+            if (reviewExpiresAt <= time.GetUtcNow()) return InvitationResendOutcome.Conflict;
             await tx.CommitAsync(ct);
         }
         try { await signals().PublishAsync(id, TimeSpan.Zero, ct); }

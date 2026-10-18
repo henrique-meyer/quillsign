@@ -1,0 +1,26 @@
+@page "/draft/{publicId}/resend"
+@model QuillSign.Pages.Draft.ResendModel
+@{ ViewData["Title"] = "Review replacement invitation"; }
+@section Styles { <link rel="stylesheet" href="~/review.css" asp-append-version="true" /> }
+<section class="draft-review">
+<p class="eyebrow">Private sender action</p><h1>Review replacement invitation</h1>
+@if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p> }
+@if(Model.Data is { } data) {
+<h2>@data.Title</h2>
+<h3>Current signer</h3><p><strong>@data.Review.Name</strong><span class="signer-email">@data.Review.Email</span></p>
+}
+<p>A replacement goes to this signer's existing email address. Older unused invitation links stop working when the replacement is queued, even if later delivery fails.</p>
+<p>Already-opened signer sessions keep their original expiry. Consent, saved entries and signatures stay intact. This does not change the document, contact details, signing deadline or retention.</p>
+<p>Queueing or provider acceptance does not confirm inbox delivery. Pending or uncertain submission must be resolved before another replacement can be requested.</p>
+@if(Model.CanConfirm) {
+<form method="post" asp-page="/Draft/Resend" asp-route-publicId="@RouteData.Values["publicId"]">
+<input type="hidden" asp-for="ReviewProof" />
+<input type="hidden" name="StatementVersion" value="@QuillSign.Sender.InvitationResendStatement.Version" />
+<label class="send-check"><input asp-for="Confirmed" /> <span>@QuillSign.Sender.InvitationResendStatement.Text</span></label>
+<p>This review expires within ten minutes. Review the recipient and confirm only when you want a replacement.</p>
+<button type="submit">Confirm replacement invitation</button>
+</form>
+}
+<p><a asp-page="/Draft/Sent" asp-route-publicId="@RouteData.Values["publicId"]">Check saved request status</a></p>
+<p><a asp-page="/Draft/Resend" asp-route-publicId="@RouteData.Values["publicId"]">Review current details</a></p>
+</section>

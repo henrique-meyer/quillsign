@@ -381,7 +381,12 @@ public sealed class InvitationResendTests(SqlDatabaseFixture fixture) : IClassFi
         private readonly Run run;
         private BrowserSession(Run run) { this.run = run; }
         public string PublicId => run.H.Envelope.PublicId;
-        public static async Task<BrowserSession> Start(SqlDatabaseFixture fixture, int port) => new(await Run.Create(fixture, browser: true, smtp: true, port: port));
+        public static async Task<BrowserSession> Start(SqlDatabaseFixture fixture, int port)
+        {
+            var run = await Run.Create(fixture, browser: true, smtp: true, port: port);
+            run.H.Clock.TrackElapsed(); return new(run);
+        }
+        public Task<bool> Dispatch() => run.H.Once();
         public async Task<string[]> Links()
         {
             using var http = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:" + Environment.GetEnvironmentVariable("QUILLSIGN_TEST_MAIL_PORT")) };

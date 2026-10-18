@@ -10,7 +10,10 @@ using QuillSign.Work;
 
 namespace QuillSign.Sender;
 
-public sealed record SenderSignerProgress(int Order,string Name,string Email,string? Role,string State,DateTimeOffset? SignedAt);
+public sealed record SenderSignerProgress(int Order,string Name,string Email,string? Role,string State,DateTimeOffset? SignedAt)
+{
+    public SenderInvitationProgress? Invitation {get;init;}
+}
 public sealed record SenderSentSnapshot(string PublicId,string Title,string? Message,EnvelopeStatus Status,DateTimeOffset SentAt,
     DateTimeOffset? ExpiresAt,IReadOnlyList<SenderSignerProgress> Signers,IReadOnlyList<RecipientItem> Recipients,SentDraft Sent)
 {
@@ -20,7 +23,7 @@ public sealed record SenderSentSnapshot(string PublicId,string Title,string? Mes
 }
 
 // Metadata-only private status; this grants no document reads, edits or signing authority.
-public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,SignerCheckpointState checkpoints)
+public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,SignerCheckpointState checkpoints,InvitationResendProtection? resends=null)
 {
     public async Task<SenderSentSnapshot?> GetAsync(ClaimsPrincipal sender,string publicId,byte[]? reviewedVersion=null,CancellationToken ct=default)
     {
@@ -49,15 +52,21 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
                 EmailStatus.Bounced=>"Invitation bounced; delivery needs attention",EmailStatus.Complained=>"Invitation complaint reported",
                 EmailStatus.Failed=>invitation.Ambiguous ? "Invitation submission not confirmed" : "Invitation not sent; delivery needs attention",
                 _=>invitation.SubmissionStartedAt is not null ? "Invitation submission not confirmed" : "Invitation queued" };
+            var latest=await SenderInvitationStatus.LatestAsync(db,envelope,signer,resends,time,ct);
+            if(latest is not null)delivery=latest.State;
+            var mail=latest??(invitation is null ? null : new SenderInvitationProgress("Original",invitation.Status switch {
+                EmailStatus.Sent=>"Invitation submitted",EmailStatus.Bounced=>"Invitation bounced; delivery needs attention",
+                EmailStatus.Complained=>"Invitation complaint reported",EmailStatus.Failed=>invitation.Ambiguous ? "Invitation submission not confirmed" : "Invitation not sent; delivery needs attention",
+                _=>invitation.SubmissionStartedAt is not null ? "Invitation submission not confirmed" : "Invitation queued" },null));
             var state=signer.Status switch { SignerStatus.Viewed=>envelope.Status==EnvelopeStatus.Voided ? "Consent recorded before void" : "Consent recorded; signing incomplete",
-                SignerStatus.Signed=>"Signed",SignerStatus.Declined=>"Declined",_=>delivery };
+                SignerStatus.Signed=>"Signed",SignerStatus.Declined=>"Declined",_=>linkOpened ? "Opened; consent pending" : delivery };
             if(envelope.Status==EnvelopeStatus.Voided && (signer.Status is SignerStatus.Pending or SignerStatus.Notified))state="Not signed; request voided";
             if(finishes.TryGetValue(signer.Id,out var finish) && finish.ProcessedAt is null) {
                 if(await checkpoints.AcceptanceAsync(finish,signer,ct) is null)throw new InvalidDataException("The saved Finish could not be verified.");
                 state=envelope.Status==EnvelopeStatus.Voided ? "Finish accepted before void" :
                     envelope.Status==EnvelopeStatus.Sent && (envelope.ExpiresAt is null || envelope.ExpiresAt>time.GetUtcNow()) ? "Finish accepted; signing copy processing" : "Finish accepted; request closed";
             }
-            progress.Add(new(signer.Order,signer.FullName,signer.Email,signer.Role,state,signer.Status==SignerStatus.Signed ? signer.SignedAt : null));
+            progress.Add(new(signer.Order,signer.FullName,signer.Email,signer.Role,state,signer.Status==SignerStatus.Signed ? signer.SignedAt : null){Invitation=mail});
         }
         var recipients=await db.Recipients.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id).OrderBy(x=>x.Name).Take(101).Select(x=>new RecipientItem(x.Id,x.Name,x.Email)).ToArrayAsync(ct);
         if(recipients.Length>100 || envelope.SentAt>time.GetUtcNow())throw new InvalidDataException("Invalid saved request state.");

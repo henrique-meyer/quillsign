@@ -239,6 +239,7 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
                 new DocumentField { EnvelopeId=run.Envelope.Id,SignerId=run.First.Id,Type=FieldType.Signature,Page=1,X=.1m,Y=.5m,Width=.4m,Height=.1m }); await db.SaveChangesAsync(); run.Version=run.Envelope.RowVersion; }
             await run.Blobs.Inner.WriteAsync(run.Principal,new(run.Envelope.Id,DocumentBlobKind.Normalized,Guid.Parse(run.Envelope.PdfBlob)),new MemoryStream(run.Source),run.Source.Length);
             if(browser) {
+                run.App.Use(async(context,next)=>{context.Connection.RemoteIpAddress??=System.Net.IPAddress.Loopback;SenderConfiguration.PrivateStatusHeaders(context);await next();});
                 if(browserPort is not null)run.App.Use(async(context,next)=>{context.Response.Headers["X-Content-Type-Options"]="nosniff";context.Response.Headers["Referrer-Policy"]="no-referrer";context.Response.Headers["Content-Security-Policy"]="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";await next();});
                 if(browserPort is not null) run.App.UseStaticFiles();
                 run.App.UseRouting(); run.App.UseRateLimiter(); run.App.UseAuthentication(); run.App.UseAuthorization(); run.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
