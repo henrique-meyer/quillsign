@@ -23,7 +23,7 @@ public sealed record SenderSentSnapshot(string PublicId,string Title,string? Mes
 }
 
 // Metadata-only private status; this grants no document reads, edits or signing authority.
-public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,SignerCheckpointState checkpoints,InvitationResendProtection? resends=null)
+public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,SignerCheckpointState checkpoints,InvitationResendProtection? resends=null,InvitationLineage? lineage=null)
 {
     public async Task<SenderSentSnapshot?> GetAsync(ClaimsPrincipal sender,string publicId,byte[]? reviewedVersion=null,CancellationToken ct=default)
     {
@@ -34,7 +34,7 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
         if(envelope is null || envelope.PublicId!=publicId || envelope.SenderEmail!=identity.Value.Email || envelope.SenderVerifiedAt is null || envelope.Status==EnvelopeStatus.Draft)return null;
         var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct);
         var sent=await ReadSentAsync(db,envelope,reviewedVersion,ct);
-        await InvitationResendRules.VerifyIndexAsync(db,envelope.Id,ct);
+        await InvitationResendRules.VerifyIndexAsync(db,envelope.Id,ct,time);
         if(await checkpoints.CurrentAsync(envelope,ct) is null)throw new InvalidDataException("The saved signing state could not be verified.");
         var signers=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id).OrderBy(x=>x.Order).Take(101).ToArrayAsync(ct);
         if(signers.Length is <1 or >100 || signers.Where((s,i)=>s.Order!=i+1 || !Enum.IsDefined(s.Status)).Any())throw new InvalidDataException("Invalid saved signing order.");
@@ -43,9 +43,16 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
             .Select(x=>new { x.To,x.Status,x.SubmissionStartedAt,Ambiguous=x.LastError=="submission-ambiguous" }).Take(101).ToArrayAsync(ct);
         if(invitations.Length>100 || invitations.Any(x=>!Enum.IsDefined(x.Status)))throw new InvalidDataException("Invalid invitation state.");
         var opened=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id && x.Event=="link_opened" && x.ActorType==PartyType.Signer).ToArrayAsync(ct);
+        var corrected=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id && x.Event==SignerContactHistory.Event)
+            .Select(x=>x.DataJson).Take(101).ToArrayAsync(ct);
+        if(corrected.Length>100)throw InvitationSuccessorProtection.Invalid();
+        var correctedSlots=new HashSet<Guid>();
+        foreach(var raw in corrected) {using var change=JsonDocument.Parse(raw);correctedSlots.Add(change.RootElement.GetProperty("signerId").GetGuid());}
         var progress=new List<SenderSignerProgress>();
         foreach(var signer in signers) {
-            var linkOpened=opened.Where(x=>x.ActorId==signer.Id && x.ActorEmail==signer.Email).Any(x=>
+            // An earlier mailbox returning to the same address cannot make an
+            // old opening look like activity in a corrected contact epoch.
+            var linkOpened=!correctedSlots.Contains(signer.Id) && opened.Where(x=>x.ActorId==signer.Id && x.ActorEmail==signer.Email).Any(x=>
                 x.At>=envelope.SentAt && x.At<=time.GetUtcNow() && CryptographicOperations.FixedTimeEquals(AuditHash.Compute(x),x.Hash));
             var invitation=invitations.SingleOrDefault(x=>x.To==signer.Email);
             var delivery=invitation is null ? "Waiting for their turn" : invitation.Status switch {
@@ -53,7 +60,7 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
                 EmailStatus.Bounced=>"Invitation bounced; delivery needs attention",EmailStatus.Complained=>"Invitation complaint reported",
                 EmailStatus.Failed=>invitation.Ambiguous ? "Invitation submission not confirmed" : "Invitation not sent; delivery needs attention",
                 _=>invitation.SubmissionStartedAt is not null ? "Invitation submission not confirmed" : "Invitation queued" };
-            var latest=await SenderInvitationStatus.LatestAsync(db,envelope,signer,resends,time,ct);
+            var latest=await SenderInvitationStatus.LatestAsync(db,envelope,signer,resends,time,ct,lineage);
             if(latest is not null)delivery=latest.State;
             var mail=latest??(invitation is null ? null : new SenderInvitationProgress("Original",invitation.Status switch {
                 EmailStatus.Sent=>"Invitation submitted",EmailStatus.Bounced=>"Invitation bounced; delivery needs attention",

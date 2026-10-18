@@ -26,7 +26,7 @@ public enum InvitationResendOutcome { Queued, AlreadyRequested, Unavailable, Inv
 // CSRF/rate limits; form values are not authority.
 public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOptions options, EmailOptions email, WorkOptions work,
     InvitationResendProtection protection, SignerInvitationProtection invitations, SignerAccess access, AuditWriter audit,
-    Func<IWorkSignals> signals, TimeProvider time)
+    Func<IWorkSignals> signals, TimeProvider time, InvitationLineage? lineage=null)
 {
     private readonly InvitationResendRules rules = new(db, options, protection, time);
     private bool Enabled => options.Enabled && email.Enabled && work.Enabled;
@@ -43,7 +43,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         var scope = await ScopeAsync(identity.Value.Id, identity.Value.Email, publicId, ct); if (scope is null) return null;
         InvitationResendOutcome? blocked = null;
         if (availability) {
-            await InvitationResendRules.VerifyIndexAsync(db, scope.Value.Envelope.Id, ct);
+            await InvitationResendRules.VerifyIndexAsync(db, scope.Value.Envelope.Id, ct,time);
             if (scope.Value.Deadline < InvitationResendProtection.DayEnd(time.GetUtcNow())) blocked = InvitationResendOutcome.Unavailable;
             else if (await db.Suppressions.AnyAsync(x => x.Email == scope.Value.Context.Identity.Email, ct)) blocked = InvitationResendOutcome.Suppressed;
             else if (await PreviousAsync(scope.Value.Context, ct) is null) blocked = InvitationResendOutcome.Busy;
@@ -74,7 +74,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         InvitationResendOutcome outcome;
         await using (var tx = await db.Database.BeginTransactionAsync(ct)) {
             var scope = await ScopeAsync(envelopeId, senderEmail, publicId, ct); if (scope is null) return InvitationResendOutcome.Closed;
-            await InvitationResendRules.VerifyIndexAsync(db, envelopeId, ct);
+            await InvitationResendRules.VerifyIndexAsync(db, envelopeId, ct,time);
             if (Review(scope.Value) != reviewed) return InvitationResendOutcome.Conflict;
             await InvitationResendRules.LockAsync(db, ct);
             var existing = await rules.FindAsync(id, envelopeId, ct);
@@ -122,6 +122,19 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
     }
     private async Task<Guid?> PreviousAsync(SignerReadContext context, CancellationToken ct)
     {
+        if(await InvitationLineage.RequiresVerifiedHistoryAsync(db,context.Identity.EnvelopeId,ct)) {
+            var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==context.Identity.EnvelopeId,ct);
+            var contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(envelope,ct);
+            var current=contacts.Current.SingleOrDefault(x=>x.Id==context.Identity.SignerId);
+            // The old explicit-resend format has no contact revision. Corrected
+            // contacts need their separately reviewed canonical producer.
+            if(current is null || current.Epoch!=SignerContactEpoch.Legacy)return null;
+            var history=await (lineage??throw InvitationSuccessorProtection.Invalid()).ReadLockedAsync(envelope,current.Id,contacts,ct);
+            if(history is null)return null;var currentEntry=history.Latest;
+            if(currentEntry.Contact!=current.Epoch || currentEntry.Recipient!=context.Identity.Email || currentEntry.DocumentId!=context.Identity.DocumentId ||
+                currentEntry.DocumentSha256!=context.Identity.DocumentHash || currentEntry.DisclosureSha256!=context.Identity.DisclosureHash)throw InvitationSuccessorProtection.Invalid();
+            return await lineage!.SettledLockedAsync(currentEntry,ct) ? currentEntry.Id : null;
+        }
         var latest = await rules.LatestAsync(context.Identity.EnvelopeId, context.Identity.SignerId, ct);
         if (latest is not null) {
             if (latest.Mail.Request.DocumentId != context.Identity.DocumentId || latest.Mail.Request.DocumentSha256 != context.Identity.DocumentHash ||

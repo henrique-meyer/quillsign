@@ -59,6 +59,7 @@ public static class WorkConfiguration
             services.AddLookupDeliveryWork(config);
             var resendOptions=config.GetSection("InvitationResend").Get<InvitationResendOptions>()??new();resendOptions.Validate();
             services.TryAddSingleton(resendOptions);services.AddScoped<InvitationResendProtection>();
+            services.AddScoped<InvitationSuccessorProtection>();services.AddScoped<InvitationLineage>();
             services.AddScoped<QuillSign.Sender.InvitationResends>();services.AddScoped<InvitationResendDelivery>();
             services.AddScoped<Func<InvitationResendDelivery>>(sp=>()=>sp.GetRequiredService<InvitationResendDelivery>());
             services.AddCompletionNotificationWork(config);
