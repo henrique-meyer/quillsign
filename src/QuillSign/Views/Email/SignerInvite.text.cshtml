@@ -2,6 +2,11 @@
 @{ Layout = null; }
 QuillSign
 
+@if(Model.Heading is not null) {<text>@Html.Raw(Model.Heading)
+</text>}
+@if(Model.Notice is not null) {<text>@Html.Raw(Model.Notice)
+</text>}
+
 @Html.Raw(Model.SignerName)@if (!string.IsNullOrWhiteSpace(Model.Role)) {<text> (@Html.Raw(Model.Role))</text>},
 
 @Html.Raw(Model.Sender) has sent you a signing request for @Html.Raw(Model.Title).

@@ -97,3 +97,7 @@ The verified-sender form accepts exactly one PDF, supported PNG/JPEG, or DOCX wh
 Successful upload redirects to the clean draft URL and displays only the normalized PDF. Conversion failure preserves the previous source and preparation. Successful replacement clears the previous confirmation and fields, preserves the first upload's retention cutoff, and requires a new explicit confirmation. Original files have no public download route. Senders must inspect converted layout/fonts and export their own PDF if the supported profile does not produce a suitable result.
 
 Browser checks exercise desktop/mobile/keyboard upload, both pages, zoom, verified download, explicit confirmation, failure preservation and deliberate recovery. The DOCX browser flow replays the exact response captured from the real isolated converter only after verifying the source bytes, while using actual package validation, normalization and SQL/Azurite persistence. Its downloaded PDF matches the persisted hash. That local test controls the external transport boundary. The subsequent bounded hosted rollout used the actual managed-identity sandbox transport, hosted database and Blob Storage for two real synthetic uploads; neither path demonstrates mailbox delivery while email is disabled.
+
+## Remaining Office formats
+
+See the [family assessment and implementation gates](office-formats.md) for TXT, PPTX, XLSX, ODT, RTF and legacy DOC. Only independently validated profiles may be added; converter import support alone does not enable intake.
