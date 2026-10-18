@@ -45,3 +45,11 @@ Hosted enablement still requires approved migrations, the explicit worker SQL ex
 The synthetic disclosure's new version describes verified queued cleanup and possible physical-deletion delays. Its original version remains verifiable byte-for-byte. Neither version is a real-use operator policy or a promise of legal enforceability.
 
 Validation uses genuine local upload enrollment, SQL Server/Azurite queues, current worker permissions, bounded deletion and controlled commit/storage failures. Historical synthetic clocks are seeded before upload; frozen policy/audit evidence is never rewritten to manufacture expiry. Browser validation uses synthetic documents and captured email, with no real agreement or outbound provider.
+
+## Real elapsed cutoff validation
+
+On 2026-10-18, an isolated local SQL Server/Azurite check waited **3,602 actual seconds** before invoking the normal worker path. It used the existing seven-day policy with an explicitly synthetic initial upload timestamp, fixed before upload/enrollment so that one real hour remained. Frozen policy evidence was never altered afterward, and subsequent observations used actual UTC.
+
+Premature cleanup was rejected. After the cutoff, guarded worker-role SQL cleanup removed the enrolled private rows and owned original/normalized files, leaving the protocol's minimal detached work record and authenticated recovery marker. An unrelated live control survived. A storage-only recovery pass removed a deliberately late-written file. The operator exited successfully after disposing both owned fixtures.
+
+This checks elapsed-cutoff handling and cleanup without weakening production day arithmetic or SQL guards. It is separate from the hosted short-expiry immutable-storage checks; Azurite does not emulate Azure WORM protection. It is not a naturally elapsed seven-day or hosted end-to-end purge observation, nor proof of physical erasure of backups, soft-deleted versions or logs. The public seven-day setting and runtime code were unchanged.

@@ -23,6 +23,8 @@ param managedCertificateName string = ''
 param enableManagedCertificate bool = false
 param databaseConnectionSecretUri string = ''
 param applicationEnvironment array = []
+param analyticsEnabled bool = false
+param analyticsMeasurementId string = ''
 param provisionManagedCertificate bool = true
 @description('Set true only after the approved, verified final-container migration.')
 param finalVersionSupportEnabled bool = false
@@ -241,6 +243,8 @@ module web './modules/web.bicep' = if (deployWeb) {
     enableManagedCertificate: enableManagedCertificate
     databaseConnectionSecretUri: databaseConnectionSecretUri
     applicationEnvironment: applicationEnvironment
+    analyticsEnabled: analyticsEnabled
+    analyticsMeasurementId: analyticsMeasurementId
     provisionManagedCertificate: provisionManagedCertificate
     tsaRootPem: tsaRootPem
   }

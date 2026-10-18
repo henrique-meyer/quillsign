@@ -16,6 +16,7 @@ public static class DocumentConfiguration
         services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(mvc=>mvc.Filters.Add<PreparationRetentionExceptionFilter>());
         services.AddSingleton<DocxPackageValidation>();
         services.AddScoped<DocxDocumentWorkflow>();
+        services.AddScoped<TextPdfConverter>();
         services.AddScoped<ImagePdfConverter>();
         services.AddScoped<ImageDocumentWorkflow>();
         var conversion=config.GetSection("Gotenberg").Get<GotenbergOptions>() ?? new();

@@ -22,4 +22,6 @@ param managedCertificateName = ''
 param enableManagedCertificate = false
 param databaseConnectionSecretUri = ''
 param applicationEnvironment = []
+param analyticsEnabled = false
+param analyticsMeasurementId = ''
 param provisionManagedCertificate = true

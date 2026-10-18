@@ -10,6 +10,9 @@ param enableManagedCertificate bool = false
 param provisionManagedCertificate bool = true
 param databaseConnectionSecretUri string = ''
 param applicationEnvironment array = []
+@description('Optional homepage-only analytics. Supply the real ID through ignored parameters.')
+param analyticsEnabled bool = false
+param analyticsMeasurementId string = ''
 @secure()
 @description('Approved public TSA root, supplied privately. Mount is read-only and optional.')
 param tsaRootPem string = ''
@@ -54,7 +57,10 @@ resource web 'Microsoft.App/containerApps@2024-03-01' = {
         env: concat([{ name: 'ASPNETCORE_ENVIRONMENT', value: 'Production' }], empty(databaseConnectionSecretUri) ? [] : [{
           name: 'ConnectionStrings__Database'
           secretRef: 'database-connection'
-        }], applicationEnvironment)
+        }], filter(applicationEnvironment, item => !contains(['Analytics__Enabled', 'Analytics__MeasurementId'], item.name)), [
+          { name: 'Analytics__Enabled', value: string(analyticsEnabled) }
+          { name: 'Analytics__MeasurementId', value: analyticsMeasurementId }
+        ])
         probes: [for probe in [ 'Liveness', 'Readiness', 'Startup' ]: {
           type: probe
           httpGet: { path: '/health', port: 8080 }
