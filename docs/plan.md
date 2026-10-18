@@ -18,6 +18,8 @@ Use /find/documents/{handler?} for the private list, Next/First paging and Open.
 
 Validation: Release build without warnings; all 17 new SQL/HTTP lookup cases and all 15 Node browser tests pass locally. Actual loopback browser flows passed with genuine completed synthetic non-agreement packets and a captured local TSA: scanner-safe fragment/manual entry, keyboard Continue/confirmation, private two-document paging/reset, explicit handoff, successful executed/certificate downloads, mobile layout, missing-storage failure and explicit recovery, cross-tab stale nonce rejection without losing the newer link, consumed-link rejection, empty lookup, original-session expiry with a clean one-use notice and expired-link failure. Temporary host stopped and viewport restored. No cloud mutation, live mail or real TSA request in this slice. Full existing coverage and container checks remain required on the exact PR head before merge.
 
+Observed CI budget refinement: the first PR run passed all 1,880 .NET tests with no failures (16m28s test duration), then reached the existing 20-minute integration-job limit during the remaining finite worker-command checks. Increase only the bounded local-stack job budget to 25 minutes, retaining the entire suite, vendor verification, finite commands and cleanup. Require all checks to pass on the new exact head; do not waive or skip coverage, alter cloud/application settings or enable email.
+
 ## QUILS-85: Allow verified mailbox lookup to open retained final packets
 
 Status: Done on merge. Depends on merged QUILS-84 (PR #89) and the merged completed-record retrieval foundation. Public lookup delivery/browser work remains separate. Owned by this chat.
