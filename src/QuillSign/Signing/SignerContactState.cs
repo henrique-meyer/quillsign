@@ -170,7 +170,7 @@ public sealed class SignerContactState(QuillSignDbContext db, TimeProvider time)
         var definitions = fields.Where(x => x.SignerId == signer.Id).OrderBy(x => x.Id).Select(Definition).ToArray();
         if (!snapshot.Fields.OrderBy(x => x.Id).Select(Definition).SequenceEqual(definitions)) throw Invalid();
     }
-    private static string Definition(DocumentField f) => JsonSerializer.Serialize(new { f.Id, f.EnvelopeId, f.SignerId, f.Type, f.Page, f.X, f.Y, f.Width, f.Height, f.Required, f.Label, f.Source, f.AiConfidence });
+    private static string Definition(DocumentField f) => JsonSerializer.Serialize(new { f.Id, f.EnvelopeId, f.SignerId, f.Type, f.Page, f.X, f.Y, f.Width, f.Height, f.Required, f.Label, f.Placeholder, f.DateFormat, f.Source, f.AiConfidence });
     private static byte[] SessionHash(VerifiedSigner identity) => SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(identity));
     private static bool TokenMatches(Envelope envelope, SignerContactParty current, AuthToken token) => token.EnvelopeId == envelope.Id && token.PartyId == current.Id &&
         token.PartyType == PartyType.Signer && token.Purpose == TokenPurpose.SignerAccess && token.Email == current.Email &&
