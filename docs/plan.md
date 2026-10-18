@@ -4,7 +4,7 @@ Tasks are recorded here and in Jira before implementation. Private deployment na
 
 ## QUILS-91: Deploy the approved lookup release and validate hosted flows
 
-Status: To Do. Owner approved the concrete QUILS-90 lookup release grants and rollout on 2026-10-18. Depends on merged QUILS-89 PR #94; readiness documentation PR #95 is separate. Email remains disabled.
+Status: In Progress. Owner approved the concrete QUILS-90 lookup release grants and rollout on 2026-10-18. Depends on merged QUILS-89 PR #94; readiness documentation PR #95 is separate. Email remains disabled.
 
 Apply the additive lookup-contact migration using the existing deployment identity and a checked main release. The owner approved runtime SELECT/INSERT on the immutable lookup-retention table while retaining UPDATE/DELETE denials, worker-only guarded contact-cleanup EXECUTE, and temporary exact-IP SQL administrator access/removal only if needed. Use existing versioned database commands and preserve all other identities, roles, denials, storage policies, configuration and data. No general deletion authority or new cloud service.
 
