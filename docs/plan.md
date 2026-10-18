@@ -144,6 +144,8 @@ Atomically archive exact retired unsigned state, append immutable contact revisi
 
 Validate synthetic SQL/Azurite/captured mail transaction, concurrency, rollback, lost acknowledgement, accepted-Finish, immutable predecessor, caps, suppression and deadline boundaries; preserve legacy evidence bytes. Source checks, secret scan and exact-head CI gate PR/self-merge/native Done. No public correction route in this slice, default or hosted activation, schema/grants/deployment/cloud change, real mail/provider/TSA calls, purchase, AI or change to the demo operator policy.
 
+Validation: all 32 focused SQL/Azurite/captured-transport cases pass, including same-command concurrency, stale/tampered/refused authority, explicit daily caps, safe queued/leased retirement, ambiguous-delivery refusal, hint/audit/commit rollback, crossed deadlines and lost-commit recovery. Genuine populated review/Finish flows prove fresh consent/adoption and two-signer completion after correction; accepted Finish blocks correction before publication. Correcting the second signer retains the first signed checkpoint and uses its exact current PDF. Verified retention deadlines are projected without changing historical review bytes; disabled scanner/custom hosts resolve no database/work policy. No real provider, cloud or hosted setting changed. Full exact-head CI remains a merge gate.
+
 ## QUILS-98: Assess safe DOC ODT RTF PPTX and XLSX conversion slices
 
 Status: In Progress. Assigned to ChatGPT Codex; native story created before implementation research.
