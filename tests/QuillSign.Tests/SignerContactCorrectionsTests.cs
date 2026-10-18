@@ -61,6 +61,39 @@ public sealed class SignerContactCorrectionsTests(SqlDatabaseFixture fixture) : 
         Assert.Equal(2, results.Count(x => x == (sameId ? SignerContactCorrectionOutcome.AlreadyRequested : SignerContactCorrectionOutcome.Conflict)));
     }
 
+    [Fact]
+    public async Task Cross_envelope_correction_and_manual_resend_serialize_before_writing_cap_evidence_and_both_admit_once()
+    {
+        await using var corrected = await Run.Create(fixture); await using var resent = await Run.Create(fixture);
+        var limits = resent.H.App.Services.GetRequiredService<InvitationResendOptions>(); limits.Enabled = true;
+        limits.DailyRequests = limits.DailyAddressRequests = limits.DailySenderRequests = limits.DailyIpRequests = 1000;
+        var correctionReview = await corrected.Review();
+        var resendReview = (await resent.Use((InvitationResends s) => s.ReviewAsync(resent.H.Principal, resent.H.Envelope.PublicId, resent.Until)))!;
+        var enteredCorrection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var enteredResend = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCorrection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        corrected.H.Faults.Event = SignerContactHistory.Event;
+        corrected.H.Faults.BeforeAudit = async _ => { enteredCorrection.TrySetResult(); await releaseCorrection.Task.WaitAsync(TimeSpan.FromSeconds(15)); };
+        resent.H.Faults.Event = null;
+        resent.H.Faults.BeforeAudit = _ => { enteredResend.TrySetResult(); return Task.CompletedTask; };
+        var first = corrected.Request(Guid.NewGuid(), correctionReview);
+        await enteredCorrection.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        var second = resent.Use((InvitationResends s) => s.RequestAsync(resent.H.Principal, resent.H.Envelope.PublicId, resent.Until,
+            Guid.NewGuid(), resendReview, true, InvitationResendStatement.Version, "127.0.0.1", "Synthetic concurrent resend"));
+        try
+        {
+            // A different reason must not create uncommitted cap evidence while
+            // the first reason owns admission and scans the shared audit table.
+            Assert.NotSame(enteredResend.Task, await Task.WhenAny(enteredResend.Task, Task.Delay(200)));
+        }
+        finally { releaseCorrection.TrySetResult(); }
+        Assert.Equal(SignerContactCorrectionOutcome.Queued, await first);
+        Assert.Equal(InvitationResendOutcome.Queued, await second);
+        await using var db = fixture.Open();
+        Assert.Single(await db.SignerContactRevisions.Where(x => x.EnvelopeId == corrected.H.Envelope.Id).ToArrayAsync());
+        Assert.Equal(2, await db.EmailOutbox.CountAsync(x => x.EnvelopeId == resent.H.Envelope.Id));
+    }
+
     [Theory][InlineData("confirmation")][InlineData("statement")][InlineData("sender")][InlineData("ticket")]
     [InlineData("version")][InlineData("signer-version")][InlineData("epoch")][InlineData("source")][InlineData("name")][InlineData("duplicate")][InlineData("suppressed")]
     public async Task Admission_rejects_changed_or_missing_authority_without_rewriting_the_signer(string kind)
@@ -108,6 +141,33 @@ public sealed class SignerContactCorrectionsTests(SqlDatabaseFixture fixture) : 
         Assert.Equal(SignerContactCorrectionOutcome.AlreadyRequested, await r.Request(id, review));
         await r.H.Signals.RecoverAsync(r.H.Clock.GetUtcNow(), default); await r.Drain(InvitationSuccessorJobs.CorrectionWorkId(id));
         Assert.Equal(2, r.H.Sender.Calls);
+    }
+
+    [Fact]
+    public async Task Correction_and_cap_audits_bind_the_same_server_timestamp_even_when_the_clock_advances_during_persistence()
+    {
+        await using var r = await Run.Create(fixture); var review = await r.Review(); var id = Guid.NewGuid();
+        r.H.Faults.Event = SignerContactHistory.Event;
+        r.H.Faults.BeforeAudit = _ => { r.H.Clock.Advance(TimeSpan.FromMilliseconds(20)); return Task.CompletedTask; };
+        Assert.Equal(SignerContactCorrectionOutcome.Queued, await r.Request(id, review));
+        await using var db = fixture.Open(); var revision = await db.SignerContactRevisions.SingleAsync(x => x.Id == id);
+        var events = await db.AuditEvents.Where(x => x.EnvelopeId == r.H.Envelope.Id &&
+            (x.Event == SignerContactHistory.Event || x.Event == "signer_contact_correction_requested")).ToArrayAsync();
+        Assert.Equal(2, events.Length); Assert.All(events, x => Assert.Equal(revision.ChangedAt, x.At));
+        Assert.True(r.H.Clock.GetUtcNow() > revision.ChangedAt);
+    }
+
+    [Fact]
+    public async Task Crossing_the_counter_day_during_admission_rolls_back_instead_of_minting_a_new_day_allowance()
+    {
+        await using var r = await Run.Create(fixture); var end = new DateTimeOffset(r.H.Clock.GetUtcNow().UtcDateTime.Date, TimeSpan.Zero).AddDays(1);
+        r.H.Clock.Advance(end - r.H.Clock.GetUtcNow() - TimeSpan.FromSeconds(1)); r.Until = end.AddHours(1);
+        var review = await r.Review(); var id = Guid.NewGuid();
+        r.H.Faults.Event = "signer_contact_correction_requested";
+        r.H.Faults.BeforeAudit = _ => { r.H.Clock.Advance(TimeSpan.FromSeconds(2)); return Task.CompletedTask; };
+        Assert.Equal(SignerContactCorrectionOutcome.Conflict, await r.Request(id, review));
+        await using var db = fixture.Open(); Assert.False(await db.SignerContactRevisions.AnyAsync(x => x.Id == id));
+        Assert.Equal(r.H.First.Email, (await db.Signers.SingleAsync(x => x.Id == r.H.First.Id)).Email);
     }
 
     [Theory][InlineData("ip")][InlineData("sender")][InlineData("global")][InlineData("address")]
@@ -305,7 +365,8 @@ public sealed class SignerContactCorrectionsTests(SqlDatabaseFixture fixture) : 
             // Test deployments share an administrator fixture, unlike production.
             // Retire only this fixture's global counter rows after its last read.
             await using var db = fixture.Open();
-            await db.AuditEvents.Where(x => x.EnvelopeId == h.Envelope.Id && x.Event == "signer_contact_correction_requested").ExecuteDeleteAsync();
+            await db.AuditEvents.Where(x => x.EnvelopeId == h.Envelope.Id &&
+                (x.Event == "signer_contact_correction_requested" || x.Event.StartsWith("invitation_"))).ExecuteDeleteAsync();
             await h.DisposeAsync();
         }
     }

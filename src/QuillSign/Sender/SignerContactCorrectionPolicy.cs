@@ -35,11 +35,10 @@ internal sealed class SignerContactCorrectionPolicy(QuillSignDbContext db, Signe
             scope.AdmittedAt == reservation.AdmittedAt && scope.AuthorizationSha256 == reservation.RevisionSha256 &&
             scope.Deadline <= reservation.CounterUntil && await WithinCapsAsync(reservation, true, ct);
     }
-    internal static Task LockAsync(QuillSignDbContext db, CancellationToken ct) => db.Database.ExecuteSqlRawAsync("""
-        DECLARE @result int;
-        EXEC @result=sys.sp_getapplock @Resource=N'signer-contact-correction-v1', @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=5000;
-        IF @result < 0 THROW 50002, 'Signer contact correction is temporarily busy.', 1;
-        """, ct);
+    // Reason-specific limits remain separate, but admission scans share the
+    // AuditEvents table. Take the same global lock before either feature writes
+    // evidence, avoiding read-committed cross-envelope lock cycles.
+    internal static Task LockAsync(QuillSignDbContext db, CancellationToken ct) => InvitationResendRules.LockAsync(db, ct);
     internal async Task<bool> WithinCapsAsync(ContactCorrectionAdmission candidate, bool reserved, CancellationToken ct)
     {
         options.Validate(); if (!Enabled || candidate.CounterUntil != InvitationResendProtection.DayEnd(time.GetUtcNow())) return false;

@@ -95,6 +95,17 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             normalized,converted.PdfSha256,converted.Pages,provenance),ip,userAgent,ct);
     }
 
+    internal async Task<bool> StoreConvertedTextAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,string title,
+        Stream original,TextConversion converted,string? ip,string? userAgent,CancellationToken ct)
+    {
+        var before=await CheckConvertedUploadAsync(sender,publicId,expectedVersion,ct);if(before is null)return false;
+        original.Position=0;using var normalized=new MemoryStream(converted.Pdf,false);
+        var provenance=new {version="text-docx-gotenberg-v1",originalFilename=title[..^4]+".txt",
+            originalMime=TextDocumentWorkflow.Mime,originalBytes=original.Length,pdfBytes=converted.Pdf.LongLength};
+        return await PublishUploadAsync(sender,publicId,expectedVersion,before,new(title,TextDocumentWorkflow.Mime,original,converted.OriginalSha256.ToArray(),
+            normalized,converted.PdfSha256.ToArray(),converted.Pages,provenance),ip,userAgent,ct);
+    }
+
     private sealed record PreparedUpload(string Filename,string Mime,Stream Original,byte[] OriginalHash,Stream Pdf,byte[] PdfHash,
         IReadOnlyList<PageGeometry> Pages,object? Provenance);
 

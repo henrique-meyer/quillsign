@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using QuillSign.Documents;
 using QuillSign.Legal;
+using QuillSign.Work;
 
 namespace QuillSign.Sender;
 
@@ -13,8 +14,11 @@ public static class SenderSendStatement
     public static string Sha256=>Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Text)));
 }
 
-public sealed record SendReadiness(bool Available,string? Error,DisclosureSnapshot? Disclosure);
-public sealed class SenderSendReadiness(SenderAvailability availability,ElectronicRecordDisclosure disclosures,TimeProvider time)
+public sealed record SendReadiness(bool Available,string? Error,DisclosureSnapshot? Disclosure)
+{
+    public SignerReminderPolicy? Reminders {get;init;}
+}
+public sealed class SenderSendReadiness(SenderAvailability availability,ElectronicRecordDisclosure disclosures,TimeProvider time,SignerReminderOptions? reminders=null)
 {
     public bool CanDispatch=>availability.CanSend;
     public SendReadiness Read(ClaimsPrincipal user,DraftReviewSnapshot draft)
@@ -25,6 +29,10 @@ public sealed class SenderSendReadiness(SenderAvailability availability,Electron
         DisclosureSnapshot snapshot;
         try { snapshot=disclosures.Build(draft.PublicId,draft.Title,identity.Value.Email,draft.DemoDisclosure); }
         catch(DisclosureRejectedException) { return new(false,"Electronic-record disclosure settings or document details are incomplete. Check the draft or contact this instance's operator.",null); }
-        return availability.CanSend ? new(true,null,snapshot) : new(false,"Invitation sending is unavailable right now. Your document remains a draft.",snapshot);
+        SignerReminderPolicy policy;
+        try {policy=(reminders??new()).Freeze(draft.IsDemo);}
+        catch(InvalidOperationException) {return new(false,"Reminder settings are unavailable. Contact this instance's operator before sending.",snapshot);}
+        return (availability.CanSend ? new SendReadiness(true,null,snapshot) : new(false,"Invitation sending is unavailable right now. Your document remains a draft.",snapshot))
+            with {Reminders=policy};
     }
 }
