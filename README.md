@@ -6,7 +6,7 @@ An open-source e-signature app being built around sequential signing, no account
 
 QuillSign is under active development. The application implements verified-sender PDF preparation, sequential signer setup, manual field placement and sender prefill, reviewed Send, electronic-record consent, signature capture, deliberate field application, exact PDF review and Finish. Durable workers publish signer checkpoints and prepare, seal and publish the completed PDF and certificate of completion. Private downloads, completion emails, sender voiding, public uploaded-PDF verification and finite expiry maintenance are also implemented.
 
-Synthetic end-to-end flows have local automated and browser coverage. Hosted completion still needs operator disclosures, retention settings, timestamp-provider trust and immutable final-storage configuration, followed by end-to-end validation. Public email delivery remains disabled until SES and feedback handling are ready. The `/health` endpoint returns `{"status":"ok"}` without querying the database. See the [cloud infrastructure guide](infra/README.md) for hosting setup. The [hosted demo rollout plan](docs/hosted-demo-rollout.md) lists approval, configuration and validation gates for activating the completed flow.
+Synthetic end-to-end flows have local automated and browser coverage. The approved demo staging rollout on 2026-10-18 verified the synthetic electronic-record disclosure, seven-day first-upload retention, immutable final-version protection, persistent demo seal, coordinated FreeTSA timestamps and scheduled storage-only recovery. These are component checks; the full hosted sender-to-completion flow and naturally elapsed document purge remain unverified. Public email delivery remains disabled until separate SES/feedback readiness and launch validation are complete. Newer source changes also need their own checked release. The `/health` endpoint returns `{"status":"ok"}` without querying the database. See the [cloud infrastructure guide](infra/README.md) and [hosted demo rollout plan](docs/hosted-demo-rollout.md).
 
 ## Signing flow
 
@@ -23,7 +23,7 @@ Synthetic end-to-end flows have local automated and browser coverage. Hosted com
 | Database | EF Core 10 with SQL Server; Azure SQL Database for hosting, SQL Server Developer locally |
 | PDF viewer and editor | PDF.js, interact.js and signature_pad; assets are served locally |
 | PDF rendering and evidence | PDFsharp/MigraDoc 6.2.4 (MIT), PdfPig and BouncyCastle for CMS seals and RFC 3161 timestamps |
-| Timestamp authority | Provider-configurable RFC 3161 client; [FreeTSA](https://www.freetsa.org/index_en.php) is the selected free demo option and still requires runtime configuration |
+| Timestamp authority | Provider-configurable RFC 3161 client; [FreeTSA](https://www.freetsa.org/index_en.php) is configured and component-tested in the demo |
 | Files and final-record protection | Azure Blob Storage, with version-level immutable retention for hosted final PDFs; Azurite for local development |
 | Sessions and secrets | ASP.NET Core Data Protection, Blob-persisted keys, Azure Key Vault and managed identity |
 | Background work | SQL durable work/outbox records, Azure Storage Queues and Blob recovery hints; finite Container Apps jobs |
@@ -37,7 +37,7 @@ There is no CAPTCHA. Verified email, request limits, daily caps and bounce/compl
 
 ### Timestamp, immutable storage and retention setup
 
-The seal engine requires an HTTPS RFC 3161 timestamp service and a trusted certificate chain. FreeTSA's public service has no subscription fee, permits application use, and allows at most one request per second per source IP. It is best-effort without an SLA. The client supports shared Blob-lease coordination across both final PDF seals and all workers, with a cooldown after each attempt. Before enabling FreeTSA, configure its verified public CA and enable that coordinator against shared storage. Hosted configuration and end-to-end validation remain rollout work; a timestamp outage can delay completion. See [FreeTSA's usage policy](https://www.freetsa.org/freetsa.html) and the [seal configuration guide](docs/platform-pdf-seals.md).
+The seal engine requires an HTTPS RFC 3161 timestamp service and a trusted certificate chain. FreeTSA's public service has no subscription fee, permits application use, and allows at most one request per second per source IP. It is best-effort without an SLA. The client supports shared Blob-lease coordination across both final PDF seals and all workers, with a cooldown after each attempt. Self-hosters must configure the verified public CA and coordinator before enabling FreeTSA. Those components passed bounded hosted demo checks; a timestamp outage can still delay completion. See [FreeTSA's usage policy](https://www.freetsa.org/freetsa.html) and the [seal configuration guide](docs/platform-pdf-seals.md).
 
 Immutable storage is a policy on ordinary Azure Blob Storage, not a separate compute or storage service. Hosted publication requires a private final-files container with version-level immutability enabled and actual blob protection covering the promised retention interval. Existing containers require migration; enabling support cannot be reversed, and locked retention cannot be shortened. Keep the deletion deadline and protection expiry aligned. The application verifies protection but does not provision or change hosted policies. See [Azure's version-level immutability documentation](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-version-level-worm-policies) and [final publication](docs/final-publication.md).
 
@@ -51,7 +51,7 @@ Configure these values through environment variables or private settings, using 
 | `Retention__CompletedDays` | Retention interval for completed ordinary requests |
 | `Demo__PurgeAfterDays` | Positive demo interval; new uploads freeze an upload-based retention snapshot |
 
-Retention settings remain unset by default. A configured demo upload freezes an exact [first-upload deadline](docs/document-retention.md) and atomically schedules [durable purge work](docs/demo-purge-coordinator.md); replacement, signing and setting changes cannot extend it. Seven days is selected for the demo. Final publication requires matching final-version protection. The worker uses guarded SQL cleanup and bounded object deletion, with persistent storage-only recovery for late writes. Ordinary/legacy completion-based intervals are unchanged and are not automatically scheduled for erasure by this demo worker. Approved worker permissions, maintenance scheduling and hosted validation remain prerequisites; a day count alone does not guarantee physical erasure of versions, backups, soft-deleted copies or logs.
+Retention settings remain unset by default for self-hosters. A configured demo upload freezes an exact [first-upload deadline](docs/document-retention.md) and atomically schedules [durable purge work](docs/demo-purge-coordinator.md); replacement, signing and setting changes cannot extend it. The public demo is configured for seven days. Final publication requires matching final-version protection. The worker uses guarded SQL cleanup and bounded object deletion, with persistent storage-only recovery for late writes. Ordinary/legacy completion-based intervals are unchanged and are not automatically scheduled for erasure by this demo worker. The demo's worker permissions and maintenance scheduling passed staging checks; a naturally elapsed enrolled purge remains a validation gate. A day count does not guarantee physical erasure of versions, backups, soft-deleted copies or logs.
 
 ## Run locally
 
@@ -92,7 +92,7 @@ The initializer generates local SQL and Azurite credentials in ignored `.env` co
 | SMTP capture | `localhost:1025` | `mailpit:1025` |
 | Gotenberg | Through the app container only | `gotenberg:3000` |
 
-The app shows the verification form when database, storage, email, and background work are configured; otherwise it shows an email-unavailable notice. Verified senders can upload and review a PDF. Office conversion remains unavailable in the app.
+The app shows the verification form when database, storage, email, and background work are configured; otherwise it shows an email-unavailable notice. Verified senders can upload and review PDFs and supported images. DOCX upload also requires the configured, isolated converter; hosted DOCX conversion remains disabled.
 
 Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
 

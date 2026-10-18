@@ -12,9 +12,19 @@ Deploy the same checked main image to web and all three existing jobs. Verify sc
 
 Exercise real hosted desktop/mobile/keyboard home-to-request unavailable state and existing access-code navigation with clean URLs and private headers; confirm no unintended mail admission. Save private evidence and screenshot proof. Remove temporary access even on failure and preserve cleanup/schema rollback compatibility. Do not backdate enrollment or claim unperformed mailbox signing/completion, attachments or naturally elapsed seven-day purge. Record operational results without private identifiers, validate links/secrets and exact release checks, commit/push/create/attach/pass checks/merge and native Jira Done.
 
+## QUILS-90: Refresh hosted readiness and prepare the lookup release delta
+
+Status: Done (PR #95). All 12 exact-head checks passed with 1,975 .NET and 15 Node tests; 115 local Markdown links and secret scans passed. Native Jira Done verified. Documentation only.
+
+Refresh README and hosted readiness/rollout documentation after approved QUILS-83 staging and merged QUILS-84 through QUILS-88 lookup work, reconciling QUILS-89 before merge. Replace stale claims that disclosures, TSA trust and immutable storage are unconfigured with dated demonstrated readiness and truthful outstanding hosted/email/Office and naturally elapsed retention validation. Keep public docs practical and free of private resource identifiers or deployment-specific operational inventories.
+
+Prepare the concrete minimal current-source lookup release delta: prerequisite release, schema/runtime and worker contact-cleanup grants, compatibility/rollback limits, bounded disabled-email hosted navigation checks and external-provider test limits. Distinguish checked image/schema rollout from any new permission/configuration approval; do not silently broaden the earlier package. Keep hosted email disabled, AI deferred and separate converter/SES feedback ownership intact.
+
+No code behavior, Azure/AWS mutation/deployment, permission grant, actual TSA request, real email, purchase or dependency change in this documentation slice. The matching native Jira story exists before implementation-file research. Validate links/secrets and source facts, commit/push/create/attach/pass checks/merge and native Jira Done.
+
 ## QUILS-89: Request private completed-document lookup links
 
-Status: In Progress. Depends on merged QUILS-88 (PR #93) and QUILS-84/85/86/87. Owned by this chat. Hosted email stays disabled.
+Status: Done (PR #94). All 14 exact-head checks passed with 1,975 .NET and 15 Node tests; 144 focused local regressions and real synthetic desktop/mobile/keyboard flows passed. Native Jira Done verified. Hosted email stays disabled.
 
 Depends on merged QUILS-88 (PR #93), QUILS-87 and QUILS-84/85/86. Add the public request UI for the existing verified-mailbox retained-document lookup; do not duplicate its backend authority or enable hosted mail. Implementation uses the separate QUILS-89 branch on merged main.
 
@@ -28,7 +38,7 @@ Validate disabled/scanner/gated behavior without private backends or SQL; CSRF/r
 
 Source-only slice: no Azure/AWS/resource or hosted permission changes, deployment, live email enablement, actual TSA call, purchase, dependency or AI. Keep hosted Email disabled. Keep this story and docs/plan matched before implementation; validate, secret scan, commit/push/create/attach/pass checks/merge and native Jira Done.
 
-Validation: 20 new scoped HTTP/real SQL/Azurite/Mailpit cases pass, including admission rollback/unknown commits, lazy disabled gates, CSRF and independent rate limits, neutral capped/suppressed results, preserved lookup identity and exact completed-packet bytes. Real synthetic desktop/mobile/keyboard public form, captured SMTP link, explicit two-stage redemption, private list, packet handoff and both desktop downloads passed; phone executed-file download and 390-pixel layout passed. Invalid email stays in browser validation; the one-use clean acknowledgement clears input and disappears on refresh. Disabled email removes the form while preserving existing access entry. No browser console errors were observed. The disposable host was stopped and its fixture disposed. Current-head regression, secrets and full CI remain merge gates.
+Validation: 20 new scoped HTTP/real SQL/Azurite/Mailpit cases pass, including admission rollback/unknown commits, lazy disabled gates, CSRF and independent rate limits, neutral capped/suppressed results, preserved lookup identity and exact completed-packet bytes. Real synthetic desktop/mobile/keyboard public form, captured SMTP link, explicit two-stage redemption, private list, packet handoff and both desktop downloads passed; phone executed-file download and 390-pixel layout passed. Invalid email stays in browser validation; the one-use clean acknowledgement clears input and disappears on refresh. Disabled email removes the form while preserving existing access entry. No browser console errors were observed. The disposable host was stopped and its fixture disposed. All 144 current-head focused regressions, staged/full-history secret scans and full CI passed before merge.
 
 ## QUILS-88: Expire and clean up pre-envelope lookup contact data
 

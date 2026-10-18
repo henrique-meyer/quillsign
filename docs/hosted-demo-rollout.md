@@ -4,9 +4,21 @@ This is an operator review and validation plan. It does not authorize resource c
 
 ## Observed deployment and remaining gates
 
-Read-only checks on 2026-10-17 found an earlier application image on the web app and both existing jobs. Email remained disabled. The web/dispatch environment did not include the new demo-retention, synthetic-disclosure or timestamp settings. Storage versioning, seven-day blob/container soft deletion and a seven-day document lifecycle rule were enabled. The final container reported no immutability policy or legal hold; version-level support was not demonstrated. A data-plane inventory could not be verified with the operator's current permissions. Do not assume the container is empty or grant access implicitly.
+The approved QUILS-83 staging rollout on 2026-10-18 deployed PR #88 to the web app and all three jobs. The synthetic disclosure profile and seven-day first-upload interval were configured. Scoped checks verified version-level final protection, exact locked expiry/readback, early prior-version deletion rejection and cleanup of the disposable probe after expiry. The legacy age-based document lifecycle rule was disabled; seven-day soft-delete recovery remained unchanged. Persistent demo sealing, explicit FreeTSA trust and shared request coordination passed bounded real-provider checks. Worker SQL permissions and scheduled storage-only recovery passed their staging checks. Temporary inventory and SQL access were removed.
+
+Email and hosted Office conversion remained disabled. Additional live timestamp probes or hosted packet tests require a separately reviewed provider-request budget. Full hosted mailbox-bound signing/completion and a naturally elapsed enrolled seven-day purge were not demonstrated. Local SQL/Azurite/Mailpit tests and browser checks cover the signing and newer completed-document lookup flows, but those newer source commits were not part of that staging release.
 
 These observations are a dated snapshot, not a continuous health check. Re-check the scoped resources before an approved rollout. Source/CI tests and local synthetic browser flows do not replace hosted provider, identity and storage validation. The existing `work verify` command is a baseline check, not certification of the new purge grant, final-version protection or TSA readiness.
+
+### Releasing the newer lookup source
+
+QUILS-84 through QUILS-89 add verified-mailbox completed-document lookup, private packet handoff, durable link delivery, contact cleanup and the public request form. Select a merged main release with all checks passed. These features do not enable hosted email automatically; `/find/request` must show its unavailable state while email is disabled, and GET must not create a request or authority.
+
+The lookup-contact migration adds an immutable policy table and guarded cleanup procedure. A normal Deploy run applies migrations and updates web plus all three jobs, but does **not** apply runtime-table grants or the separate worker cleanup grant. Review and approve those permissions before enabling new lookup admissions: the explicit `database grant-runtime` command adds the table's SELECT/INSERT permissions with UPDATE/DELETE denied, and `database grant-lookup-retention` grants only guarded contact cleanup to the worker. The web runtime must not receive cleanup execution. Use the commands with a scoped administrator connection; the older cloud helper's operation allowlist does not include the latter command. See [lookup contact retention](document-lookup.md#lookup-contact-retention).
+
+Keep the existing disabled email, demo interval/profile, converter gate, TSA trust, shared keys, storage protection and maintenance schedules unchanged. No new cloud service, general storage privilege or additional provider call is required to deploy the source and check disabled-email navigation. Record the exact image, migration/grant results, revision readiness and health privately. Exercise the public home-to-request-to-access paths on desktop/mobile/keyboard, confirm clean URLs and the unavailable request form, and verify that tests did not queue mail. A healthy page does not prove mailbox delivery or completed-packet access.
+
+Do not drop the lookup table/procedure or remove immutable snapshots to roll back an image. Once lookup requests exist, retain a compatible worker with contact-cleanup authority and original deadlines. Review leases and retained data before changing schema or worker permissions. Existing final versions, document purge markers, key material and historical disclosures remain independent of the lookup release.
 
 | Gate | Required evidence before general demo sending |
 | --- | --- |
@@ -20,9 +32,9 @@ These observations are a dated snapshot, not a continuous health check. Re-check
 
 AI field suggestions remain deferred.
 
-## Resource and permission approval package
+## Original staging resource and permission package
 
-Review the actual scopes and deployment diff privately with the owner. Existing hosting approval does not automatically approve these additions or broaden the hint-recovery identity.
+The QUILS-83 package below was approved and applied for the dated staging rollout. It remains a reference for self-hosters and future changes, not authorization to repeat a migration, grant broader permissions or consume more provider requests. Review any new scopes and deployment diff privately with the owner.
 
 | Proposed change | Scope and reason |
 | --- | --- |
