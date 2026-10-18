@@ -17,6 +17,15 @@ namespace QuillSign.Tests;
 public sealed class SenderContactCorrectionPageTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
     [Fact]
+    public async Task Enabled_service_registration_reads_the_current_signer_metadata()
+    {
+        await using var r = await Run.Create(fixture); using var scope = r.H.App.Services.CreateScope();
+        var preview = await scope.ServiceProvider.GetRequiredService<SignerContactCorrections>()
+            .PreviewAsync(r.H.Principal, r.H.Envelope.PublicId, r.H.Clock.GetUtcNow().AddHours(2), null);
+        Assert.NotNull(preview); Assert.Null(preview.Blocked); Assert.Equal(r.H.First.Id, preview.Review.SignerId);
+    }
+
+    [Fact]
     public async Task Address_review_is_private_read_only_and_confirmation_is_deliberate_idempotent_and_revokes_old_access()
     {
         await using var r = await Run.Create(fixture); var originalToken = r.RawToken; var before = await Counts(r);
@@ -128,6 +137,18 @@ public sealed class SenderContactCorrectionPageTests(SqlDatabaseFixture fixture)
             }).Build();
             var h = await Shared.Create(fixture, browser: true, configure: services => services.AddQuillSignSignerContactCorrections(config));
             h.Clock.Advance(new DateTimeOffset(DateTime.UtcNow.Date.AddDays(2), TimeSpan.Zero).AddHours(1) - h.Clock.GetUtcNow());
+            using (var scope = h.App.Services.CreateScope())
+            {
+                // Use the actual roster workflow so contact-history verification has
+                // the same canonical sender evidence as a prepared browser request.
+                var setup = scope.ServiceProvider.GetRequiredService<SignerSetup>();
+                var roster = (await setup.GetAsync(h.Principal, h.Envelope.PublicId))!;
+                var changed = await setup.ChangeAsync(h.Principal, h.Envelope.PublicId,
+                    new(SignerChangeKind.Save, roster.Version, h.First.Id, h.First.FullName, h.First.Email, h.First.Role),
+                    "127.0.0.1", "Synthetic roster NO AGREEMENT");
+                Assert.Equal(SignerSetupError.None, changed.Error);
+                h.Version = Convert.FromBase64String((await setup.GetAsync(h.Principal, h.Envelope.PublicId))!.Version);
+            }
             var run = new Run(h); await run.Session(); var sent = (await h.Send())!;
             for (var i = 0; i < 12; i++) { await using var db = fixture.Open(); if (await db.WorkItems.Where(x => x.Id == sent.InvitationWorkId).Select(x => x.Status).SingleAsync() == WorkStatus.Completed) return run; Assert.True(await h.Once()); }
             throw new InvalidOperationException("Synthetic original invitation did not settle.");
@@ -138,7 +159,7 @@ public sealed class SenderContactCorrectionPageTests(SqlDatabaseFixture fixture)
             Client.DefaultRequestHeaders.Remove("Cookie"); Client.DefaultRequestHeaders.Add("Cookie", string.Join("; ", cookies.Select(x => x.Key + "=" + x.Value)));
         }
         public async Task Session() { using var response = await Client.GetAsync("/test-session"); Assert.Equal(HttpStatusCode.OK, response.StatusCode); Take(response); }
-        public async Task<string> Page(string path) { using var response = await Client.GetAsync(path); Take(response); Assert.Equal(HttpStatusCode.OK, response.StatusCode); return await response.Content.ReadAsStringAsync(); }
+        public async Task<string> Page(string path) { using var response = await Client.GetAsync(path); Take(response); var body = await response.Content.ReadAsStringAsync(); Assert.True(response.StatusCode == HttpStatusCode.OK, $"{response.StatusCode}: {Regex.Match(body, "<p class=\"document-error\" role=\"alert\">([^<]*)").Groups[1].Value}"); return body; }
         public Task<HttpResponseMessage> Review(string page, Dictionary<string, string>? changes = null) {
             var values = new Dictionary<string, string> { ["Step"] = "review", ["NewEmail"] = Address }; if (changes is not null) foreach (var pair in changes) values[pair.Key] = pair.Value;
             return Post(page, values);

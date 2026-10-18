@@ -39,6 +39,8 @@ public static class SenderConfiguration
         services.AddScoped<BrowserNotices>();
         services.AddScoped<InvitationResendReviewProtection>();
         services.AddScoped<Func<InvitationResends>>(sp=>()=>sp.GetRequiredService<InvitationResends>());
+        services.AddQuillSignSignerContactCorrections(config);
+        services.AddScoped<SignerContactCorrectionBrowser>();
         services.AddAuthentication(EnvelopeStorageAuthorization.SenderScheme).AddCookie(EnvelopeStorageAuthorization.SenderScheme, cookie =>
         {
             cookie.Cookie.Name = environment.IsDevelopment() ? "QuillSign.Sender" : "__Host-QuillSign.Sender";
