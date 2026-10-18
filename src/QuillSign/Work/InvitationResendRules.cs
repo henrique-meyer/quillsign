@@ -8,7 +8,8 @@ namespace QuillSign.Work;
 
 internal sealed record ResendSaved(EmailOutbox Row, WorkItem Work, ResendMail Mail);
 
-internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationResendOptions limits, InvitationResendProtection protection, TimeProvider time)
+internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationResendOptions limits, InvitationResendProtection protection, TimeProvider time,
+    InvitationSuccessorProtection? successors=null)
 {
     // Damaged index keys must not make latest lookups lose an admission.
     // Return one scalar; never load unbounded historical payloads.
@@ -105,33 +106,7 @@ internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationRes
     }
     internal async Task<bool> WithinCapsAsync(ResendRequest candidate, bool reserved, CancellationToken ct)
     {
-        limits.Validate();
-        var start = candidate.CounterUntil.AddDays(-1);
-        if (time.GetUtcNow() < start || time.GetUtcNow() >= candidate.CounterUntil) return false;
-        // Audit time is immutable. Moving an outbox timestamp cannot hide a
-        // reservation from these counts. Missing/corrupt records fail closed.
-        var query = db.AuditEvents.AsNoTracking().Where(x => x.Event == InvitationResendProtection.Event && x.At >= start && x.At < candidate.CounterUntil);
-        var sizes = await query.OrderBy(x => x.Id).Select(x => new { x.Id, Size = EF.Functions.DataLength(x.DataJson) }).Take(1001).ToArrayAsync(ct);
-        if (sizes.Length > 1000) return false;
-        if (sizes.Any(x => x.Size > 24000)) throw Invalid();
-        var auditIds = sizes.Select(x => x.Id).ToArray();
-        var audits = await query.Where(x => auditIds.Contains(x.Id)).OrderBy(x => x.Id).ToArrayAsync(ct);
-        if (audits.Length != sizes.Length) throw Invalid();
-        var requests = audits.Select(InvitationResendProtection.ReadEvidence).ToArray();
-        if (requests.Select(x => x.Id).Distinct().Count() != requests.Length) throw Invalid();
-        var ids = requests.Select(x => x.Id).ToArray();
-        var payloadSizes = await db.EmailOutbox.Where(x => ids.Contains(x.Id)).Select(x => new { Payload = EF.Functions.DataLength(x.PayloadJson), Attachments = EF.Functions.DataLength(x.AttachmentsJson) }).ToArrayAsync(ct);
-        if (payloadSizes.Length != requests.Length || payloadSizes.Any(x => x.Payload > 24000 || x.Attachments != 4)) throw Invalid();
-        var rows = await db.EmailOutbox.AsNoTracking().Where(x => ids.Contains(x.Id)).ToArrayAsync(ct);
-        if (rows.Length != requests.Length) throw Invalid();
-        var saved = rows.ToDictionary(x => x.Id, protection.Read);
-        foreach (var p in requests) if (saved[p.Id].Request != p) throw Invalid();
-        if (reserved && !requests.Contains(candidate)) throw Invalid();
-        var extra = reserved ? 0 : 1;
-        return requests.Length + extra <= limits.DailyRequests &&
-            requests.Count(x => x.Email == candidate.Email) + extra <= limits.DailyAddressRequests &&
-            requests.Count(x => x.IpHash == candidate.IpHash) + extra <= limits.DailyIpRequests &&
-            requests.Count(x => x.SenderEmail == candidate.SenderEmail) + extra <= limits.DailySenderRequests;
+        return await new InvitationResendReservations(db,protection,successors,limits,time).WithinAsync(candidate,reserved,ct);
     }
     internal async Task<bool> SettledAsync(EmailOutbox row, WorkItem work, Guid signerId, string documentSha256, string disclosureSha256, Guid? tokenId, CancellationToken ct)
     {

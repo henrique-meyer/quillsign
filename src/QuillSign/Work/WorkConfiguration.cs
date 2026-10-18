@@ -61,6 +61,8 @@ public static class WorkConfiguration
             services.TryAddSingleton(resendOptions);services.AddScoped<InvitationResendProtection>();
             services.AddScoped<InvitationSuccessorProtection>();services.AddScoped<InvitationLineage>();
             services.AddScoped<InvitationSuccessorJobs>();services.AddScoped<InvitationSuccessorDelivery>();
+            services.AddScoped<QuillSign.Sender.CanonicalInvitationResends>();
+            services.AddScoped<IInvitationSuccessorPolicy>(sp=>sp.GetRequiredService<QuillSign.Sender.CanonicalInvitationResends>());
             services.AddScoped<Func<InvitationSuccessorDelivery>>(sp=>()=>sp.GetRequiredService<InvitationSuccessorDelivery>());
             services.AddScoped<QuillSign.Sender.InvitationResends>();services.AddScoped<InvitationResendDelivery>();
             services.AddScoped<Func<InvitationResendDelivery>>(sp=>()=>sp.GetRequiredService<InvitationResendDelivery>());

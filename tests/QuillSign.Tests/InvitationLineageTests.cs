@@ -115,9 +115,9 @@ public sealed class InvitationLineageTests(SqlDatabaseFixture fixture) : IClassF
     {
         private SignerContactRevision? correction;
         public Shared H=>h;public SentDraft Sent=>sent;
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,int? browserPort=null,Action<IServiceCollection>? configure=null,bool smtp=false,bool dispatch=true)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,int? browserPort=null,Action<IServiceCollection>? configure=null,bool smtp=false,bool dispatch=true,bool browser=false)
         {
-            var h=await Shared.Create(fixture,smtp:smtp,browser:browserPort is not null,browserPort:browserPort,
+            var h=await Shared.Create(fixture,smtp:smtp,browser:browser || browserPort is not null,browserPort:browserPort,
                 configure:s=>{s.AddScoped<SenderSentStatus>();configure?.Invoke(s);});
             h.Clock.Advance(new DateTimeOffset(DateTime.UtcNow.Date.AddDays(2),TimeSpan.Zero).AddHours(1)-h.Clock.GetUtcNow());
             using(var scope=h.App.Services.CreateScope()) {

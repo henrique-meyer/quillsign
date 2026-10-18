@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Documents;
@@ -17,7 +18,11 @@ public static class InvitationResendStatement
     public const string Text = "Send a replacement invitation to the current signer. Older unused invitation links will stop working.";
     public static string Sha256 => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(Text)));
 }
-public sealed record InvitationResendReview(Guid SignerId, string Name, string Email, string Version, Guid DocumentId, string DocumentSha256, string DisclosureSha256);
+public sealed record InvitationResendReview(Guid SignerId, string Name, string Email, string Version, Guid DocumentId, string DocumentSha256, string DisclosureSha256)
+{
+    [JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] public SignerContactEpoch? Contact {get;init;}
+    [JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] public Guid? PreviousId {get;init;}
+}
 public sealed record InvitationResendPreview(string Title, InvitationResendReview Review, InvitationResendOutcome? Blocked);
 public enum InvitationResendOutcome { Queued, AlreadyRequested, Unavailable, InvalidContext, InvalidConfirmation, Conflict, Closed, Busy, Capped, Suppressed }
 
@@ -26,9 +31,10 @@ public enum InvitationResendOutcome { Queued, AlreadyRequested, Unavailable, Inv
 // CSRF/rate limits; form values are not authority.
 public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOptions options, EmailOptions email, WorkOptions work,
     InvitationResendProtection protection, SignerInvitationProtection invitations, SignerAccess access, AuditWriter audit,
-    Func<IWorkSignals> signals, TimeProvider time, InvitationLineage? lineage=null)
+    Func<IWorkSignals> signals, TimeProvider time, InvitationLineage? lineage=null,InvitationSuccessorProtection? successors=null,
+    CanonicalInvitationResends? canonical=null)
 {
-    private readonly InvitationResendRules rules = new(db, options, protection, time);
+    private readonly InvitationResendRules rules = new(db, options, protection, time,successors);
     private bool Enabled => options.Enabled && email.Enabled && work.Enabled;
     public async Task<InvitationResendReview?> ReviewAsync(ClaimsPrincipal sender, string publicId, DateTimeOffset ticketExpiresAt, CancellationToken ct = default)
         => (await ReadAsync(sender, publicId, ticketExpiresAt, false, ct))?.Review;
@@ -49,9 +55,10 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
             else if (await PreviousAsync(scope.Value.Context, ct) is null) blocked = InvitationResendOutcome.Busy;
         }
         if (ticketExpiresAt <= time.GetUtcNow() || scope.Value.Envelope.ExpiresAt <= time.GetUtcNow()) return null;
+        var reviewed=await BuildReviewAsync(scope.Value,ct);
         DocumentRetentionAccess.Check(scope.Value.Deadline, time);
         await tx.CommitAsync(ct); DocumentRetentionAccess.Check(scope.Value.Deadline, time);
-        return Enabled && ticketExpiresAt > time.GetUtcNow() ? new(scope.Value.Envelope.Title!, Review(scope.Value), blocked) : null;
+        return Enabled && ticketExpiresAt > time.GetUtcNow() ? new(scope.Value.Envelope.Title!, reviewed, blocked) : null;
     }
     public async Task<InvitationResendOutcome> RequestAsync(ClaimsPrincipal sender, string publicId, DateTimeOffset ticketExpiresAt,
         Guid requestId, InvitationResendReview reviewed, bool confirmed, string? statementVersion, string? ip, string? userAgent, CancellationToken ct = default,
@@ -75,8 +82,12 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         await using (var tx = await db.Database.BeginTransactionAsync(ct)) {
             var scope = await ScopeAsync(envelopeId, senderEmail, publicId, ct); if (scope is null) return InvitationResendOutcome.Closed;
             await InvitationResendRules.VerifyIndexAsync(db, envelopeId, ct,time);
-            if (Review(scope.Value) != reviewed) return InvitationResendOutcome.Conflict;
             await InvitationResendRules.LockAsync(db, ct);
+            if(reviewed.Contact is not null) {
+                outcome=await (canonical??throw CanonicalResendEvidence.Invalid()).PrepareLockedAsync(scope.Value.Envelope,reviewed,until,id,ipHash,ip,ua,ct);
+                if(outcome is not (InvitationResendOutcome.Queued or InvitationResendOutcome.AlreadyRequested))return outcome;
+            } else {
+            if (await BuildReviewAsync(scope.Value,ct) != reviewed) return InvitationResendOutcome.Conflict;
             var existing = await rules.FindAsync(id, envelopeId, ct);
             if (existing is not null) {
                 var p = existing.Mail.Request;
@@ -107,12 +118,15 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
                 await audit.AppendAsync(envelopeId, InvitationResendProtection.Event, senderEmail, ip, ua, ct, InvitationResendProtection.Evidence(request));
                 await signals().PutHintAsync(id, now, ct); outcome = InvitationResendOutcome.Queued;
             }
+            }
             if (!Enabled) return InvitationResendOutcome.Unavailable;
             if (until <= time.GetUtcNow()) return InvitationResendOutcome.InvalidContext;
             DocumentRetentionAccess.Check(scope.Value.Deadline, time);
             if (scope.Value.Envelope.ExpiresAt <= time.GetUtcNow()) return InvitationResendOutcome.Closed;
-            var saved = await rules.FindAsync(id, envelopeId, ct) ?? throw InvitationResendRules.Invalid();
-            if (saved.Mail.Request.Deadline <= time.GetUtcNow()) return InvitationResendOutcome.Closed;
+            var saved = reviewed.Contact is null ? (await rules.FindAsync(id,envelopeId,ct))?.Mail.Request :
+                (await CanonicalResendEvidence.FindAsync(db,id,envelopeId,ct))?.Request;
+            if(saved is null)throw InvitationResendRules.Invalid();
+            if (saved.Deadline <= time.GetUtcNow()) return InvitationResendOutcome.Closed;
             if (reviewExpiresAt <= time.GetUtcNow()) return InvitationResendOutcome.Conflict;
             await tx.CommitAsync(ct);
         }
@@ -126,9 +140,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
             var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==context.Identity.EnvelopeId,ct);
             var contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(envelope,ct);
             var current=contacts.Current.SingleOrDefault(x=>x.Id==context.Identity.SignerId);
-            // The old explicit-resend format has no contact revision. Corrected
-            // contacts need their separately reviewed canonical producer.
-            if(current is null || current.Epoch!=SignerContactEpoch.Legacy)return null;
+            if(current is null)return null;
             var history=await (lineage??throw InvitationSuccessorProtection.Invalid()).ReadLockedAsync(envelope,current.Id,contacts,ct);
             if(history is null)return null;var currentEntry=history.Latest;
             if(currentEntry.Contact!=current.Epoch || currentEntry.Recipient!=context.Identity.Email || currentEntry.DocumentId!=context.Identity.DocumentId ||
@@ -161,8 +173,17 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         var context = await access.GetEligibleLockedAsync(id, current.Id, ct);
         return context is null ? null : (envelope, context, deadline);
     }
-    private static InvitationResendReview Review((Envelope Envelope, SignerReadContext Context, DateTimeOffset? Deadline) scope) => new(scope.Context.Identity.SignerId,
-        scope.Context.SignerName, scope.Context.Identity.Email, Convert.ToBase64String(scope.Envelope.RowVersion), scope.Context.Identity.DocumentId,
-        scope.Context.Identity.DocumentHash, scope.Context.Identity.DisclosureHash);
+    private async Task<InvitationResendReview> BuildReviewAsync((Envelope Envelope, SignerReadContext Context, DateTimeOffset? Deadline) scope,CancellationToken ct)
+    {
+        var review=new InvitationResendReview(scope.Context.Identity.SignerId,scope.Context.SignerName,scope.Context.Identity.Email,
+            Convert.ToBase64String(scope.Envelope.RowVersion),scope.Context.Identity.DocumentId,scope.Context.Identity.DocumentHash,scope.Context.Identity.DisclosureHash);
+        if(!await InvitationLineage.RequiresVerifiedHistoryAsync(db,scope.Envelope.Id,ct))return review;
+        var contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(scope.Envelope,ct);
+        var current=contacts.Current.SingleOrDefault(x=>x.Id==review.SignerId)??throw CanonicalResendEvidence.Invalid();
+        var history=await (lineage??throw CanonicalResendEvidence.Invalid()).ReadLockedAsync(scope.Envelope,current.Id,contacts,ct)??throw CanonicalResendEvidence.Invalid();
+        if(history.Latest.Contact!=current.Epoch || history.Latest.Recipient!=review.Email || history.Latest.DocumentId!=review.DocumentId ||
+            history.Latest.DocumentSha256!=review.DocumentSha256 || history.Latest.DisclosureSha256!=review.DisclosureSha256)throw CanonicalResendEvidence.Invalid();
+        return review with {Contact=current.Epoch,PreviousId=history.Latest.Id};
+    }
     private void Clean() { if (db.Database.CurrentTransaction is not null || db.ChangeTracker.HasChanges()) throw new InvalidOperationException("Invitation resend requires a clean standalone unit of work."); }
 }

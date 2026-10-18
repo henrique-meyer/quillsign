@@ -11,9 +11,9 @@ namespace QuillSign.Work;
 
 public sealed class InvitationResendDelivery(QuillSignDbContext db, InvitationResendOptions options, InvitationResendProtection protection,
     SignerAccess access, SignerInvitationFactory tokens, SignerInvitationTemplate template, IEmailSender sender,
-    EmailOptions email, WorkOptions work, AuditWriter audit, TimeProvider time, InvitationLineage? lineage=null)
+    EmailOptions email, WorkOptions work, AuditWriter audit, TimeProvider time, InvitationLineage? lineage=null,InvitationSuccessorProtection? successors=null)
 {
-    private readonly InvitationResendRules rules = new(db, options, protection, time);
+    private readonly InvitationResendRules rules = new(db, options, protection, time,successors);
     private bool Enabled => options.Enabled && email.Enabled && work.Enabled;
 
     public async Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken ct)
