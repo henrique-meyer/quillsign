@@ -1,6 +1,6 @@
 # Completed-document lookup
 
-QUILS-84 adds the backend for finding retained completed documents after verifying a mailbox. QUILS-85 adds an explicit handoff to the existing read-only final-packet reader. QUILS-86 adds scanner-safe browser entry and the private list. QUILS-87 adds the internal durable mail producer. Pre-envelope contact-data cleanup (QUILS-88) and a public email-request form remain required before public lookup delivery. Hosted sending remains disabled.
+The lookup flow finds retained completed documents after verifying a mailbox, then hands a selected document to the existing read-only final-packet reader. It includes scanner-safe entry, a private paged list, capped durable mail, scoped contact-data cleanup and public request entry. Hosted sending remains disabled; lookup migration/grants and hosted validation remain prerequisites before enablement.
 
 `DocumentLookup.IssueAsync` is a trusted issuance operation. Its protected transport must be delivered privately to the nominated mailbox, never returned by an anonymous request API, logged or exposed in a query string. The mail producer calls it at supported dispatch, after checking its SQL lease. Browser entry uses explicit scanner-safe POST redemption, CSRF protection and clean redirects.
 
@@ -34,13 +34,17 @@ The reader expiry is fixed at the earliest of its configured normal lifetime, th
 
 ## Browser access
 
+`/find/request`, linked from the home and access-code pages, accepts a single email address in a CSRF-protected form POST. GET never requests mail or lookup authority. The page gates its private request backend on enabled email/work and configured demo retention; otherwise it shows a generic unavailable state with access to existing links. Ordinary framework antiforgery/authentication cookies retain their protections. The request POST uses an independent IP entry-window partition, followed by the durable producer's daily address/IP/global caps and suppression checks.
+
+The server chooses the request ID and returns the same neutral acknowledgement for unknown, suppressed or capped addresses. It does not query document membership, return an access code, sign the caller in or change an existing lookup session. Successful HTML actions set a static two-minute protected HttpOnly notice and redirect to the clean request URL; refresh shows it once and performs no action. Clients accepting JSON receive only the message body, using the same form input. Query-only email input is rejected. Invalid input, missing trusted IP and unavailable dependencies produce bounded errors; an uncertain admission acknowledgement does not assert delivery or automatically retry. Private input and transport stay out of notices, redirects and logs.
+
 `/find/access` accepts a privately delivered `#token=...` fragment or a manually entered access code. Script immediately removes the fragment from the address bar and keeps it only in memory until the user selects Continue. This first CSRF-protected POST validates the protected transport and stores a private pending cookie, bounded by ten minutes and the original link expiry. A separate Open my documents POST supplies its nonce and consumes the code once. Neither GET nor script automatically redeems a link. Another tab's newer pending link invalidates the earlier confirmation nonce. An uncertain redemption acknowledgement requires a fresh link or returning to an already-open list.
 
 Successful redemption issues only the named lookup authentication ticket and its matching HttpOnly receipt. The private `/find/documents` view lists the original verified snapshot with UTC completion/retention times. Next and Start at first document are CSRF-protected POSTs: their protected session-bound cursor stays in POST bodies and an HttpOnly paging cookie, followed by a clean redirect. Refresh is read-only. Invalid or cross-session cursors require an explicit reset; they never silently broaden the view.
 
 Open document is another explicit CSRF-protected POST. It invokes `LookupPacketAccess`, issues the independently bounded completion-reader cookie/receipt and redirects to `/complete/{publicId}`. Existing download buttons prepare and reverify the exact executed PDF and standalone certificate. Opening or downloading never refreshes original lookup authority, restores editing or extends retention. Missing storage or changed source evidence produces a private recoverable error rather than a substitute file. Expired sessions return to clean access entry with a private one-use notice.
 
-All `/find` responses, including antiforgery and rate-limit failures, use `no-store`, `no-referrer` and `nosniff`. Entry POSTs share the configured sender entry-window limits through an independent IP partition; list reads allow 120 per minute and list actions 30 per minute. These limits supplement the later email-request abuse controls; they do not enable sending or provide a public way to obtain a lookup code.
+All `/find` responses, including antiforgery and rate-limit failures, use `no-store`, `no-referrer` and `nosniff`. Entry POSTs share the configured sender entry-window limits through an independent IP partition; list reads allow 120 per minute and list actions 30 per minute. These limits supplement the durable email-request abuse controls. The anonymous request response never supplies a lookup code; it is delivered only through permitted email.
 
 ## Internal durable mail
 
@@ -61,7 +65,7 @@ A definite non-submission invalidates the exact unconsumed token and clears only
 
 Caps apply separately to requests admitted on the UTC day and submission intents started on that day, including queued requests from an earlier day and uncertain submissions. Definitely unsubmitted retries retain their original admission record. Existing global suppression and lazy provider credentials remain enforced.
 
-This producer has no public request endpoint and does not enable email. Contact cleanup is a separate scope from document purge, as described below.
+The public request page invokes this producer lazily after its gates and validation. It does not enable email. Contact cleanup is a separate scope from document purge, as described below.
 
 ## Lookup contact retention
 

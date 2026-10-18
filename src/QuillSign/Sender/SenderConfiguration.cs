@@ -86,7 +86,7 @@ public static class SenderConfiguration
                     const string message="Too many document lookup requests. Wait before trying again. If you already opened your documents, return to that view.";
                     context.Response.Headers.CacheControl="no-store";context.Response.Headers["Referrer-Policy"]="no-referrer";
                     if(WantsJson(context))await context.Response.WriteAsJsonAsync(new {message},ct);
-                    else {context.Response.ContentType="text/html; charset=utf-8";await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\"/find/access\">Return to lookup access</a></p></main></body></html>",ct);}return;
+                    else {var target=context.Request.Path.StartsWithSegments("/find/request") ? "/find/request" : "/find/access";context.Response.ContentType="text/html; charset=utf-8";await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\""+target+"\">Return to lookup access</a></p></main></body></html>",ct);}return;
                 }
                 if(IsFinalFile(context.Request.Path) || context.Request.Query["handler"]=="Download" &&
                     (context.Request.Path.StartsWithSegments("/draft") || context.Request.Path.StartsWithSegments("/sign"))) {
@@ -123,6 +123,9 @@ public static class SenderConfiguration
                     (context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/review",StringComparison.Ordinal)==true && HttpMethods.IsPost(context.Request.Method)) ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(context.Request.Path.StartsWithSegments("/find/request") && HttpMethods.IsPost(context.Request.Method))
+                    return RateLimitPartition.GetFixedWindowLimiter("lookup-request:"+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=options.RequestsPerWindow,Window=TimeSpan.FromMinutes(options.WindowMinutes),QueueLimit=0,AutoReplenishment=true });
                 if(context.Request.Path.StartsWithSegments("/find/access") && HttpMethods.IsPost(context.Request.Method))
                     return RateLimitPartition.GetFixedWindowLimiter("lookup-entry:"+address,_=>new FixedWindowRateLimiterOptions {
                         PermitLimit=options.RequestsPerWindow,Window=TimeSpan.FromMinutes(options.WindowMinutes),QueueLimit=0,AutoReplenishment=true });

@@ -4,16 +4,35 @@ Tasks are recorded here and in Jira before implementation. Private deployment na
 
 ## QUILS-90: Refresh hosted readiness and prepare the lookup release delta
 
-Status: In Progress. Documentation only. Prerequisite lookup request PR #94 (QUILS-89) remains in validation; preserve that independent work.
+Status: In Progress. Documentation only. Prerequisite lookup request PR #94 (QUILS-89) is merged; native Jira Done verified.
 
 Refresh README and hosted readiness/rollout documentation after approved QUILS-83 staging and merged QUILS-84 through QUILS-88 lookup work, reconciling QUILS-89 before merge. Replace stale claims that disclosures, TSA trust and immutable storage are unconfigured with dated demonstrated readiness and truthful outstanding hosted/email/Office and naturally elapsed retention validation. Keep public docs practical and free of private resource identifiers or deployment-specific operational inventories.
 
 Prepare the concrete minimal current-source lookup release delta: prerequisite release, schema/runtime and worker contact-cleanup grants, compatibility/rollback limits, bounded disabled-email hosted navigation checks and external-provider test limits. Distinguish checked image/schema rollout from any new permission/configuration approval; do not silently broaden the earlier package. Keep hosted email disabled, AI deferred and separate converter/SES feedback ownership intact.
 
 No code behavior, Azure/AWS mutation/deployment, permission grant, actual TSA request, real email, purchase or dependency change in this documentation slice. The matching native Jira story exists before implementation-file research. Validate links/secrets and source facts, commit/push/create/attach/pass checks/merge and native Jira Done.
+
+## QUILS-89: Request private completed-document lookup links
+
+Status: Done (PR #94). All 14 exact-head checks passed with 1,975 .NET and 15 Node tests; 144 focused local regressions and real synthetic desktop/mobile/keyboard flows passed. Native Jira Done verified. Hosted email stays disabled.
+
+Depends on merged QUILS-88 (PR #93), QUILS-87 and QUILS-84/85/86. Add the public request UI for the existing verified-mailbox retained-document lookup; do not duplicate its backend authority or enable hosted mail. Implementation uses the separate QUILS-89 branch on merged main.
+
+Provide /find/request as an accessible Razor entry form, a discoverable Find my documents link on the home page, and request/access cross-links. GET never sends, prepares or redeems lookup authority. POST requires antiforgery, a bounded normalized address and the trusted remote request IP, with an independent configured entry-rate partition before backend admission. Choose IDs on the server; never return private links, tokens, work IDs, membership or document counts to an anonymous caller. Unknown, suppressed and capped requests receive the same neutral acknowledgement. Successful HTML actions use a short-lived one-use HttpOnly notice and clean redirect; JSON clients receive only the neutral message body. Invalid input and unavailable/uncertain outcomes remain bounded and do not report confirmed delivery.
+
+Gate private lookup-request backend resolution on EmailOptions.Enabled, WorkOptions.Enabled and the configured valid demo retention interval. Disabled/scanner GETs and gated actions must not resolve SQL, queue/storage, email transport or lookup dispatch/issuance/payload-key backends. Ordinary framework antiforgery, authentication and protected notice-cookie processing retain their normal protections; do not disable CSRF or invent an unprotected authority shortcut to avoid framework key use. Display an honest generic unavailable state while hosted sending is disabled. Reuse existing static protected notice plumbing lazily and the /find no-store/no-referrer/nosniff boundary. Failure handling must not log sensitive data, automatically retry ambiguous admission or claim a send was confirmed.
+
+Preserve existing request/dispatch caps, suppression, immutable contact cleanup, link/session and document retention bounds. Requesting a link does not replace an existing lookup session, redeem authority, restore edits or extend access. No CAPTCHA, new operator disclosure/privacy guarantee, query action state or private proof in URL/logs.
+
+Validate disabled/scanner/gated behavior without private backends or SQL; CSRF/rate/invalid/unknown/suppressed/capped/error and uncertain-commit outcomes; neutral responses and notices without address/authority leakage. Exercise supported local SMTP Mailpit on a genuine synthetic completed non-agreement packet: public form, captured email, explicit two-stage redemption, private list, exact executed PDF and certificate downloads. Validate the empty-mailbox path and real desktop/mobile/keyboard behavior. Reuse current worker capabilities and fake local TSA fixtures; do not create a public test shortcut.
+
+Source-only slice: no Azure/AWS/resource or hosted permission changes, deployment, live email enablement, actual TSA call, purchase, dependency or AI. Keep hosted Email disabled. Keep this story and docs/plan matched before implementation; validate, secret scan, commit/push/create/attach/pass checks/merge and native Jira Done.
+
+Validation: 20 new scoped HTTP/real SQL/Azurite/Mailpit cases pass, including admission rollback/unknown commits, lazy disabled gates, CSRF and independent rate limits, neutral capped/suppressed results, preserved lookup identity and exact completed-packet bytes. Real synthetic desktop/mobile/keyboard public form, captured SMTP link, explicit two-stage redemption, private list, packet handoff and both desktop downloads passed; phone executed-file download and 390-pixel layout passed. Invalid email stays in browser validation; the one-use clean acknowledgement clears input and disappears on refresh. Disabled email removes the form while preserving existing access entry. No browser console errors were observed. The disposable host was stopped and its fixture disposed. All 144 current-head focused regressions, staged/full-history secret scans and full CI passed before merge.
+
 ## QUILS-88: Expire and clean up pre-envelope lookup contact data
 
-Status: In Progress (draft PR #93; regression and CI validation pending). Depends on merged QUILS-87 (PR #92) and QUILS-84/85/86. Required before a public lookup request form or real lookup sending. Owned by this chat.
+Status: Done (PR #93). All ten exact-head checks passed with 1,955 .NET and 15 Node tests in both full CI runs; 103 focused local cases passed. Native Jira Done verified after merge. Depends on merged QUILS-87 (PR #92) and QUILS-84/85/86. Owned by this chat.
 
 Depends on merged QUILS-87 (PR #92) and QUILS-84/85/86. Complete source-only lookup contact cleanup before any public request form or real lookup sending. Lookup EmailOutbox/WorkItem records are envelope-null and outside document purge. Use the existing owner-configured Demo:PurgeAfterDays (1..36500); when unset, refuse new lookup admission without SQL/signals. Snapshot the original request UTC second and fixed delete deadline in an immutable LookupContactRetentionSnapshots table. Configuration changes apply only to future enrollments; no invented operator policy or backup-erasure guarantee.
 
