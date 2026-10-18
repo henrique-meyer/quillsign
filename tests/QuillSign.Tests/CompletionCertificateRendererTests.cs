@@ -168,6 +168,23 @@ public sealed class CompletionCertificateRendererTests
         Assert.ThrowsAny<OperationCanceledException>(()=>renderer.PreparePacket(f.Source,f.Pages,f.Evidence,cancelled));
         Assert.ThrowsAny<OperationCanceledException>(()=>renderer.PrepareStandalone(f.Evidence,null!,null!,cancelled));
     }
+    [Theory]
+    [InlineData("actor")][InlineData("name")][InlineData("revision")][InlineData("number")][InlineData("address")]
+    [InlineData("same-address")][InlineData("snapshot")][InlineData("late")][InlineData("missing")][InlineData("unexpected")]
+    public void Correction_certificate_rejects_unbound_discontinuous_or_mislabeled_party_evidence(string fault)
+    {
+        var f=Fixture(); var party=f.Evidence.Signers[0]; var first=f.Evidence.Events[0];
+        var contact=new CompletionContactCorrection(party.Id,party.Name,"old-"+party.Email,party.Email,Guid.NewGuid(),1,new string('a',64));
+        var entry=first with {Event=SignerContactHistory.Event,ActorType="Sender",Actor=f.Evidence.Sender.Email,At=party.ConsentedAt.AddSeconds(-1),ContactCorrection=contact};
+        entry=fault switch {
+            "actor"=>entry with {ActorType="Signer"},"name"=>entry with {ContactCorrection=contact with {Name="Different person"}},
+            "revision"=>entry with {ContactCorrection=contact with {RevisionId=Guid.Empty}},"number"=>entry with {ContactCorrection=contact with {Number=2}},
+            "address"=>entry with {ContactCorrection=contact with {NewEmail="other-"+party.Email}},"same-address"=>entry with {ContactCorrection=contact with {OldEmail=party.Email}},
+            "snapshot"=>entry with {ContactCorrection=contact with {RetirementSha256="invalid"}},"late"=>entry with {At=party.FinishedAt},
+            "missing"=>entry with {ContactCorrection=null},"unexpected"=>entry with {Event="unrelated"},_=>throw new InvalidOperationException()};
+        var evidence=f.Evidence with {Events=new[]{entry}.Concat(f.Evidence.Events.Skip(1)).ToArray()};
+        Assert.Throws<DocumentRejectedException>(()=>new CompletionCertificateRenderer().PreparePacket(f.Source,f.Pages,evidence));
+    }
     private static string Text(UglyToad.PdfPig.PdfDocument pdf)=>string.Join("\n",pdf.GetPages().Select(p=>UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor.ContentOrderTextExtractor.GetText(p)));
     private static string Compact(string text)=>new(text.Where(c=>!char.IsWhiteSpace(c)).ToArray());
     private static byte[] Hash(string value)=>SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value));
