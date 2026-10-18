@@ -14,7 +14,10 @@ public static class SignerContactCorrectionStatement
 public sealed record SignerContactCorrectionReview(Guid SignerId, string Name, string OldEmail, string NewEmail,
     string Version, string SignerVersion, Guid ContactRevisionId, int ContactRevisionNumber,
     Guid DocumentId, string DocumentSha256, string DisclosureSha256);
-public sealed record SignerContactCorrectionPreview(string Title, SignerContactCorrectionReview Review, SignerContactCorrectionOutcome? Blocked);
+public sealed record SignerContactCorrectionPreview(string Title, SignerContactCorrectionReview Review, SignerContactCorrectionOutcome? Blocked)
+{
+    public DateTimeOffset? RetentionDeadline { get; init; }
+}
 public enum SignerContactCorrectionOutcome
 {
     Queued, AlreadyRequested, Unavailable, InvalidContext, InvalidConfirmation, Conflict, Closed, Busy, Capped, Suppressed, DuplicateAddress
