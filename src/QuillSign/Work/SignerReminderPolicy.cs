@@ -30,12 +30,15 @@ public sealed class SignerReminderOptions
     }
 }
 
-public sealed class SignerReminderPolicy
+public sealed class SignerReminderPolicy:IEquatable<SignerReminderPolicy>
 {
     public const string Version = "signer-reminder-policy-v1";
     public ImmutableArray<int> Days { get; }
     public string CanonicalJson { get; }
     public string Sha256 { get; }
+    public bool Equals(SignerReminderPolicy? other)=>other is not null && CanonicalJson==other.CanonicalJson;
+    public override bool Equals(object? other)=>other is SignerReminderPolicy policy && Equals(policy);
+    public override int GetHashCode()=>StringComparer.Ordinal.GetHashCode(CanonicalJson);
 
     private SignerReminderPolicy(ImmutableArray<int> days)
     {
