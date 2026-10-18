@@ -5,5 +5,7 @@
   {"ParameterKey":"ConfigurationSetName","ParameterValue":""},
   {"ParameterKey":"FeedbackTopicName","ParameterValue":""},
   {"ParameterKey":"SenderUserName","ParameterValue":""},
-  {"ParameterKey":"ProjectTagValue","ParameterValue":""}
+  {"ParameterKey":"ProjectTagValue","ParameterValue":""},
+  {"ParameterKey":"EnableFeedbackSubscription","ParameterValue":"false"},
+  {"ParameterKey":"FeedbackEndpoint","ParameterValue":""}
 ]
