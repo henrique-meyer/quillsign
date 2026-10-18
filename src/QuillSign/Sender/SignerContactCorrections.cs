@@ -39,7 +39,8 @@ public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContac
         if (ticketExpiresAt <= time.GetUtcNow() || envelope!.ExpiresAt <= time.GetUtcNow()) return null;
         DocumentRetentionAccess.Check(scope.Retention, time);
         await tx.CommitAsync(ct);
-        return Enabled && ticketExpiresAt > time.GetUtcNow() ? new(envelope.Title!, Review(scope, address), blocked) : null;
+        DocumentRetentionAccess.Check(scope.Retention, time);
+        return Enabled && ticketExpiresAt > time.GetUtcNow() ? new(envelope.Title!, Review(scope, address), blocked) { RetentionDeadline = scope.Retention } : null;
     }
 
     public async Task<SignerContactCorrectionOutcome> RequestAsync(ClaimsPrincipal sender, string publicId, DateTimeOffset ticketExpiresAt,
@@ -129,6 +130,10 @@ public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContac
             await db.Envelopes.Where(x => x.Id == envelopeId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, EnvelopeStatus.Sent), ct);
             await audit.AppendAtAsync(envelopeId, SignerContactHistory.Event, sender, ip, ua, ct, SignerContactHistory.Canonical(revision), now);
             await audit.AppendAtAsync(envelopeId, SignerContactCorrectionPolicy.Event, sender, ip, ua, ct, SignerContactCorrectionPolicy.Canonical(reservation), now);
+            if (until <= time.GetUtcNow()) return SignerContactCorrectionOutcome.InvalidContext;
+            if (reviewUntil <= time.GetUtcNow() || dayEnd <= time.GetUtcNow()) return SignerContactCorrectionOutcome.Conflict;
+            DocumentRetentionAccess.Check(scope.Retention, time);
+            if (envelope.ExpiresAt <= time.GetUtcNow()) return SignerContactCorrectionOutcome.Closed;
             var updated = await EnvelopeAsync(envelopeId, sender, publicId, ct) ?? throw SignerContactCorrectionPolicy.Invalid();
             queued = await jobs.PrepareCorrectionAsync(updated, id, ct);
             if (!Enabled) return SignerContactCorrectionOutcome.Unavailable;
