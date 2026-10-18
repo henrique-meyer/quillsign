@@ -239,9 +239,11 @@ Decision: no-go for legacy DOC intake in this release. Published the evidence-ba
 
 ## QUILS-124: Integrate supported static Office formats into guarded sender intake
 
-Status: To Do. Assigned to ChatGPT Codex. Depends on QUILS-107/108/109/110 content gates; public source integration only.
+Status: Done on merge after exact-head checks. Assigned to ChatGPT Codex. Depends on QUILS-107/108/109/110 content gates; public source integration only.
 
 Integrate merged content-specific PPTX/XLSX/ODT/RTF gates into sender persistence and private draft upload. New formats stay individually default-off and require supported fixed HTTP transport; the existing hosted DOCX-only sandbox contract remains unchanged. Authorize sender/revision/retention before reading, own exact bounded originals, verify family/derived/normalized hashes and publish original/PDF pair atomically with exact MIME and versioned pipeline provenance. Preserve existing confirmed document, row version and retention cutoff after rejected/stale/CSRF/provider/storage/uncertain-commit failures; explicit exact-PDF confirmation remains required. Never broaden suffix allowlist without invoking the correct content gate. DOC remains rejected per QUILS-111. Test every accepted family and hostile disguised/active variants, SQL/Azurite rollback/concurrency/recovery, ordinary PDF/image/DOCX/TXT regressions and actual local isolated converter desktop/mobile/keyboard upload, all pages, zoom/download/confirmation/replacement flows. Private routes stay unindexed/untracked; read ignored SEO checklist before page content changes. No cloud/resource/grant/settings/deploy/provider/live-email/TSA/AI/purchase or hosted format activation. Commit/push/attach/pass exact-head checks/selfmerge/native Done.
+
+Validation: All 48 new workflow/HTTP cases and 93 combined conversion-workflow cases pass. Real pinned no-egress conversion passed all four two-page desktop/mobile upload, zoom, exact PDF download and keyboard confirmation flows. Download/source hashes match persisted snapshots; disguised input and injected converter outage preserve the confirmed predecessor, then explicit recovery succeeds. No hosted settings, provider budget, email or timestamp call used.
 
 ## QUILS-91: Deploy the approved lookup release and validate hosted flows
 
