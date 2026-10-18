@@ -279,6 +279,8 @@ public sealed class AuthToken : IVersionedRecord
     public Guid? DocumentId { get; set; }
     public byte[]? DocumentSha256 { get; set; }
     public byte[]? DisclosureSha256 { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? SignerContactRevisionId { get; set; }
     public Guid? CompletionPublicationId {get;set;}
     public byte[]? CompletionRecipeSha256 {get;set;}
     public byte[]? CompletionPartySha256 {get;set;}

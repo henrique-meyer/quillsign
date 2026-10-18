@@ -95,6 +95,11 @@ public static class DatabaseCommands
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[DocumentRetentionSnapshots] WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[LookupContactRetentionSnapshots] SET [Days]=1 WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[LookupContactRetentionSnapshots] WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[SignerContactRevisions] SET [Number]=1 WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[SignerContactRevisions] WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[SignerContactSessions] SET [ExpiresAt]=[CreatedAt] WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[SignerContactSessions] WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[AuthTokens] SET [SignerContactRevisionId]=NULL WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionSealOutputs] SET [RecipeVersion] = 'forbidden' WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[CompletionSealOutputs] WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionPublicationIntents] SET [RetentionDays]=0 WHERE 1 = 0"));
@@ -114,7 +119,7 @@ public static class DatabaseCommands
     private static async Task DemandDenied(Func<Task<int>> operation)
     {
         try { await operation(); }
-        catch (SqlException exception) when (exception.Number is 229 or 262) { return; }
+        catch (SqlException exception) when (exception.Number is 229 or 230 or 262) { return; }
         throw new InvalidOperationException("Runtime has a database permission that should be denied.");
     }
 }

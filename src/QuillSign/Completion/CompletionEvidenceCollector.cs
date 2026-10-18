@@ -18,7 +18,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
     SignerCheckpointBlobs accepted,IBlobStore storage,TimeProvider time)
 {
     private sealed record Frame(Envelope Envelope,Signer[] Signers,Recipient[] Recipients,DocumentField[] Fields,
-        SignerFinishAcceptance[] Finishes,SignaturePreview[] Adoptions,AuditEvent[] Events,byte[] Binding,byte[] FrozenBinding);
+        SignerFinishAcceptance[] Finishes,SignaturePreview[] Adoptions,AuditEvent[] Events,byte[] Binding,byte[] FrozenBinding,VerifiedSignerContacts? Contacts);
     public async Task<CompletionMaterialization?> CollectAsync(Guid envelopeId,CancellationToken ct=default)
         =>await CollectCore(envelopeId,null,ct);
     internal Task<CompletionMaterialization?> CollectPublishedAsync(Guid id,PublishedCompletionSource source,CancellationToken ct)=>CollectCore(id,source,ct);
@@ -115,26 +115,35 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
         if(sent.At<e.SentAt || !string.IsNullOrEmpty(e.SenderName))throw Invalid();
         var verification=One(events,"sender_email_verified",PartyType.Sender,null,e.SenderEmail);
         if(verification.Sequence>=sent.Sequence || verification.At<e.SenderVerifiedAt)throw Invalid();
-        Metadata(e,signers,recipients,fields,events,sent);
+        VerifiedSignerContacts? contacts=null;
+        if(events.Any(x=>x.Event==SignerContactHistory.Event))
+        {
+            // Published projections contain the pre-publication envelope/version;
+            // contact verification locks the actual immutable current row instead.
+            var contactEnvelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==id,ct);
+            contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(contactEnvelope,ct);
+        }
+        Metadata(e,signers,recipients,fields,events,sent,contacts);
         // Valid metadata refs and disclosure are proven before any original/converted storage capability is minted.
         _=Id(e.OriginalBlob); _=Id(e.PdfBlob); _=Id(e.SentPdfBlob);
         if(e.OriginalSha256 is not {Length:32} || e.PdfSha256 is not {Length:32} || e.PageCount is not >0 || e.PageSizesJson is null)throw Invalid();
         var previews=adoptions.OrderBy(x=>x.Id).ToArray();
         var frozen=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {e,signers,recipients,fields,finishes,previews}));
         var binding=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {frozen,auditAnchor=previous}));
-        var frame=new Frame(e,signers,recipients,fields,finishes,previews,events,binding,frozen);
+        var frame=new Frame(e,signers,recipients,fields,finishes,previews,events,binding,frozen,contacts);
         // Project validates semantic link/consent/publication evidence while the frozen frame is locked.
         ValidateSigningEvents(frame);
         return frame;
     }
-    private static void Metadata(Envelope e,Signer[] signers,Recipient[] recipients,DocumentField[] fields,AuditEvent[] events,AuditEvent sent)
+    private static void Metadata(Envelope e,Signer[] signers,Recipient[] recipients,DocumentField[] fields,AuditEvent[] events,AuditEvent sent,VerifiedSignerContacts? contacts)
     {
         var signerEvents=events.Where(x=>x.Event is "signer_added" or "signer_updated" or "signer_removed" or "signers_reordered").ToArray();
         var recipientEvents=events.Where(x=>x.Event is "recipient_added" or "recipient_updated" or "recipient_removed").ToArray();
         var documents=events.Where(x=>x.Event is "document_uploaded" or "document_replaced").ToArray();
         if(signerEvents.Length==0 || documents.Length==0 || signerEvents.Concat(recipientEvents).Concat(documents).Any(x=>x.Sequence>=sent.Sequence || x.ActorType!=PartyType.Sender || x.ActorEmail!=e.SenderEmail))throw Invalid();
         using(var list=JsonDocument.Parse(signerEvents[^1].DataJson)) {
-            var expected=JsonSerializer.Serialize(signers.Select(x=>new {x.Id,x.Order,x.FullName,x.Email,x.Role}));
+            var expected=contacts is null ? JsonSerializer.Serialize(signers.Select(x=>new {x.Id,x.Order,x.FullName,x.Email,x.Role})) :
+                JsonSerializer.Serialize(signers.Select(x=>contacts.Resolve(x.Id,SignerContactEpoch.Legacy) ?? throw Invalid()).Select(x=>new {x.Id,x.Order,FullName=x.Name,x.Email,x.Role}));
             if(list.RootElement.GetProperty("signers").GetRawText()!=expected)throw Invalid();
         }
         if(recipientEvents.Length==0) {if(recipients.Length!=0)throw Invalid();}
@@ -159,7 +168,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
     {
         foreach(var signer in frame.Signers) {
             var f=frame.Finishes.Single(x=>x.SignerId==signer.Id);
-            var consent=One(frame.Events,"consent_given",PartyType.Signer,signer.Id,signer.Email);
+            var consent=One(CurrentEvents(frame,signer.Id),"consent_given",PartyType.Signer,signer.Id,signer.Email);
             var completed=One(frame.Events,"signer_completed",PartyType.Signer,signer.Id,signer.Email);
             if(consent.At<signer.ConsentAt || consent.At>f.FinishedAt || completed.At<f.ProcessedAt || completed.At<f.FinishedAt)throw Invalid();
             using(var proof=JsonDocument.Parse(consent.DataJson)) {
@@ -174,7 +183,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
     }
     private static AuditEvent Link(Frame frame,Signer signer,SignerFinishAcceptance f,AuditEvent consent)
     {
-        foreach(var entry in frame.Events.Where(x=>x.Event=="link_opened" && x.ActorType==PartyType.Signer && x.ActorId==signer.Id && x.ActorEmail==signer.Email && x.Sequence<consent.Sequence && x.At<=signer.ConsentAt)) {
+        foreach(var entry in CurrentEvents(frame,signer.Id).Where(x=>x.Event=="link_opened" && x.ActorType==PartyType.Signer && x.ActorId==signer.Id && x.ActorEmail==signer.Email && x.Sequence<consent.Sequence && x.At<=signer.ConsentAt)) {
             using var proof=JsonDocument.Parse(entry.DataJson); var r=proof.RootElement;
             if(r.GetProperty("signerId").GetGuid()==signer.Id && r.GetProperty("documentId").GetGuid()==f.SourceObjectId &&
                 r.GetProperty("documentSha256").GetString()==Hex(f.SourceSha256) && r.GetProperty("disclosureSha256").GetString()==Hex(f.DisclosureSha256) &&
@@ -186,7 +195,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
     {
         var e=frame.Envelope; var sender=One(frame.Events,"sender_email_verified",PartyType.Sender,null,e.SenderEmail);
         var signers=frame.Signers.Select(s=> {
-            var f=frame.Finishes.Single(x=>x.SignerId==s.Id); var consent=One(frame.Events,"consent_given",PartyType.Signer,s.Id,s.Email);
+            var f=frame.Finishes.Single(x=>x.SignerId==s.Id); var consent=One(CurrentEvents(frame,s.Id),"consent_given",PartyType.Signer,s.Id,s.Email);
             var linked=Link(frame,s,f,consent); var published=One(frame.Events,"signer_completed",PartyType.Signer,s.Id,s.Email); var image=marks[s.Id];
             var signature=frame.Fields.Any(x=>x.SignerId==s.Id && x.Type==FieldType.Signature && x.Value is not null);
             var initials=frame.Fields.Any(x=>x.SignerId==s.Id && x.Type==FieldType.Initials && x.Value is not null);
@@ -196,7 +205,24 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
         }).ToArray();
         return new(Guid.ParseExact(e.PublicId,"N"),prepared,e.IsDemo,false,new(Id(e.PdfBlob),e.Title!,e.PageCount!.Value,e.OriginalSha256!.ToArray(),e.PdfSha256!.ToArray(),e.SentPdfSha256!.ToArray(),frame.Finishes.Single(x=>x.Id==e.CurrentFinishId).PdfSha256.ToArray()),
             new(null,e.SenderEmail,sender.At),e.ErsdVersion!,e.ErsdSha256!.ToArray(),signers,frame.Recipients.Select(r=>new CompletionRecipient(r.Name,r.Email)).ToArray(),
-            frame.Events.Select(x=>new CompletionEvent(x.Sequence,x.At,x.Event,x.ActorType.ToString(),x.ActorEmail,x.Ip,x.UserAgent,x.PrevHash?.ToArray() ?? new byte[32],x.Hash.ToArray())).ToArray(),frame.Events[^1].Hash.ToArray());
+            frame.Events.Select(x=>new CompletionEvent(x.Sequence,x.At,x.Event,x.ActorType.ToString(),x.ActorEmail,x.Ip,x.UserAgent,x.PrevHash?.ToArray() ?? new byte[32],x.Hash.ToArray())
+            {ContactCorrection=Correction(frame,x)}).ToArray(),frame.Events[^1].Hash.ToArray());
+    }
+    private static AuditEvent[] CurrentEvents(Frame frame,Guid signerId)
+    {
+        var current=frame.Contacts?.Current.Single(x=>x.Id==signerId);
+        if(current is null || current.Epoch==SignerContactEpoch.Legacy)return frame.Events;
+        var revision=frame.Contacts!.Revision(current.Epoch.RevisionId) ?? throw Invalid();
+        var boundary=frame.Events.Single(x=>x.Event==SignerContactHistory.Event && x.DataJson==SignerContactHistory.Canonical(revision)).Sequence;
+        return frame.Events.Where(x=>x.Sequence>boundary).ToArray();
+    }
+    private static CompletionContactCorrection? Correction(Frame frame,AuditEvent entry)
+    {
+        if(entry.Event!=SignerContactHistory.Event)return null;
+        var revision=JsonSerializer.Deserialize<SignerContactRevision>(entry.DataJson,new JsonSerializerOptions{PropertyNamingPolicy=JsonNamingPolicy.CamelCase}) ?? throw Invalid();
+        if(frame.Contacts?.Revision(revision.Id)!=revision)throw Invalid();
+        var party=frame.Contacts.Resolve(revision.SignerId,new(revision.Id,revision.Number)) ?? throw Invalid();
+        return new(revision.SignerId,party.Name,revision.OldEmail,revision.NewEmail,revision.Id,revision.Number,revision.RetirementSha256);
     }
     private async Task Verify(DocumentBlob blob,byte[] expected,CancellationToken ct)
     {

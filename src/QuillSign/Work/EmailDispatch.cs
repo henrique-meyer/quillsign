@@ -72,7 +72,8 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
 public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options, EmailPayloadProtection protection,
     VerificationEmailTemplate template, IEmailSender sender, TimeProvider time,DeclinePayloadProtection? declines = null,
     DeclineEmailTemplate? declineTemplate = null,SignerInvitationDelivery? invitations = null,Func<CompletionNotificationDelivery>? completions=null,
-    Func<VoidNotificationDelivery>? voids=null,Func<LookupLinkDelivery>? lookups=null,Func<InvitationResendDelivery>? resends=null) : IWorkHandler
+    Func<VoidNotificationDelivery>? voids=null,Func<LookupLinkDelivery>? lookups=null,Func<InvitationResendDelivery>? resends=null,
+    Func<InvitationSuccessorDelivery>? successors=null) : IWorkHandler
 {
     public WorkKind Kind => WorkKind.Email;
 
@@ -80,6 +81,7 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
     {
         if (!options.Enabled) return new(WorkOutcome.Retry, "delivery-disabled");
         var email = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id, cancellationToken);
+        if(email.Template==InvitationSuccessorProtection.Template)return await (successors?.Invoke()??throw new InvalidOperationException("Missing invitation successor delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==InvitationResendProtection.Template)return await (resends?.Invoke()??throw new InvalidOperationException("Missing invitation resend delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==LookupDeliveryProtection.Template)return await (lookups?.Invoke()??throw new InvalidOperationException("Missing lookup delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==VoidNotificationJobs.Template)return await (voids?.Invoke()??throw new InvalidOperationException("Missing void notification delivery.")).ExecuteAsync(lease,cancellationToken);
