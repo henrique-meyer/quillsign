@@ -44,7 +44,7 @@ public sealed class GotenbergDocxConverter(HttpClient http,GotenbergOptions opti
         =>ConvertCoreAsync(original,declaredLength,null,ct);
 
     internal async Task<DocxConversion> ConvertOfficeAsync(ValidatedOfficeSource package,CancellationToken ct)
-    {using var original=package.OpenRead();return await ConvertCoreAsync(original,package.Length,package.Kind,ct);}
+    {using var original=package.OpenConversionRead();return await ConvertCoreAsync(original,package.ConversionLength,package.Kind,ct);}
 
     private async Task<DocxConversion> ConvertCoreAsync(Stream original,long declaredLength,OfficeSourceKind? kind,CancellationToken ct)
     {
@@ -54,6 +54,7 @@ public sealed class GotenbergDocxConverter(HttpClient http,GotenbergOptions opti
         var upload=kind switch {
             null=>("document.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
             OfficeSourceKind.Pptx=>("document.pptx","application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+            OfficeSourceKind.Xlsx=>("document.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
             _=>throw new DocumentRejectedException("Choose a supported Office format, or export a PDF.")};
         var endpoint=options.Transport=="Http" ? options.Endpoint(environment) : null;
         if(limits.MaximumBytes is <1024 or >64*1024*1024 || limits.MaximumPages is <1 or >200)throw new InvalidOperationException("Configure supported document conversion limits.");

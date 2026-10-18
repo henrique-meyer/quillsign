@@ -16,6 +16,7 @@ public static class DocumentConfiguration
         services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(mvc=>mvc.Filters.Add<PreparationRetentionExceptionFilter>());
         services.AddSingleton<DocxPackageValidation>();
         services.AddSingleton<PptxPackageValidation>();
+        services.AddSingleton<XlsxPackageValidation>();
         services.AddSingleton(config.GetSection("OfficeConversion").Get<OfficeConversionOptions>()??new());
         services.AddScoped<StaticOfficeConverter>();
         services.AddScoped<DocxDocumentWorkflow>();

@@ -146,5 +146,7 @@ public sealed class PptxPackageValidation(DocumentOptions limits)
     private static void Positive(string value,long min,long max){if(!long.TryParse(value,NumberStyles.None,CultureInfo.InvariantCulture,out var parsed)||parsed<min||parsed>max)throw Rejected();}
     private static void Signed(string value,long min,long max){if(!long.TryParse(value,NumberStyles.AllowLeadingSign,CultureInfo.InvariantCulture,out var parsed)||parsed<min||parsed>max)throw Rejected();}
     private static HashSet<string> Words(string value)=>new(value.Split(' ',StringSplitOptions.RemoveEmptyEntries),StringComparer.Ordinal);
+    internal static bool IsStaticDrawingElement(string name)=>Drawing.Contains(name);
+    internal static bool IsStaticDrawingAttribute(string name)=>Attributes.Contains(name);
     private static DocumentRejectedException Rejected()=>new("This PPTX contains unsupported or malformed content. Export a PDF and try again.");
 }

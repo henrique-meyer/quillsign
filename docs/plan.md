@@ -170,9 +170,13 @@ Validation: The real pinned local isolated converter produced two landscape slid
 
 ## QUILS-108: Validate and convert bounded values-only XLSX packages
 
-Status: To Do. Assigned to ChatGPT Codex. Created from QUILS-98 assessment; implementation is source/local only.
+Status: Done on merge. Assigned to ChatGPT Codex. Internal source/local implementation only.
 
 Dependent on QUILS-98 assessment. Implement internal owned bounded OPC SpreadsheetML gate for static values-only workbooks: finite sheets/cells/range/style/shared-string/merged-cell/print-area budgets, reject every formula cell and formula-bearing defined name, calculation chains, external links/connections/query tables/pivot caches/data refresh, macro/dialog sheets, VBA/OLE/ActiveX/embedded packages, DDE, unsupported extension content, encryption/signatures and unknown part/relationship types. Reject hidden sheets/rows/columns initially unless a separately reviewed visible rendering profile covers them. Reuse rigorously shared ZIP/XML primitives without weakening DOCX; normalized PDF and original hashes exact, predictable bounded print scaling/page count and no false content fidelity claims. Internal conversion first, separate persistence/intake story. Test malicious resource/formula variants and huge sparse coordinates before converter; actual isolated Gotenberg no-egress conversion plus visually reviewed synthetic tables/print behavior. No cloud/hosted/provider/email/TSA/AI/purchases, preserve permissive dependencies. Checked small PR/merge/native Done.
+
+Implementation boundary: internal default-false values-only XLSX conversion through the fixed enum-selected HTTP transport. Retain exact original bytes/hash, create a separately hashed owned workbook copy only to set a documented bounded A4 landscape one-page-per-visible-sheet print profile, and verify derived-source hash, output page count and dimensions. No cells, values, formulas or unknown content are silently removed: reject unsupported input before rewriting print settings. Bound visible used coordinates, cells, rows/columns, styles/shared strings/fonts/print work and text; no formulas, hidden content, external links/refresh, macros or opaque packages. Sandbox remains DOCX-only; public persistence/intake and hosted activation are separate stories.
+
+Validation: 198 focused XLSX/PPTX/DOCX/package/transport cases pass. Real pinned isolated Gotenberg converted both a minimal two-sheet workbook and an ordinary generated values/styles/merged-header workbook; all four landscape pages were rendered and visually checked with original/PDF hashes and literal formula-looking text preserved. No new dependency, route, public intake, sandbox source kind or hosted setting.
 
 ## QUILS-109: Validate and convert bounded static ODT packages
 
