@@ -1,9 +1,29 @@
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
+@{ var preview = QuillSign.Sharing.PublicPreview.For(Context, Configuration); }
 <!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>@(ViewData["Title"] is { } title ? $"{title} · QuillSign" : "QuillSign")</title>
+    <title>@(preview?.Title ?? (ViewData["Title"] is { } title ? $"{title} · QuillSign" : "QuillSign"))</title>
+    @if (preview is not null)
+    {
+        <meta name="description" content="@preview.Description" />
+        <link rel="canonical" href="@preview.CanonicalUrl" />
+        <meta property="og:title" content="@preview.Title" />
+        <meta property="og:description" content="@preview.Description" />
+        <meta property="og:url" content="@preview.CanonicalUrl" />
+        <meta property="og:type" content="website" />
+        <meta property="og:image" content="@preview.ImageUrl" />
+        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image:width" content="1024" />
+        <meta property="og:image:height" content="1024" />
+        <meta property="og:image:alt" content="QuillSign" />
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:title" content="@preview.Title" />
+        <meta name="twitter:description" content="@preview.Description" />
+        <meta name="twitter:image" content="@preview.ImageUrl" />
+    }
     <link rel="icon" href="~/logo.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="~/site.css" />
     @await RenderSectionAsync("Styles", required: false)
