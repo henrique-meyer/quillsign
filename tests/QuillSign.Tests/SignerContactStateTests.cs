@@ -41,6 +41,8 @@ public sealed class SignerContactStateTests(SqlDatabaseFixture fixture) : IClass
     [InlineData("retired-definition")]
     [InlineData("projection")]
     [InlineData("current-definition")]
+    [InlineData("placeholder")]
+    [InlineData("date-format")]
     [InlineData("evidence-index")]
     [InlineData("audit-chain")]
     [InlineData("old-roster")]
@@ -61,6 +63,8 @@ public sealed class SignerContactStateTests(SqlDatabaseFixture fixture) : IClass
             }
             if (fault == "projection") await db.Signers.Where(x => x.Id == f.SignerId).ExecuteUpdateAsync(s => s.SetProperty(x => x.FullName, "Different person"));
             if (fault == "current-definition") await db.Fields.Where(x => x.EnvelopeId == f.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Width, .9m));
+            if (fault == "placeholder") await db.Fields.Where(x => x.EnvelopeId == f.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Placeholder, "Changed retired definition"));
+            if (fault == "date-format") await db.Fields.Where(x => x.EnvelopeId == f.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.DateFormat, "Changed retired definition"));
             if (fault == "evidence-index") await db.SignerContactRevisions.Where(x => x.Id == revision.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.EvidenceJson, "{}"));
             if (fault == "audit-chain") await db.AuditEvents.Where(x => x.EnvelopeId == f.Id && x.Event == SignerContactHistory.Event).ExecuteUpdateAsync(s => s.SetProperty(x => x.PrevHash, new byte[32]));
             if (fault == "old-roster") await db.AuditEvents.Where(x => x.EnvelopeId == f.Id && x.Event == "signer_added").ExecuteUpdateAsync(s => s.SetProperty(x => x.DataJson, "{}"));
