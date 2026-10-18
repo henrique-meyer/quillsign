@@ -80,6 +80,12 @@ Implement strict optional reminder settings (off by default), canonical frozen p
 
 Validation: all 55 focused tests pass, including demo/disabled configuration, strict persisted policy parsing/hash, mutation safety, UTC/DST and exact-tick cutoffs, sequential invitation anchors, every identity component and process-culture independence. Release compilation has no warnings; no model, dependency, transport or page changes. Source secret scan passes; exact-head CI gates merge.
 
+## QUILS-114: Unify verified invitation predecessor and contact-epoch contracts
+
+Status: In Progress. Assigned to ChatGPT Codex. Shared prerequisite for optional reminders and contact correction; separate from QUILS-112 contact history persistence.
+
+Implement canonical invitation successor/predecessor verification preserving existing original/manual-resend behavior, sender confirmation and caps. Define exact immutable contact epoch, recipient, current PDF/disclosure and reason binding for later reminder/correction successors. Historical recipients bind to admission epochs, never mutable signer email alone. Reject missing/malformed/forked/unknown predecessor evidence without fallback to original success; pending/uncertain successors block overtaking and obsolete dispatch fails closed. Use envelope-first locking, bounded reads and supported protected outbox/audit evidence; preserve existing unchanged-contact legacy invitations through an explicit verified bridge. No reminder/correction producer, email enablement, cloud/resource/settings/deployment change, purchase, live mail/TSA/provider or new policy. Coordinate correction persistence, then validate meaningful SQL corruption/replay/old resend/status/delivery behavior and captured local mail, secret scan, PR/exact-head checks/self-merge/native Done.
+
 ## QUILS-96: Design evidence-preserving unsigned signer contact correction
 
 Status: To Do. Assigned to ChatGPT Codex; native story created before implementation research.
