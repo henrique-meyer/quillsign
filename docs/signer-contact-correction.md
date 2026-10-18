@@ -169,14 +169,45 @@ epoch, so a missing A to B to A history cannot be mistaken for legacy identity.
 The canonical record binds retired-entry evidence by hash; it does not create or
 verify the underlying retirement snapshot, authenticate a sender, inspect Finish,
 store revisions, revoke sessions or send an invitation. Those remain mandatory
-integration gates. No active runtime path calls this contract yet.
+integration gates, supplied by the later integration slices.
 
 QUILS-115 adds source-only immutable revision/retirement and corrected-session
 tables plus an envelope-locked verifier. `SignerContactState` exposes current
 parties and exact historical epoch resolution only after verifying the original
 roster, complete bounded audit chain, canonical persisted corrections, retired
 entry digests/definitions and effective projection. Its session registry leaves
-`Signer`, `Envelope` and `VerifiedSigner` serialization unchanged. It remains
-unregistered while correction admission, invitation succession and completion
-integration are pending. Applying its additive migration and scoped runtime
-grants requires a separately approved deployment.
+`Signer`, `Envelope` and `VerifiedSigner` serialization unchanged. The later guarded admission path is registered lazily. Applying the additive migration and scoped runtime grants requires a separately approved deployment.
+
+## Guarded source integration
+
+QUILS-117 enforces the current contact epoch before token redemption and on every
+signer session read, including accepted and published confirmation. Completion
+folds original party evidence through verified contact revisions, selects fresh
+consent from the current epoch and describes retired unfinished entries in the
+certificate. The effective mailbox receives completion access and notifications;
+the retired mailbox retains no later authority. Legacy identity and completion
+event bytes omit the additional evidence when no correction exists.
+
+QUILS-120 admits current-signer corrections under the envelope transaction using
+the QUILS-118 canonical invitation successor. It checks accepted Finish separately
+from the mutable signer status, verifies exact source/contact/row revisions,
+requires the fixed affirmative statement, and reserves explicit bounded daily
+limits before retirement. The exact command is idempotent even after its own
+mutation changes the reviewed row versions. Queued or leased work with no
+submission intent can be retired; started or ambiguous submission cannot be
+bypassed. The old message and already-read information cannot be recalled.
+
+The active projection clears only unfinished consent, adopted marks and owned
+field entries after archiving them. Existing signed checkpoints, sent source,
+disclosure, original roster and historical invitation evidence remain immutable.
+Preview metadata includes a verified retention deadline so private browser proofs
+cannot redisplay address/title data beyond retained access. A correction never
+extends the signing, retention or original sender authentication deadlines.
+
+`SignerContactCorrection` defaults to disabled and requires explicit per-address,
+IP, sender and total daily limits. Its delivery reason policy is registered only
+when enabled, and email/work gates are independently required. The existing demo
+operator policy remains unchanged; source validation is not hosted enablement.
+After a correction, the old manual-resend producer fails closed until a separate
+canonical manual-resend integration is implemented. A later correction remains a
+new deliberate bounded action, not a substitute for blind email retry.
