@@ -67,6 +67,9 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
             token.DocumentId!=context.Identity.DocumentId || token.DocumentSha256 is not { Length:32 } || token.DisclosureSha256 is not { Length:32 } ||
             Convert.ToHexStringLower(token.DocumentSha256)!=context.Identity.DocumentHash || Convert.ToHexStringLower(token.DisclosureSha256)!=context.Identity.DisclosureHash ||
             !CryptographicOperations.FixedTimeEquals(token.TokenSha256,hash) || !string.Equals(token.Email,context.Identity.Email,StringComparison.OrdinalIgnoreCase)) return null;
+        var corrected=await HasCorrections(envelopeId,ct);
+        if(corrected && !await new SignerContactState(db,time).TokenMatchesLockedAsync(envelope!,token,ct))return null;
+        if(!corrected && token.SignerContactRevisionId is not null)return null;
         context=await RetainedAsync(context,envelope!,true,ct);if(context is null)return null;
         var consumed = await db.AuthTokens.Where(x => x.Id == token.Id && x.UsedAt == null).ExecuteUpdateAsync(
             update => update.SetProperty(x => x.UsedAt,now),ct);
@@ -74,6 +77,7 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         await audit.AppendAsync(envelopeId,"link_opened",context.Identity.Email,ip,userAgent,ct,
             JsonSerializer.Serialize(new { signerId,tokenId = token.Id,documentId=context.Identity.DocumentId,documentSha256 = context.Identity.DocumentHash,
                 disclosureSha256 = context.Identity.DisclosureHash,authentication = "single_use_email_link" }),PartyType.Signer,signerId);
+        if(corrected)await new SignerContactState(db,time).BindRedeemedSessionLockedAsync(envelope!,context.Identity,token.Id,ct);
         if(!IsLive(context))return null;
         await transaction.CommitAsync(ct); return context.Identity;
     }
@@ -93,6 +97,8 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("A transaction is required.");
         var identity = SignerAccessConfiguration.ReadIdentity(principal,time.GetUtcNow()); if (identity is null || identity.PublicId != publicId) return null;
         var envelope = await Locked(identity.EnvelopeId).AsNoTracking().SingleOrDefaultAsync(ct);
+        if(envelope is not null && await HasCorrections(envelope.Id,ct) &&
+            !await new SignerContactState(db,time).SessionMatchesLockedAsync(envelope,identity,ct))return null;
         if(finishConfirmation && await db.SignerFinishAcceptances.AnyAsync(x=>x.EnvelopeId==identity.EnvelopeId && x.SignerId==identity.SignerId,ct))
             return await FinishedContext(envelope,identity,ct);
         var context = await EligibleAsync(envelope,identity.SignerId,ct,declinedConfirmation,finishConfirmation);
@@ -123,6 +129,11 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         if (signer is null || (declinedConfirmation ? signer.Status != SignerStatus.Declined : signer.Status is SignerStatus.Signed or SignerStatus.Declined) ||
             await db.Signers.AnyAsync(x => x.EnvelopeId == envelope.Id && x.Order < signer.Order && x.Status != SignerStatus.Signed,ct)) return null;
         if (!finishConfirmation && await db.SignerFinishAcceptances.AnyAsync(x=>x.EnvelopeId==envelope.Id && x.SignerId==signer.Id,ct)) return null;
+        if(await HasCorrections(envelope.Id,ct))
+        {
+            var party=(await new SignerContactState(db,time).ReadLockedAsync(envelope,ct)).SingleOrDefault(x=>x.Id==signer.Id);
+            if(party is null || party.Email!=signer.Email || party.Name!=signer.FullName || party.Order!=signer.Order || party.Role!=signer.Role)return null;
+        }
         var expires = now.AddHours(options.SessionHours); if (envelope.ExpiresAt is DateTimeOffset end && end < expires) expires = end;
         expires = DateTimeOffset.FromUnixTimeSeconds(expires.ToUnixTimeSeconds()); if (expires <= now) return null;
         var source=await new SignerCheckpointState(db,time).CurrentAsync(envelope,ct); if(source is null)return null;
@@ -130,6 +141,7 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
             Convert.ToHexStringLower(source.Sha256),Convert.ToHexStringLower(envelope.ErsdSha256),expires);
         return new(identity,envelope.Title,signer.FullName,signer.Role,new(envelope.Id,DocumentBlobKind.Normalized,source.ObjectId),source.Sha256,disclosure,signer.ConsentAt,signer.SignatureAdoptionId);
     }
+    private Task<bool> HasCorrections(Guid envelopeId,CancellationToken ct)=>db.AuditEvents.AnyAsync(x=>x.EnvelopeId==envelopeId && x.Event==SignerContactHistory.Event,ct);
     private async Task<SignerReadContext?> FinishedContext(Envelope? envelope,VerifiedSigner identity,CancellationToken ct)
     {
         if(envelope is null || envelope.Status is not (EnvelopeStatus.Sent or EnvelopeStatus.Completed) || envelope.ExpiresAt<=time.GetUtcNow() || envelope.SenderVerifiedAt is null ||
