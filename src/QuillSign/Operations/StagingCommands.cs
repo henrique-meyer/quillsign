@@ -81,31 +81,43 @@ public static class StagingCommands
             .GetBlobClient($"{target.EnvelopeId:N}/executed/{target.ObjectId:N}");
         var version = root.WithVersion(stored.VersionId);
         var condition = new BlobRequestConditions { IfMatch = new ETag(stored.ETag) };
+        // A new current version does not modify the exact retained original. Use
+        // an unlocked, exact short policy to exercise production lock recovery.
+        var next = (await root.UploadAsync(new BinaryData(source), new BlobUploadOptions {
+            Conditions = condition, HttpHeaders = new() { ContentType = "application/pdf" },
+            ImmutabilityPolicy = new() { ExpiresOn = until, PolicyMode = BlobImmutabilityPolicyMode.Unlocked }
+        }, ct)).Value;
+        if (string.IsNullOrEmpty(next.VersionId) || next.VersionId == stored.VersionId) throw new InvalidDataException("Synthetic version was not created.");
         try
         {
-            await DemandProtectedAsync(() => version.SetMetadataAsync(new Dictionary<string, string> { ["synthetic"] = "mutation-must-fail" },
-                new BlobRequestConditions { IfMatch = new ETag(stored.ETag) }, ct), versionMutation: true);
-            await DemandProtectedAsync(() => root.DeleteAsync(conditions: condition, cancellationToken: ct));
+            _ = await store.WriteAsync(CompletionFinalCapability.WriteFixed(target, source.LongLength, hash, until, false, time),
+                target, new MemoryStream(source, false), source.LongLength, hash, until, ct);
+            using var unchanged = new MemoryStream();
+            await store.ReadAsync(CompletionFinalCapability.ReadFixed(stored, until, time), stored, unchanged, ct);
+            if (!unchanged.ToArray().AsSpan().SequenceEqual(source)) throw new InvalidDataException("Retained version changed.");
+            await DemandProtectedAsync(() => version.DeleteAsync(conditions: condition, cancellationToken: ct));
         }
         finally
         {
             var delay = until.AddSeconds(3) - time.GetUtcNow();
             if (delay > TimeSpan.Zero) await Task.Delay(delay, ct);
-            // Exact generated version only; never clear a policy, enumerate or delete a container.
-            var current = (await root.GetPropertiesAsync(condition, ct)).Value;
-            if (current.VersionId != stored.VersionId) throw new InvalidDataException("Synthetic root version changed.");
-            await root.DeleteAsync(conditions: condition, cancellationToken: ct);
+            // Only the two generated versions; never weaken policies or enumerate/delete a container.
+            var current = (await root.GetPropertiesAsync(cancellationToken: ct)).Value;
+            if (current.VersionId != next.VersionId || current.HasLegalHold || current.ImmutabilityPolicy?.ExpiresOn > time.GetUtcNow())
+                throw new InvalidDataException("Synthetic root version changed or remains protected.");
+            var currentCondition = new BlobRequestConditions { IfMatch = current.ETag };
+            await root.DeleteAsync(conditions: currentCondition, cancellationToken: ct);
+            await root.WithVersion(next.VersionId).DeleteAsync(conditions: currentCondition, cancellationToken: ct);
             await version.DeleteAsync(conditions: condition, cancellationToken: ct);
         }
-        if (await version.ExistsAsync(ct)) throw new InvalidDataException("Expired synthetic version was not deleted.");
+        if (await root.ExistsAsync(ct) || await root.WithVersion(next.VersionId).ExistsAsync(ct) || await version.ExistsAsync(ct))
+            throw new InvalidDataException("Expired synthetic versions were not deleted.");
     }
 
-    private static async Task DemandProtectedAsync(Func<Task> attempt, bool versionMutation = false)
+    private static async Task DemandProtectedAsync(Func<Task> attempt)
     {
         try { await attempt(); }
-        catch (RequestFailedException error) when (error.Status == 409 && error.ErrorCode == "BlobImmutableDueToPolicy" ||
-            versionMutation && (error.Status == 400 && error.ErrorCode == "OperationNotAllowedOnVersion" ||
-                error.Status == 403 && error.ErrorCode == "OperationNotAllowedOnRootBlob")) { return; }
+        catch (RequestFailedException error) when (error.Status == 409 && error.ErrorCode == "BlobImmutableDueToPolicy") { return; }
         throw new InvalidDataException("Azure did not reject an early mutation/deletion with its immutability policy.");
     }
 
