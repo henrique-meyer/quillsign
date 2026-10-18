@@ -4,6 +4,7 @@ using QuillSign.Data;
 using QuillSign.Email;
 using QuillSign.Storage;
 using QuillSign.Signing;
+using QuillSign.Documents;
 
 namespace QuillSign.Work;
 
@@ -27,11 +28,23 @@ public static class WorkCommands
         try
         {
             var builder = WebApplication.CreateBuilder();
+            var sandboxConversion=new GotenbergOptions();var sandboxMaintenanceRequested=false;var sandboxMaintenanceInvalid=false;
             builder.Logging.ClearProviders(); // CLI failures must not expose private payloads/endpoints.
             builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment, registerHandlers: args[0] != "recover" && !purgeRecovery);
             if(purgeRecovery) {
                 builder.Services.AddQuillSignStorage(builder.Configuration,builder.Environment);
                 builder.Services.AddDemoPurgeRecovery();
+                try
+                {
+                    sandboxMaintenanceRequested=builder.Configuration.GetValue<bool>("Gotenberg:Sandbox:MaintenanceEnabled");
+                    if(sandboxMaintenanceRequested)
+                    {
+                        sandboxConversion.Sandbox=builder.Configuration.GetSection("Gotenberg:Sandbox").Get<SandboxConversionOptions>()??new();
+                        builder.Services.AddSandboxDocumentConversion(builder.Configuration,sandboxConversion,new());
+                    }
+                }
+                catch(Exception error) when(error is InvalidOperationException or FormatException)
+                {sandboxMaintenanceRequested=true;sandboxMaintenanceInvalid=true;}
             }
             else if (args[0] != "recover")
             {
@@ -43,14 +56,32 @@ public static class WorkCommands
             if (args[0] == "listen" && !builder.Environment.IsDevelopment()) throw new InvalidOperationException("Listen is Development-only.");
             using var app = builder.Build();
             if (!expiry && !app.Services.GetRequiredService<WorkOptions>().Enabled) throw new InvalidOperationException("Durable work is disabled.");
-            using var timeout = new CancellationTokenSource(args[0] == "recover" || purgeRecovery ? TimeSpan.FromSeconds(50) : TimeSpan.FromSeconds(240));
+            using var timeout = new CancellationTokenSource(purgeRecovery && sandboxMaintenanceRequested ? TimeSpan.FromSeconds(75) : args[0] == "recover" || purgeRecovery ? TimeSpan.FromSeconds(50) : TimeSpan.FromSeconds(240));
             if (args[0] == "listen") timeout.CancelAfter(Timeout.InfiniteTimeSpan);
             Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; timeout.Cancel(); };
             if(purgeRecovery) {
-                var result=await app.Services.GetRequiredService<DemoPurgeRecovery>().RecoverBatchAsync(purgeBatch,timeout.Token);
+                using var purgeTime=CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);purgeTime.CancelAfter(TimeSpan.FromSeconds(50));
+                var result=await app.Services.GetRequiredService<DemoPurgeRecovery>().RecoverBatchAsync(purgeBatch,purgeTime.Token);
                 Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new {operation="work-purge-recover",status=result.Failed>0 ? "partial" : result.Pending>0 || result.Busy>0 ? "pending" : "ok",
                     result.Examined,result.Swept,result.Busy,result.Failed,result.Deleted,result.Protected,result.Changed,result.Pending,result.More}));
-                return result.Failed==0 ? 0 : 1;
+                var conversionClean=true;
+                if(sandboxMaintenanceRequested)
+                {
+                    using var recoveryTime=CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);recoveryTime.CancelAfter(TimeSpan.FromSeconds(20));
+                    try
+                    {
+                        if(sandboxMaintenanceInvalid)conversionClean=false;
+                        else
+                        {
+                            await using var recoveryScope=app.Services.CreateAsyncScope();
+                            conversionClean=await recoveryScope.ServiceProvider.GetRequiredService<SandboxDocxTransport>().RecoverAsync(recoveryTime.Token);
+                        }
+                    }
+                    catch(Exception error) when(error is DocumentConversionUnavailableException or Azure.RequestFailedException or HttpRequestException or IOException or OperationCanceledException or InvalidOperationException or System.Text.Json.JsonException or KeyNotFoundException)
+                    {conversionClean=false;}
+                    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new{operation="sandbox-conversion-recover",status=conversionClean ? "ok" : "pending"}));
+                }
+                return result.Failed==0 && conversionClean ? 0 : 1;
             }
             if(expiry) {
                 await using var scope=app.Services.CreateAsyncScope();

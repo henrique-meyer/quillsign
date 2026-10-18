@@ -18,7 +18,7 @@ public sealed class IndexModel(DocumentWorkflow documents, DocumentOptions limit
     public bool ImagesAvailable => limits.MaximumBytes <= 64 * 1024 * 1024;
     public bool DocxAvailable
     {
-        get {if(!ImagesAvailable)return false;try{return conversion.Endpoint(environment) is not null;}catch(InvalidOperationException){return false;}}
+        get {if(!ImagesAvailable)return false;try{return conversion.IsAvailable(environment);}catch(InvalidOperationException){return false;}}
     }
     public string Extensions => ".pdf" + (ImagesAvailable ? ",.png,.jpg,.jpeg" : "") + (DocxAvailable ? ",.docx" : "");
     public string? Notice { get; private set; }
