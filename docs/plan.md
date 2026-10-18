@@ -2,6 +2,20 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-89: Request private completed-document lookup links
+
+Status: To Do. Depends on QUILS-88 (PR #93, pending merge) and QUILS-84/85/86/87. Implementation waits for QUILS-88; this planning branch has no request UI implementation. Owned by this chat.
+
+Depends on QUILS-88 (PR #93, pending merge), QUILS-87 and QUILS-84/85/86. Queue implementation until QUILS-88 merges. Add the public request UI for the existing verified-mailbox retained-document lookup; do not duplicate its backend authority or enable hosted mail.
+
+Provide an accessible Razor entry form and navigation to request a private link, plus access to existing fragment/manual-code entry. GET never sends, prepares or redeems lookup authority. POST requires antiforgery, bounded normalized address and the trusted remote request IP, with an independent entry-rate partition before backend admission. Choose IDs on the server; never return private links, tokens, work IDs, membership or document counts to an anonymous caller. Unknown, suppressed and capped requests receive the same neutral acknowledgement. Keep action notices in short-lived one-use HttpOnly cookies followed by clean redirects, never query strings.
+
+Preserve email/work disabled and unset-retention gates before SQL/storage/provider/key resolution. Display an honest generic unavailable state while this hosted instance has sending disabled. Use lazy backend resolution, private cache/referrer/nosniff response headers, bounded failure handling without sensitive logs, and the original admission/dispatch caps, suppression, immutable contact cleanup, link/session and document retention limits. No GET mutation, automatic email or redemption, CAPTCHA, new operator disclosure/policy or capability shortcut.
+
+Validate disabled/scanner GETs without dependencies, CSRF/rate/invalid/unknown/suppressed/capped/error and uncertain-commit outcomes. Exercise the supported local SMTP Mailpit flow on a genuine synthetic completed non-agreement packet: new form, captured email, explicit two-stage redemption, private list, exact executed PDF and certificate downloads. Validate empty-mailbox indistinguishability and real desktop/mobile/keyboard behavior. Email content and private access codes must never leak into URL queries or anonymous responses/logs.
+
+Source-only slice: no Azure/AWS/resource or hosted permission changes, deployment, live email enablement, actual TSA call, purchase, dependency or AI. Keep hosted Email disabled. Create the matching docs/plan entry before implementation and a separate QUILS branch/worktree, validate, secret scan, commit/push/create/attach/pass checks/merge and native Jira Done.
+
 ## QUILS-88: Expire and clean up pre-envelope lookup contact data
 
 Status: In Progress (draft PR #93; regression and CI validation pending). Depends on merged QUILS-87 (PR #92) and QUILS-84/85/86. Required before a public lookup request form or real lookup sending. Owned by this chat.
