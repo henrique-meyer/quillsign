@@ -190,9 +190,13 @@ Validation: Real isolated pinned Gotenberg produced two portrait A4 pages for li
 
 ## QUILS-110: Implement a conservative literal static RTF conversion profile
 
-Status: To Do. Assigned to ChatGPT Codex. Created from QUILS-98 assessment; implementation is source/local only.
+Status: Done on merge after exact-head checks pass. Assigned to ChatGPT Codex. Created from QUILS-98 assessment; implementation is source/local only.
 
 Dependent on QUILS-98 assessment. Investigate and implement a grammar-aware bounded RTF reader, not keyword regex or extension check. Explicitly allow only documented literal text, Unicode escapes with correct fallback accounting, paragraphs/tabs, font/color tables and basic formatting; reject fields/instructions, object/objdata/OLE, picture/metafile/binary destinations, file/datastore/HTML/XML/links, unknown starred destinations/controls and ambiguous codepages. Bound groups/depth/numeric values/escaped bytes/text output before allocation and reject trailing/alternate payloads. Serialize accepted semantics to minimal validated owned DOCX rather than passing raw RTF to format sniffing. Unsupported documents must be exported to PDF. Internal converter first, separate persistence/intake story; exact original bytes/hash plus PDF hash. Test split/escaped/case/unknown destination bypasses, nesting/expansion, actual isolated converter fidelity/no-egress. No cloud/hosted/provider/email/TSA/AI/purchases; permissive dependencies, checked PR/selfmerge/native Done.
+
+Implementation profile: explicit ANSI/Windows-1252 and signed BMP Unicode/scoped fallback; bounded group/token/text/format/font/color grammar; only literal/basic formatting, paragraphs/tabs/line and bounded page breaks. Unknown/destination/active/binary/codepage/surrogate/layout variants fail closed. Preserve original RTF and emit separately hashed owned DOCX through the existing gate; fixed Letter HTTP conversion only, default false, no raw RTF/public persistence/intake/sandbox/hosted changes.
+
+Validation: 305 combined package/transport cases and the final 63 RTF-specific cases pass; the real isolated pinned service converted owned generated DOCX into two Letter pages. Both pages were rendered and inspected for scoped bold/italic/underline, foreground color, alternate font, tab/line/page breaks, CP1252 hex, Unicode fallback, literal escaped braces/backslash and resource/formula-looking text. Original RTF and exact normalized PDF hashes are distinct and verified; no raw RTF, public intake, hosted call, source-kind rollout or dependency added.
 
 ## QUILS-111: Establish defensible legacy DOC parsing support boundary
 

@@ -8,7 +8,7 @@ This is a source implementation plan, not an announcement of hosted format avail
 | PPTX | Default-disabled [internal static component](static-pptx.md); public intake rejected | QUILS-107 | Static PresentationML part/relationship allowlist; exclude actions, media and embedded workbooks |
 | XLSX | Default-disabled [internal values-only component](values-xlsx.md); public intake rejected | QUILS-108 | Values-only cells with bounded print ranges; exclude every formula, refresh source and hidden-content ambiguity |
 | ODT | Default-disabled [internal static component](static-odt.md); public intake rejected | QUILS-109 | Independent ODF manifest, namespace and resource validation; not a renamed DOCX gate |
-| RTF | Rejected | QUILS-110 | Grammar-aware literal/static subset serialized into owned DOCX; unknown destinations fail closed |
+| RTF | Default-disabled [internal literal formatting component](static-rtf.md); public intake rejected | QUILS-110 | Grammar-aware literal/static subset serialized into owned DOCX; unknown destinations fail closed |
 | DOC | Rejected | QUILS-111 | Defensible Compound File Binary/WordBinary parser decision before any enablement |
 
 The order is TXT integration, PPTX, values-only XLSX, ODT, conservative RTF, then legacy DOC feasibility. A converter being able to import a suffix does not establish that the application safely accepts its content. Neither a MIME label nor a file signature is an acceptance rule.
