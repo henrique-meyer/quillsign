@@ -1,8 +1,8 @@
 # Completed-document lookup
 
-QUILS-84 adds the backend for finding retained completed documents after verifying a mailbox. QUILS-85 adds an explicit handoff to the existing read-only final-packet reader. QUILS-86 adds scanner-safe browser entry and the private list. An anonymous email-request form and mail delivery remain separate work. Hosted sending remains disabled.
+QUILS-84 adds the backend for finding retained completed documents after verifying a mailbox. QUILS-85 adds an explicit handoff to the existing read-only final-packet reader. QUILS-86 adds scanner-safe browser entry and the private list. QUILS-87 adds the internal durable mail producer. Pre-envelope contact-data cleanup (QUILS-88) and a public email-request form remain required before public lookup delivery. Hosted sending remains disabled.
 
-`DocumentLookup.IssueAsync` is a trusted issuance operation. Its protected transport must be delivered privately to the nominated mailbox, never returned by an anonymous request API, logged or exposed in a query string. There is no mail producer yet. Browser entry uses explicit scanner-safe POST redemption, CSRF protection and clean redirects.
+`DocumentLookup.IssueAsync` is a trusted issuance operation. Its protected transport must be delivered privately to the nominated mailbox, never returned by an anonymous request API, logged or exposed in a query string. The mail producer calls it at supported dispatch, after checking its SQL lease. Browser entry uses explicit scanner-safe POST redemption, CSRF protection and clean redirects.
 
 Issuance generates a random 256-bit secret and saves only its hash, the `Lookup` purpose and technical lifecycle fields in `AuthTokens`. The token has no envelope, party or document binding and stores an empty email. A dedicated protected transport binds the secret to the normalized mailbox, token ID, issuance row revision, issuance time and original expiry. Any write to that row invalidates the original link, including resetting `UsedAt` after consumption. Bare legacy lookup secrets and completion-access links do not redeem here.
 
@@ -41,3 +41,24 @@ Successful redemption issues only the named lookup authentication ticket and its
 Open document is another explicit CSRF-protected POST. It invokes `LookupPacketAccess`, issues the independently bounded completion-reader cookie/receipt and redirects to `/complete/{publicId}`. Existing download buttons prepare and reverify the exact executed PDF and standalone certificate. Opening or downloading never refreshes original lookup authority, restores editing or extends retention. Missing storage or changed source evidence produces a private recoverable error rather than a substitute file. Expired sessions return to clean access entry with a private one-use notice.
 
 All `/find` responses, including antiforgery and rate-limit failures, use `no-store`, `no-referrer` and `nosniff`. Entry POSTs share the configured sender entry-window limits through an independent IP partition; list reads allow 120 per minute and list actions 30 per minute. These limits supplement the later email-request abuse controls; they do not enable sending or provide a public way to obtain a lookup code.
+
+## Internal durable mail
+
+`DocumentLookupRequests.RequestAsync` accepts a server-chosen request ID, one address and a canonical IP. Disabled email/work gates precede SQL and queue access. A transaction application lock serializes bounded daily admission caps and suppression checks. Unknown mailboxes follow the same path without document-membership queries; callers receive only a neutral/unavailable outcome, never a private link or work ID. Reusing an ID cannot alter an existing request or create another message.
+
+The envelope-null outbox row holds the destination and a dedicated protected payload binding its ID, destination, private IP hash, original time and fixed dispatch deadline. Generic work metadata and storage hints contain only technical identifiers/times. The hint is saved before SQL commit; queue publication follows confirmed commit and can recover independently. No code is minted while the request waits in the queue.
+
+The supported email worker verifies the current lease and protected scope before standalone lookup issuance. It then rechecks current policy, current-day delivery caps, request deadline and exact unused token revision/hash under its submission transaction. Only confirmed submission intent permits provider I/O. The private email contains a fragment link, manual code and absolute UTC expiry, with no attachments, document details or tracking. It reuses the existing demo/retention warnings and makes no new operator privacy-policy claim.
+
+A definite non-submission invalidates the exact unconsumed token and clears only the owned intent before a permitted retry. Unknown provider or commit acknowledgements preserve intent for existing ambiguous recovery; the worker never blindly resends or reuses a consumed issuance. Receipt recording verifies the exact protected intent using ordinal comparisons under locks and preserves concurrent feedback status. Neither retries nor configuration increases extend the original request deadline.
+
+| Setting | Default | Bound |
+| --- | --- | --- |
+| `DocumentLookupDelivery__DailyAddressRequests` | 3 | 1–global daily cap |
+| `DocumentLookupDelivery__DailyIpRequests` | 10 | 1–global daily cap |
+| `DocumentLookupDelivery__DailyRequests` | 50 | 1–1,000 |
+| `DocumentLookupDelivery__RequestHours` | 24 | 1–24 |
+
+Caps apply separately to requests admitted on the UTC day and submission intents started on that day, including queued requests from an earlier day and uncertain submissions. Definitely unsubmitted retries retain their original admission record. Existing global suppression and lazy provider credentials remain enforced.
+
+This producer has no public request endpoint. Its contact data is outside envelope purge, so QUILS-88 must add scoped metadata expiry/cleanup before a public request form or real lookup sending. This source slice introduces no schema, dependency, recurring SQL polling or cloud changes, and does not enable email.

@@ -5,6 +5,7 @@ using QuillSign.Signing;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using QuillSign.Sealing;
 using QuillSign.Storage;
+using QuillSign.Completion;
 
 namespace QuillSign.Work;
 
@@ -53,6 +54,7 @@ public static class WorkConfiguration
         else services.AddSingleton<IWorkSignals>(_ => throw new InvalidOperationException("Durable work is disabled."));
         if (registerHandlers)
         {
+            services.AddLookupDeliveryWork(config);
             services.AddCompletionNotificationWork(config);
             services.AddVoidNotificationWork();
             services.AddQuillSignSignerAccessCore(config);
@@ -98,6 +100,22 @@ public static class WorkConfiguration
             uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.AbsolutePath != "/")
             throw new InvalidOperationException("Work requires HTTPS service endpoints without credentials or paths.");
         return uri;
+    }
+}
+
+public static class LookupDeliveryWorkConfiguration
+{
+    public static IServiceCollection AddLookupDeliveryWork(this IServiceCollection services, IConfiguration config)
+    {
+        var options = config.GetSection("DocumentLookupDelivery").Get<LookupDeliveryOptions>() ?? new(); options.Validate();
+        services.TryAddSingleton(options);
+        services.AddDocumentLookup(config);
+        services.TryAddScoped<LookupDeliveryProtection>(); services.TryAddScoped<DocumentLookupRequests>(); services.TryAddScoped<LookupLinkDelivery>();
+        services.TryAddScoped<QuillSign.Email.LookupEmailTemplate>();
+        services.TryAddScoped<Func<QuillSign.Completion.DocumentLookup>>(sp => () => sp.GetRequiredService<QuillSign.Completion.DocumentLookup>());
+        services.TryAddScoped<Func<QuillSign.Email.LookupEmailTemplate>>(sp => () => sp.GetRequiredService<QuillSign.Email.LookupEmailTemplate>());
+        services.TryAddScoped<Func<LookupLinkDelivery>>(sp => () => sp.GetRequiredService<LookupLinkDelivery>());
+        return services;
     }
 }
 
