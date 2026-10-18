@@ -64,12 +64,24 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
         catch { db.ChangeTracker.Clear(); throw; }
     }
 
-    public async Task<DocumentLookupIdentity?> AuthenticateAsync(ClaimsPrincipal principal, string? receipt, CancellationToken ct = default)
+    public Task<DocumentLookupIdentity?> AuthenticateAsync(ClaimsPrincipal principal, string? receipt, CancellationToken ct = default) =>
+        AuthenticateCoreAsync(principal, receipt, false, ct);
+
+    internal Task<DocumentLookupIdentity?> AuthenticateLockedAsync(ClaimsPrincipal principal, string? receipt, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("Lookup handoff authentication requires its parent transaction.");
+        return AuthenticateCoreAsync(principal, receipt, true, ct);
+    }
+
+    private async Task<DocumentLookupIdentity?> AuthenticateCoreAsync(ClaimsPrincipal principal, string? receipt, bool locked, CancellationToken ct)
     {
         var i = protection.Session(receipt);
         if (i is null || !DocumentLookupProtection.Matches(principal, i)) return null;
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
-        var token = await db.AuthTokens.AsNoTracking().SingleOrDefaultAsync(x => x.Id == i.TokenId, ct);
+        var query = locked
+            ? db.AuthTokens.FromSqlInterpolated($"SELECT * FROM [AuthTokens] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={i.TokenId}")
+            : db.AuthTokens.Where(x => x.Id == i.TokenId);
+        var token = await query.AsNoTracking().SingleOrDefaultAsync(ct);
         return Shape(token) && token!.UsedAt == i.RedeemedAt && token.ExpiresAt == i.LinkExpiresAt &&
             Convert.ToBase64String(token.RowVersion) == i.TokenRevision && Convert.ToHexStringLower(token.TokenSha256) == i.TokenSha256 &&
             i.ExpiresAt > time.GetUtcNow() ? i : null;
@@ -155,6 +167,7 @@ public static class DocumentLookupConfiguration
     {
         var options = config.GetSection("DocumentLookup").Get<DocumentLookupOptions>() ?? new(); options.Validate();
         services.AddCompletionAccess(config); services.TryAddSingleton(options);
-        services.TryAddScoped<DocumentLookupProtection>(); services.TryAddScoped<DocumentLookup>(); return services;
+        services.TryAddScoped<DocumentLookupProtection>(); services.TryAddScoped<DocumentLookup>();
+        services.TryAddScoped<LookupPacketAccess>(); return services;
     }
 }
