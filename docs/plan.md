@@ -74,7 +74,7 @@ Concrete design: see docs/signer-reminders.md. Freeze a canonical demo-empty pol
 
 ## QUILS-113: Implement bounded immutable reminder policy and epoch scheduling
 
-Status: Done on merge after exact-head checks pass. Assigned to ChatGPT Codex. Depends on QUILS-94 design; this foundation creates no mail or scheduling work and changes no runtime setting.
+Status: Done in PR #111 after all ten exact-head checks passed; native Jira Done. Assigned to ChatGPT Codex. Depends on QUILS-94 design; this foundation creates no mail or scheduling work and changes no runtime setting.
 
 Implement strict optional reminder settings (off by default), canonical frozen policy and SHA-256 identity, demo-empty policy, exact UTC-day schedules clipped strictly before signing/retention cutoffs, and deterministic epoch/day identity bound to envelope, signer, original invitation, immutable contact revision, normalized recipient, current PDF/disclosure hashes and policy. Preserve generic day-3/day-7 defaults. Reject malformed, unordered, duplicate or out-of-range offsets and invalid identity/time authority instead of coercing them. Keep immutable values independent of later mutable options. No producer, dispatch, cloud/resource/settings/deployment changes, schema migration, mail/TSA/provider calls or UI. Test actual cutoff, time-zone, content/epoch-identity and mutation boundaries; build, model/vendor/license and secret checks, PR/exact-head CI/self-merge/native Done. Canonical invitation successor, reviewed policy persistence and durable producer/dispatch remain dependent work and must not be reported as enabled reminders.
 
@@ -82,9 +82,11 @@ Validation: all 55 focused tests pass, including demo/disabled configuration, st
 
 ## QUILS-121: Freeze reviewed optional reminder policy at Send
 
-Status: In Progress. Assigned to ChatGPT Codex. Depends on QUILS-113; creates no scheduled work or mail and leaves demo reminders disabled.
+Status: Done on merge after exact-head checks pass. Assigned to ChatGPT Codex. Depends on QUILS-113; creates no scheduled work or mail and leaves demo reminders disabled.
 
 Integrate the strict optional reminder policy into sender Send review and immutable sent evidence. Resolve configured generic day-3/day-7 policy with demo always empty and off by default; bind the exact canonical policy/hash to server-derived review so a configuration change requires fresh deliberate review. Atomically persist that snapshot/hash in immutable Send evidence and verify it against audit, preserving old reviewed/sent records through an explicit verified legacy-empty bridge. Present accurate private review text for no reminders or the bounded schedule without implying email delivery. Preserve clean URLs/privacy/metadata exclusions/mobile/keyboard behavior. No reminder producer, live email/TSA/provider, cloud/resource/settings/deployment/permission change, purchase, AI or new operator policy. Test disabled/demo/config-change/replay/rollback/immutable evidence and real local review flows, secret scan, small PR/attachment/exact-head checks/self-merge/native Done. Shared successor runtime remains separately scoped QUILS-114/118.
+
+Implementation binds canonical policy/hash to the explicit private review, freezes it in the atomic Send audit and exposes only a verified immutable policy on saved Send reads. Existing sent records without both fields resolve to empty independently of mutable legacy arrays; partial/duplicated/noncanonical/mismatched evidence fails closed. Optional settings remain off by default and demo snapshots always empty. Real local desktop/mobile/keyboard synthetic review-to-Send-confirmation flow passed with unchecked initial affirmations, clean one-time notice redirect/refresh, no overflow, private metadata excluded and no console errors. Release compilation and original Send/review regressions pass; policy/deadline/concurrency tests and exact-head CI gate merge. No schedule or reminder email is created yet.
 
 ## QUILS-96: Design evidence-preserving unsigned signer contact correction
 
