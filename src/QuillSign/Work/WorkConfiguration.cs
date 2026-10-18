@@ -60,6 +60,8 @@ public static class WorkConfiguration
             var resendOptions=config.GetSection("InvitationResend").Get<InvitationResendOptions>()??new();resendOptions.Validate();
             services.TryAddSingleton(resendOptions);services.AddScoped<InvitationResendProtection>();
             services.AddScoped<InvitationSuccessorProtection>();services.AddScoped<InvitationLineage>();
+            services.AddScoped<SignerReminderJobs>();services.AddScoped<IWorkHandler,SignerReminderHandler>();
+            services.AddScoped<IInvitationSuccessorPolicy>(sp=>sp.GetRequiredService<SignerReminderJobs>());
             services.AddScoped<InvitationSuccessorJobs>();services.AddScoped<InvitationSuccessorDelivery>();
             services.AddScoped<QuillSign.Sender.CanonicalInvitationResends>();
             services.AddScoped<IInvitationSuccessorPolicy>(sp=>sp.GetRequiredService<QuillSign.Sender.CanonicalInvitationResends>());

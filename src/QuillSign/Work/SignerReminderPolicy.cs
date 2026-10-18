@@ -5,7 +5,7 @@ using QuillSign.Email;
 
 namespace QuillSign.Work;
 
-// Foundation only: nothing registers a producer, creates work, or sends mail.
+// Optional runtime configuration. Demo Send always freezes an empty policy.
 public sealed class SignerReminderOptions
 {
     public bool Enabled { get; set; }

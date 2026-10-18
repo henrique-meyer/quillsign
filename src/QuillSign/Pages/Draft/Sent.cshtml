@@ -36,6 +36,10 @@ else if(data.Status==QuillSign.Data.EnvelopeStatus.Completed) { <p class="notice
 @if(invitation.State!=signer.State) {<p>Latest invitation: @invitation.State</p>}
 <p>Replacement requested at @invitation.RequestedAt?.ToString("u") (UTC). Older unused links were invalidated; already-opened sessions keep their original expiry.</p>
 }
+@if(signer.Invitation is {Kind:"Reminder"} reminder) {
+@if(reminder.State!=signer.State) {<p>Latest invitation: @reminder.State</p>}
+<p>Reminder admitted at @reminder.RequestedAt?.ToString("u") (UTC). Submission does not confirm inbox delivery. Earlier unused links are replaced at submission; opened sessions keep their original expiry.</p>
+}
 @if(signer.SignedAt is { } signed) { <p>Signed at @signed.ToString("u").</p> }
 </li> }</ol>
 <h2>Completion recipients</h2><p>The sender and signers are included in the completed packet distribution.</p>

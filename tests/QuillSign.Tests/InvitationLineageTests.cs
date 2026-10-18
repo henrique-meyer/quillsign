@@ -185,7 +185,7 @@ public sealed class InvitationLineageTests(SqlDatabaseFixture fixture) : IClassF
             await using(var db=fixture.Open()) {
                 var ids=await db.EmailOutbox.Where(x=>x.EnvelopeId==h.Envelope.Id && x.Template!="signer-invitation").Select(x=>x.Id).ToArrayAsync();
                 await db.WorkItems.Where(x=>ids.Contains(x.Id)).ExecuteDeleteAsync();await db.EmailOutbox.Where(x=>ids.Contains(x.Id)).ExecuteDeleteAsync();
-                await db.AuditEvents.Where(x=>x.EnvelopeId==h.Envelope.Id && (x.Event.StartsWith("invitation_resend_") || x.Event==InvitationSuccessorProtection.Event)).ExecuteDeleteAsync();
+                await db.AuditEvents.Where(x=>x.EnvelopeId==h.Envelope.Id && (x.Event.StartsWith("invitation_resend_") || x.Event==SignerReminderEvidence.AdmissionEvent || x.Event==InvitationSuccessorProtection.Event)).ExecuteDeleteAsync();
             }
             await h.DisposeAsync();
         }
