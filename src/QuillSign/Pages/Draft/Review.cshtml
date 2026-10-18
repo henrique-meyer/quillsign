@@ -69,7 +69,7 @@
 @if(Model.Readiness?.Reminders is { } reminders) {
 <h3>Automatic reminders</h3>
 @if(reminders.Days.IsEmpty) { <p>No automatic reminders are scheduled for this request.</p> }
-else { <p>The reviewed reminder policy allows reminders @string.Join(" and ",reminders.Days) day(s) after each current signer's invitation, while signing remains incomplete and before expiry or retention ends.</p>
+else { <p>The reviewed reminder policy allows reminders @string.Join(" and ",reminders.Days) day(s) after each current signer's original invitation, while signing remains incomplete and before expiry or retention ends.</p>
 <p class="hint">These reminders replace unused invitation links while preserving opened signing sessions. They stop when the signer finishes, the contact changes, or the request closes. Delayed reminders are combined, and delivery limits can prevent a reminder.</p> }
 }
 @if(Model.Readiness?.Error is { } error) { <p class="document-error" role="status">@error</p> }

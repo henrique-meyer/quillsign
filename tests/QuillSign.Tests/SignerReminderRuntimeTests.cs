@@ -76,7 +76,7 @@ public sealed class SignerReminderRuntimeTests(SqlDatabaseFixture fixture):IClas
         Assert.True((await Claim(r,id)).Terminal);Assert.Equal(2,r.H.Sender.Calls);
     }
     [Fact]
-    public async Task An_open_session_near_due_time_and_saved_progress_survive_reminder_replacement()
+    public async Task An_open_session_near_due_time_survives_replacement_without_resetting_the_schedule()
     {
         await using var r=await Create(fixture);var job=(await Scheduled(r))[0];
         r.H.Clock.Advance(job.AvailableAt-r.H.Clock.GetUtcNow()-TimeSpan.FromMinutes(1));
