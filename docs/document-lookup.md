@@ -1,6 +1,6 @@
 # Completed-document lookup
 
-The lookup flow finds retained completed documents after verifying a mailbox, then hands a selected document to the existing read-only final-packet reader. It includes scanner-safe entry, a private paged list, capped durable mail, scoped contact-data cleanup and public request entry. Hosted sending remains disabled; lookup migration/grants and hosted validation remain prerequisites before enablement.
+The lookup flow finds retained completed documents after verifying a mailbox, then hands a selected document to the existing read-only final-packet reader. It includes scanner-safe entry, a private paged list, capped durable mail, scoped contact-data cleanup and public request entry. The demo rollout on 2026-10-18 applied its migration/grants and verified disabled-email entry and access-code navigation. Hosted sending remains disabled; mailbox-bound delivery and retained-packet retrieval still require separate enablement and hosted validation. Self-hosters must apply the setup below before enabling admissions.
 
 `DocumentLookup.IssueAsync` is a trusted issuance operation. Its protected transport must be delivered privately to the nominated mailbox, never returned by an anonymous request API, logged or exposed in a query string. The mail producer calls it at supported dispatch, after checking its SQL lease. Browser entry uses explicit scanner-safe POST redemption, CSRF protection and clean redirects.
 

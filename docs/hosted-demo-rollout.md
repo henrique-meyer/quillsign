@@ -10,6 +10,8 @@ Email and hosted Office conversion remained disabled. Additional live timestamp 
 
 These observations are a dated snapshot, not a continuous health check. Re-check the scoped resources before an approved rollout. Source/CI tests and local synthetic browser flows do not replace hosted provider, identity and storage validation. The existing `work verify` command is a baseline check, not certification of the new purge grant, final-version protection or TSA readiness.
 
+The subsequent QUILS-91 lookup rollout on 2026-10-18 applied its additive schema and approved runtime/worker grants and deployed the checked lookup runtime to web and all three jobs. Hosted desktop/mobile/keyboard checks verified the unavailable request form, existing-code navigation, invalid-code rejection, anonymous-list denial, one-use notices and private response headers. Email and hosted Office conversion stayed disabled. This follow-up made no live timestamp requests and does not demonstrate mailbox delivery, retained-packet retrieval or a naturally elapsed enrolled purge.
+
 ### Releasing the newer lookup source
 
 QUILS-84 through QUILS-89 add verified-mailbox completed-document lookup, private packet handoff, durable link delivery, contact cleanup and the public request form. Select a merged main release with all checks passed. These features do not enable hosted email automatically; `/find/request` must show its unavailable state while email is disabled, and GET must not create a request or authority.
