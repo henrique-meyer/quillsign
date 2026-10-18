@@ -42,7 +42,7 @@ jobs:
           set -euo pipefail
           app=$(az containerapp list -g "$AZURE_RESOURCE_GROUP" --query "[?tags.component=='web'].name | [0]" -o tsv)
           test -n "$app"
-          jobs=$(az containerapp job list -g "$AZURE_RESOURCE_GROUP" --query "[?tags.component=='dispatch' || tags.component=='work-recovery'].name" -o tsv)
+          jobs=$(az containerapp job list -g "$AZURE_RESOURCE_GROUP" --query "[?tags.component=='dispatch' || tags.component=='work-recovery' || tags.component=='purge-recovery'].name" -o tsv)
           while IFS= read -r job; do
             if [ -n "$job" ]; then
               expected="ghcr.io/${GITHUB_REPOSITORY}:sha-${GITHUB_SHA}"

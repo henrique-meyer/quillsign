@@ -14,6 +14,9 @@ param hintContainerName string
 param image string
 param databaseConnectionSecretUri string = ''
 param deployJobs bool = false
+param applicationEnvironment array = []
+@secure()
+param tsaRootPem string = ''
 
 var tags = { project: 'quillsign' }
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' existing = { name: environmentName }
@@ -111,7 +114,7 @@ resource dispatch 'Microsoft.App/jobs@2025-07-01' = if (deployJobs) {
       triggerType: 'Event'
       replicaTimeout: 300
       replicaRetryLimit: 0
-      secrets: [{ name: 'database-connection', keyVaultUrl: databaseConnectionSecretUri, identity: worker.id }]
+      secrets: concat([{ name: 'database-connection', keyVaultUrl: databaseConnectionSecretUri, identity: worker.id }], empty(tsaRootPem) ? [] : [{ name: 'tsa-root', value: tsaRootPem }])
       eventTriggerConfig: {
         parallelism: 1
         replicaCompletionCount: 1
@@ -134,14 +137,16 @@ resource dispatch 'Microsoft.App/jobs@2025-07-01' = if (deployJobs) {
         image: image
         command: ['dotnet', 'QuillSign.dll', 'work', 'once']
         resources: { cpu: json('0.25'), memory: '0.5Gi' }
+        volumeMounts: empty(tsaRootPem) ? [] : [{ volumeName: 'tsa-trust', mountPath: '/app/trust' }]
         env: concat(signalEnvironment, [
           { name: 'Storage__ManagedIdentityClientId', value: worker.properties.clientId }
           { name: 'ConnectionStrings__Database', secretRef: 'database-connection' }
           { name: 'DataProtection__ApplicationName', value: 'QuillSign:Production' }
           { name: 'DataProtection__KeyVaultKeyIdentifier', value: '${vault.properties.vaultUri}keys/${dataProtectionKeyName}' }
           { name: 'Email__Enabled', value: 'false' }
-        ])
+        ], applicationEnvironment)
       }]
+      volumes: empty(tsaRootPem) ? [] : [{ name: 'tsa-trust', storageType: 'Secret', secrets: [{ secretRef: 'tsa-root', path: 'tsa-root.pem' }] }]
     }
   }
   dependsOn: [workerQueue, workerHints, workerKeys, workerCrypto, workerSecrets]

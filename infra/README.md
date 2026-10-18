@@ -89,6 +89,16 @@ The dispatch job runs `work once`; hourly recovery runs `work recover` without S
 
 ## GitHub deployment
 
+### Approved demo staging
+
+After explicit resource approval, use `demo-staging.bicep` and private parameters to add the separate hourly `work purge-recover 32` job and its container/key-scoped permissions. It has no database or email credentials. Dispatch gains document-container access, with policy ownership limited to the final container. This template disables the reviewed single legacy age-based document lifecycle rule; compare the live policy first and preserve any unrelated operator rules. Soft-delete settings are unchanged. The Deploy workflow updates this job alongside dispatch and hint recovery.
+
+For an existing final container, apply `final-inventory-access.bicep` only for approved temporary inventory access and remove its role assignment afterward. An empty, lease-free inventory is required before `final-migration-policy.bicep` and the explicit Azure version-support migration. The initial one-day default is unlocked; never lock it or shorten an existing locked version. After successful migration, record `finalVersionSupportEnabled=true` in private hosting parameters. Actual final publication sets and verifies the exact saved deadline on each version.
+
+Web and dispatch accept an optional secure `tsaRootPem` parameter mounted read-only at `/app/trust/tsa-root.pem`. Supply verified public root material privately and configure `Seal__TsaTrustedRootPaths__0` to that path, the selected provider URL and shared request coordination. Retain historical roots when rotating. Keep email and hosted Office conversion disabled until their separate gates pass.
+
+The explicit operator commands `staging storage` and `staging seal` require Azure storage, `ElectronicRecords__Profile=synthetic-demo-v1` and `Email__Enabled=false`. They register no SQL/email services. Storage checks one generated synthetic final version with a short probe-only lock, exact readback, early deletion rejection and cleanup after expiry. Seal checks perform two non-agreement seals using the configured persistent identity and coordinated TSA. They do not send mail, change default policies or prove the full enrolled purge flow. Run only with approved scoped credentials and a reviewed live-request budget; failures are reported without private identifiers. See the [rollout gates](../docs/hosted-demo-rollout.md).
+
 CI builds the app and Docker image, validates the infrastructure templates, and scans for secrets. Trusted push runs publish GHCR images tagged with the full commit SHA. Pull-request checks require no cloud credentials.
 
 Configure the GitHub `production` environment with these Actions secrets:

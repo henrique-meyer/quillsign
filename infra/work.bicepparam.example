@@ -13,3 +13,5 @@ param hintContainerName = ''
 param image = ''
 param databaseConnectionSecretUri = ''
 param deployJobs = false
+param applicationEnvironment = []
+param tsaRootPem = ''
