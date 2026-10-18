@@ -60,14 +60,29 @@ internal static class CompletionEvidenceValidation
         if(!Same(signers[^1].CheckpointSha256,doc.CurrentSha256))throw Rejected();
         var recipients=input.Recipients.Select(r=>r is not null ? r with {Name=Text(r.Name,512,true),Email=Email(r.Email)} : throw Rejected()).ToArray();
         var events=new List<CompletionEvent>(); var previousHash=new byte[32];
+        var contacts=new Dictionary<Guid,CompletionContactCorrection>(); var revisionIds=new HashSet<Guid>();
         foreach(var entry in input.Events)
         {
             ct.ThrowIfCancellationRequested();
             if(entry is null || entry.Sequence!=events.Count+1 || !Same(entry.PreviousHash,previousHash) ||
                 entry.ActorType is not ("Sender" or "Signer" or "Recipient" or "System"))throw Rejected();
+            var correction=entry.ContactCorrection;
+            if((entry.Event==SignerContactHistory.Event)!=(correction is not null))throw Rejected();
+            if(correction is not null)
+            {
+                var party=signers.SingleOrDefault(x=>x.Id==correction.SignerId);
+                if(party is null || entry.ActorType!="Sender" || entry.Actor!=sender.Email || correction.Name!=party.Name || correction.RevisionId==Guid.Empty ||
+                    !revisionIds.Add(correction.RevisionId) || correction.Number is <1 or >100 || correction.OldEmail==correction.NewEmail ||
+                    correction.RetirementSha256 is not {Length:64} || !correction.RetirementSha256.All(c=>c is >= '0' and <= '9' or >= 'a' and <= 'f') ||
+                    entry.At>party.ConsentedAt ||
+                    (contacts.TryGetValue(party.Id,out var prior) ? correction.Number!=prior.Number+1 || correction.OldEmail!=prior.NewEmail : correction.Number!=1))throw Rejected();
+                correction=correction with {Name=Text(correction.Name,512),OldEmail=Email(correction.OldEmail),NewEmail=Email(correction.NewEmail)};
+                contacts[party.Id]=correction;
+            }
             var hash=Hash(entry.Hash); events.Add(entry with {At=At(entry.At),Event=Text(entry.Event,100),Actor=Text(entry.Actor,512,true),
-                Ip=Text(entry.Ip,64,true),UserAgent=Text(entry.UserAgent,2048,true),PreviousHash=Hash(entry.PreviousHash,true),Hash=hash}); previousHash=hash;
+                Ip=Text(entry.Ip,64,true),UserAgent=Text(entry.UserAgent,2048,true),PreviousHash=Hash(entry.PreviousHash,true),Hash=hash,ContactCorrection=correction}); previousHash=hash;
         }
+        if(contacts.Any(x=>signers.Single(s=>s.Id==x.Key).Email!=x.Value.NewEmail))throw Rejected();
         var anchor=Hash(input.AuditAnchor); if(!Same(anchor,previousHash))throw Rejected();
         return input with {PreparedAt=input.PreparedAt.ToUniversalTime(),Document=doc,Sender=sender,DisclosureVersion=disclosureVersion,DisclosureSha256=disclosureHash,
             Signers=signers.ToArray(),Recipients=recipients,Events=events.ToArray(),AuditAnchor=anchor};

@@ -132,6 +132,14 @@ public sealed class CompletionCertificateRenderer
         foreach(var entry in evidence.Events) {
             ct.ThrowIfCancellationRequested(); var first=section.Elements.Count; Heading(section,"Event "+entry.Sequence+" - "+entry.Event,10);
             Value(section,"Recorded UTC",At(entry.At)+" | Actor: "+entry.ActorType+": "+Optional(entry.Actor)); Value(section,"IP",Optional(entry.Ip)+" | User agent: "+Optional(entry.UserAgent));
+            if(entry.ContactCorrection is { } correction)
+            {
+                Value(section,"Contact correction for the same named signer",correction.Name);
+                Value(section,"Retired address",correction.OldEmail); Value(section,"Corrected address",correction.NewEmail);
+                Value(section,"Contact revision",correction.Number.ToString(CultureInfo.InvariantCulture)+" | "+correction.RevisionId.ToString("N"));
+                TextHash(section,"Retired unfinished-entry snapshot SHA-256",correction.RetirementSha256);
+                Paragraph(section,"The verified sender authorized this delivery-address correction before Finish. Earlier consent, marks and unfinished entries are retired evidence; they are not signatures by the corrected mailbox. The final effective signer completed fresh access, consent, adoption and Finish.");
+            }
             Hash(section,"Previous audit hash",entry.PreviousHash); Hash(section,"Audit event hash",entry.Hash);
             // Keep ordinary event blocks together; large evidence fields must remain able to flow across pages.
             if(Plain(entry.Event+entry.Actor+entry.Ip+entry.UserAgent).Count(c=>c=='\n')<=25)

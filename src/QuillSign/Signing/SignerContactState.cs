@@ -36,10 +36,15 @@ public sealed class SignerContactState(QuillSignDbContext db, TimeProvider time)
             .AsNoTracking().SingleOrDefaultAsync(ct);
         if (saved is null || saved.PublicId != envelope.PublicId || saved.SenderEmail != envelope.SenderEmail || saved.Status == EnvelopeStatus.Draft || saved.SentAt is null || saved.SenderVerifiedAt is null ||
             !saved.RowVersion.AsSpan().SequenceEqual(envelope.RowVersion)) throw Invalid();
-        var sizes = await db.AuditEvents.AsNoTracking().Where(x => x.EnvelopeId == saved.Id).OrderBy(x => x.Sequence)
+        // Verify the complete immutable prefix that establishes the latest contact.
+        // Later download/notification events cannot change that contact authority,
+        // and published completion readers support an arbitrarily long operational tail.
+        var boundary = await db.AuditEvents.Where(x => x.EnvelopeId == saved.Id && (x.Event == SignerContactHistory.Event || x.Event == "sent"))
+            .MaxAsync(x => (long?)x.Sequence, ct) ?? throw Invalid();
+        var sizes = await db.AuditEvents.AsNoTracking().Where(x => x.EnvelopeId == saved.Id && x.Sequence <= boundary).OrderBy(x => x.Sequence)
             .Select(x => new { x.Id, Bytes = EF.Functions.DataLength(x.DataJson) }).Take(513).ToArrayAsync(ct);
         if (sizes.Length is < 1 or > 512 || sizes.Any(x => x.Bytes is null or > 2 * 1024 * 1024) || sizes.Sum(x => (long)x.Bytes.GetValueOrDefault()) > 16 * 1024 * 1024) throw Invalid();
-        var events = await db.AuditEvents.AsNoTracking().Where(x => x.EnvelopeId == saved.Id).OrderBy(x => x.Sequence).Take(513).ToArrayAsync(ct);
+        var events = await db.AuditEvents.AsNoTracking().Where(x => x.EnvelopeId == saved.Id && x.Sequence <= boundary).OrderBy(x => x.Sequence).Take(513).ToArrayAsync(ct);
         if (events.Length != sizes.Length) throw Invalid();
         byte[]? previous = null;
         foreach (var entry in events)
@@ -80,7 +85,8 @@ public sealed class SignerContactState(QuillSignDbContext db, TimeProvider time)
             if (record.SignerId != revision.SignerId || record.Number != revision.Number || record.ChangedAt != revision.ChangedAt ||
                 record.PreviousRevisionId != (revision.PreviousRevisionId == Guid.Empty ? null : revision.PreviousRevisionId) ||
                 record.EvidenceJson != entry.DataJson || record.EvidenceJson != SignerContactHistory.Canonical(revision) ||
-                await db.SignerFinishAcceptances.AnyAsync(x => x.EnvelopeId == saved.Id && x.SignerId == revision.SignerId && x.FinishedAt <= revision.ChangedAt, ct)) throw Invalid();
+                await db.SignerFinishAcceptances.AnyAsync(x => x.EnvelopeId == saved.Id && x.SignerId == revision.SignerId && x.FinishedAt < revision.ChangedAt, ct) ||
+                events.Any(x => x.Event == "signer_finish_accepted" && x.ActorType == PartyType.Signer && x.ActorId == revision.SignerId && x.Sequence < entry.Sequence)) throw Invalid();
             VerifyRetirement(record.RetirementJson, revision, original, fields);
             revisions.Add(revision);
         }
