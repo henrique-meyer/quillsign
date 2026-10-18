@@ -72,6 +72,14 @@ Depends on reviewed invitation replacement/resend delivery semantics. Assess and
 
 Concrete design: see docs/signer-reminders.md. Freeze a canonical demo-empty policy at reviewed Send, anchor each current signer epoch to its original invitation admission, and use deterministic epoch/day work with storage-only hints. System reminder authority must not impersonate sender-ticket resend. Canonical invitation predecessors must include reminders and correction before dispatch can be enabled. Mint fresh scoped links, preserve redeemed sessions, and fail closed on pending/ambiguous predecessors and cutoff/cap/evidence changes. Implement policy/identity, shared successor semantics, producer/dispatch and private status as separate story-first slices. No hosted configuration changed.
 
+## QUILS-113: Implement bounded immutable reminder policy and epoch scheduling
+
+Status: Done on merge after exact-head checks pass. Assigned to ChatGPT Codex. Depends on QUILS-94 design; this foundation creates no mail or scheduling work and changes no runtime setting.
+
+Implement strict optional reminder settings (off by default), canonical frozen policy and SHA-256 identity, demo-empty policy, exact UTC-day schedules clipped strictly before signing/retention cutoffs, and deterministic epoch/day identity bound to envelope, signer, original invitation, immutable contact revision, normalized recipient, current PDF/disclosure hashes and policy. Preserve generic day-3/day-7 defaults. Reject malformed, unordered, duplicate or out-of-range offsets and invalid identity/time authority instead of coercing them. Keep immutable values independent of later mutable options. No producer, dispatch, cloud/resource/settings/deployment changes, schema migration, mail/TSA/provider calls or UI. Test actual cutoff, time-zone, content/epoch-identity and mutation boundaries; build, model/vendor/license and secret checks, PR/exact-head CI/self-merge/native Done. Canonical invitation successor, reviewed policy persistence and durable producer/dispatch remain dependent work and must not be reported as enabled reminders.
+
+Validation: all 55 focused tests pass, including demo/disabled configuration, strict persisted policy parsing/hash, mutation safety, UTC/DST and exact-tick cutoffs, sequential invitation anchors, every identity component and process-culture independence. Release compilation has no warnings; no model, dependency, transport or page changes. Source secret scan passes; exact-head CI gates merge.
+
 ## QUILS-96: Design evidence-preserving unsigned signer contact correction
 
 Status: To Do. Assigned to ChatGPT Codex; native story created before implementation research.
