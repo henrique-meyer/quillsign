@@ -60,6 +60,7 @@ function State { Get-Content -LiteralPath $env:QUILLSIGN_FAKE_SES_STATE -Raw | C
 function Save-State([hashtable] $State) { $State|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $env:QUILLSIGN_FAKE_SES_STATE }
 function Run([bool] $Execute=$true) {
     $output = & $helper -ConfigurationPath $script:configPath -JournalPath $script:journalPath -AwsCliPath $fake -Execute:$Execute
+    Assert ($LASTEXITCODE -eq 0) 'Successful inspection must not leave an expected native lookup failure as its exit status.'
     return $output | ConvertFrom-Json
 }
 function Reject([scriptblock] $Action) {
@@ -148,3 +149,4 @@ try {
     if ([IO.Path]::GetDirectoryName($resolvedFixture) -cne [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)) { throw 'Unexpected fixture cleanup target.' }
     Remove-Item -LiteralPath $resolvedFixture -Recurse -Force
 }
+$global:LASTEXITCODE = 0

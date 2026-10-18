@@ -182,6 +182,7 @@ try {
         absent = @($addresses | Where-Object { $null -eq $states[$_] }).Count
         configurationSetSending = $false
     } | ConvertTo-Json -Compress
+    $global:LASTEXITCODE = 0
 } finally {
     if ($null -ne $journal) { $journal.Dispose() }
     $env:AWS_MAX_ATTEMPTS = $oldAttempts
