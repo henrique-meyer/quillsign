@@ -1,0 +1,7 @@
+using './sandbox-pilot.bicep'
+
+param sandboxGroupName = ''
+param location = ''
+param webPrincipalId = ''
+param operatorPrincipalId = ''
+param grantTemporaryOperatorAccess = false

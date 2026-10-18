@@ -42,3 +42,15 @@ Image and snapshot storage must be accounted for separately. Microsoft currently
 4. Prepare and validate the supported application transport in a separate source slice. Exercise sender upload, conversion failure/recovery, PDF preview/download and explicit confirmation before requesting normal hosted enablement.
 
 No hosted conversion, new resource or permission grant is performed merely by merging this document. Keep [document conversion](document-conversion.md) and [hosted rollout](hosted-demo-rollout.md) evidence distinct from this proposal.
+
+## Bounded pilot result
+
+The owner-approved pilot completed on 2026-10-18. Authenticated file upload, fixed loopback conversion and PDF download worked in a fresh sandbox. Default-deny/full-inspection egress was read back before upload, and a real outbound HTTPS request produced an explicit denial response and a matching provider decision entry. That entry appeared after a short delay, so an immediate empty log was not sufficient evidence.
+
+The two-request conversion allowance included one failed output write under the upload directory. Using a separate fixed writable temporary output path resolved it. The successful result passed the existing application DOCX gate and PDF normalization, retained the source digest, and produced two readable pages with the expected geometry. Both rendered pages were inspected. This is a feasibility result; the supported application transport and normal hosted sender workflow are still pending.
+
+All pilot sandboxes, snapshots and disk images were deleted, empty inventories were verified, and temporary operator access was removed. The approved group and its web-identity grant remain idle. Email and normal hosted conversion remain disabled.
+
+The imported disk image reported 3,297 MB, illustrating why local Docker size must not be used as hosted storage size. Observed sandbox allocation implies less than USD 0.001 of active compute at the checked reference rate; this excludes unmeasured image-import/logging charges and is not an Azure invoice. No image or snapshot was retained for recurring storage.
+
+The approved group is represented by [the pilot Bicep template](../infra/sandbox-pilot.bicep), with [empty private-parameter examples](../infra/sandbox-pilot.bicepparam.example). Temporary operator access defaults off and must be explicitly enabled only for an approved run, then removed after cleanup. Keep real deployment names and parameters outside tracked files.
