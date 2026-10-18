@@ -10,16 +10,17 @@ public enum LookupRequestOutcome { Neutral, Unavailable }
 
 // Internal request admission only. A public caller must never receive a private link.
 public sealed class DocumentLookupRequests(QuillSignDbContext db, LookupDeliveryOptions options, LookupDeliveryProtection protection,
-    EmailOptions emailOptions, WorkOptions workOptions, Func<IWorkSignals> signals, TimeProvider time)
+    EmailOptions emailOptions, WorkOptions workOptions, Func<IWorkSignals> signals, TimeProvider time, LookupContactRetention retention)
 {
     public async Task<LookupRequestOutcome> RequestAsync(Guid requestId, string address, string? ip, CancellationToken ct = default)
     {
         options.Validate();
-        if (!emailOptions.Enabled || !workOptions.Enabled) return LookupRequestOutcome.Unavailable;
+        if (!emailOptions.Enabled || !workOptions.Enabled || !retention.Configured) return LookupRequestOutcome.Unavailable;
         if (requestId == Guid.Empty) throw new ArgumentException("A lookup request identifier is required.");
         var email = EmailAddress.Normalize(address); var ipHash = LookupDeliveryProtection.IpHash(ip);
         if (db.Database.CurrentTransaction is not null || db.ChangeTracker.HasChanges()) throw new InvalidOperationException("Lookup admission requires a clean standalone unit of work.");
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
+        DateTimeOffset cleanupDue;
         try {
             await using (var tx = await db.Database.BeginTransactionAsync(ct)) {
                 await LookupDeliveryRules.LockAsync(db, ct);
@@ -30,10 +31,12 @@ public sealed class DocumentLookupRequests(QuillSignDbContext db, LookupDelivery
                     !await LookupDeliveryRules.WithinCapsAsync(db, options, protection, email, ipHash, now, false, ct)) return LookupRequestOutcome.Neutral;
                 if (!emailOptions.Enabled || !workOptions.Enabled) return LookupRequestOutcome.Unavailable;
                 var payload = new LookupMailPayload("lookup-mail-v1", requestId, email, ipHash, now, now.AddHours(options.RequestHours), null);
-                db.EmailOutbox.Add(new() { Id = requestId, To = email, Template = LookupDeliveryProtection.Template,
-                    PayloadJson = protection.Protect(payload), AvailableAt = now });
+                var outbox = new EmailOutbox { Id = requestId, To = email, Template = LookupDeliveryProtection.Template,
+                    PayloadJson = protection.Protect(payload), AvailableAt = now };
+                db.EmailOutbox.Add(outbox);
                 db.WorkItems.Add(new() { Id = requestId, Kind = WorkKind.Email, AvailableAt = now, PayloadJson = JsonSerializer.Serialize(new { emailId = requestId }) });
                 await db.SaveChangesAsync(ct);
+                cleanupDue = (await retention.EnrollLockedAsync(outbox, false, ct)).DeleteAfter;
                 await signals().PutHintAsync(requestId, now, ct);
                 await tx.CommitAsync(ct);
             }
@@ -41,6 +44,7 @@ public sealed class DocumentLookupRequests(QuillSignDbContext db, LookupDelivery
         // The committed storage hint recovers a lost publication or acknowledgement.
         try { await signals().PublishAsync(requestId, TimeSpan.Zero, ct); }
         catch (Exception e) when (e is RequestFailedException or IOException or OperationCanceledException or HttpRequestException) { }
+        await retention.PublishAsync(requestId, cleanupDue, ct);
         return LookupRequestOutcome.Neutral;
     }
 }

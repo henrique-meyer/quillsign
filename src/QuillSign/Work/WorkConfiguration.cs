@@ -109,6 +109,9 @@ public static class LookupDeliveryWorkConfiguration
     {
         var options = config.GetSection("DocumentLookupDelivery").Get<LookupDeliveryOptions>() ?? new(); options.Validate();
         services.TryAddSingleton(options);
+        var retention = new LookupContactRetentionOptions { Days = config.GetValue<int?>("Demo:PurgeAfterDays") }; retention.Validate();
+        services.TryAddSingleton(retention); services.TryAddScoped<LookupContactRetention>(); services.TryAddScoped<LookupContactCleanup>();
+        services.TryAddScoped<Func<LookupContactCleanup>>(sp => () => sp.GetRequiredService<LookupContactCleanup>());
         services.AddDocumentLookup(config);
         services.TryAddScoped<LookupDeliveryProtection>(); services.TryAddScoped<DocumentLookupRequests>(); services.TryAddScoped<LookupLinkDelivery>();
         services.TryAddScoped<QuillSign.Email.LookupEmailTemplate>();

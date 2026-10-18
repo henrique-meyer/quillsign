@@ -1018,6 +1018,33 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.LookupContactRetentionSnapshot", b =>
+                {
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Days")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("DeleteAfter")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PolicyVersion")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("RequestId");
+
+                    b.ToTable("LookupContactRetentionSnapshots", t =>
+                        {
+                            t.HasCheckConstraint("CK_LookupContactRetention_Interval", "[Days] BETWEEN 1 AND 36500 AND DATEPART(TZOFFSET,[StartedAt]) = 0 AND DATEPART(TZOFFSET,[DeleteAfter]) = 0 AND DATEPART(nanosecond,[StartedAt]) = 0 AND [DeleteAfter] = DATEADD(day,[Days],[StartedAt])");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.Recipient", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1805,6 +1832,15 @@ namespace QuillSign.Data.Migrations
                         .HasForeignKey("Id", "CurrentFinishId")
                         .HasPrincipalKey("EnvelopeId", "Id")
                         .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("QuillSign.Data.LookupContactRetentionSnapshot", b =>
+                {
+                    b.HasOne("QuillSign.Data.EmailOutbox", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("QuillSign.Data.Recipient", b =>

@@ -8,9 +8,9 @@ public static class DatabaseCommands
     public static async Task<int> RunAsync(string[] args)
     {
         IConfiguration? configuration = null;
-        if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "grant-demo-purge" or "verify-runtime"))
+        if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "grant-demo-purge" or "grant-lookup-retention" or "verify-runtime"))
         {
-            Console.Error.WriteLine("Usage: database provision-identities|provision-worker|migrate|grant-runtime|grant-demo-purge|verify-runtime");
+            Console.Error.WriteLine("Usage: database provision-identities|provision-worker|migrate|grant-runtime|grant-demo-purge|grant-lookup-retention|verify-runtime");
             return 2;
         }
         try
@@ -35,6 +35,7 @@ public static class DatabaseCommands
                 else if (args[0] == "provision-worker")
                     await DatabasePermissions.ProvisionWorkerAsync(connection, Guid.Parse(builder.Configuration["Database:WorkerClientId"] ?? ""));
                 else if(args[0]=="grant-demo-purge")await DatabasePermissions.GrantDemoPurgeAsync(connection);
+                else if(args[0]=="grant-lookup-retention")await DatabasePermissions.GrantLookupRetentionAsync(connection);
                 else await DatabasePermissions.GrantRuntimeAsync(connection);
             }
             Console.WriteLine($"{{\"operation\":\"{args[0]}\",\"status\":\"ok\"}}");
@@ -92,6 +93,8 @@ public static class DatabaseCommands
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[CompletionCandidates] WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[DocumentRetentionSnapshots] SET [Days]=1 WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[DocumentRetentionSnapshots] WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[LookupContactRetentionSnapshots] SET [Days]=1 WHERE 1 = 0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[LookupContactRetentionSnapshots] WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionSealOutputs] SET [RecipeVersion] = 'forbidden' WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[CompletionSealOutputs] WHERE 1 = 0"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionPublicationIntents] SET [RetentionDays]=0 WHERE 1 = 0"));

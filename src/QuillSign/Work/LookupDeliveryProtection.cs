@@ -60,7 +60,7 @@ public sealed class LookupDeliveryProtection(IDataProtectionProvider provider)
         if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && ip.ScopeId != 0) throw new ArgumentException("A valid request IP address is required.");
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("lookup-ip-v1|" + ip)));
     }
-    private static bool Hash(string? value) => value is { Length: 64 } && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+    internal static bool Hash(string? value) => value is { Length: 64 } && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
     private static InvalidDataException Invalid() => new("Lookup mail scope is unavailable.");
 }
 
@@ -76,8 +76,9 @@ internal static class LookupDeliveryRules
     {
         options.Validate();
         var start = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
+        var end = start.AddDays(1);
         var query = db.EmailOutbox.AsNoTracking().Where(x => x.Template == LookupDeliveryProtection.Template);
-        query = dispatch ? query.Where(x => x.SubmissionStartedAt >= start) : query.Where(x => x.AvailableAt >= start);
+        query = dispatch ? query.Where(x => x.SubmissionStartedAt >= start && x.SubmissionStartedAt < end) : query.Where(x => x.AvailableAt >= start && x.AvailableAt < end);
         var rows = await query.OrderBy(x => x.Id).Take(options.DailyRequests + 1).ToArrayAsync(ct);
         if (rows.Length >= options.DailyRequests) return false;
         var payloads = rows.Select(protection.Read).ToArray();

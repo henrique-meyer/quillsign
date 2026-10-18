@@ -9,18 +9,19 @@ namespace QuillSign.Work;
 
 public sealed class LookupLinkDelivery(QuillSignDbContext db, LookupDeliveryOptions limits, LookupDeliveryProtection protection,
     DocumentLookupProtection links, Func<DocumentLookup> lookup, Func<LookupEmailTemplate> template, IEmailSender sender,
-    EmailOptions emailOptions, WorkOptions workOptions, TimeProvider time)
+    EmailOptions emailOptions, WorkOptions workOptions, TimeProvider time, LookupContactRetention retention)
 {
     private bool Enabled => emailOptions.Enabled && workOptions.Enabled;
     public async Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken ct)
     {
         if (!Enabled) return new(WorkOutcome.Retry, "delivery-disabled");
-        limits.Validate(); LookupMailPayload request; DocumentLookupLink link; LookupIssuedToken binding; OutgoingEmail outgoing;
+        limits.Validate(); LookupMailPayload request; DocumentLookupLink link; LookupIssuedToken binding; OutgoingEmail outgoing; LookupContactRetentionSnapshot policy;
         try {
             await using (var tx = await db.Database.BeginTransactionAsync(ct)) {
                 await LookupDeliveryRules.LockAsync(db, ct);
-                request = (await OwnedAsync(lease, null, ct)).Payload;
-                if (await PolicyAsync(request, ct) is { } stopped) return stopped;
+                var owned = await OwnedAsync(lease, null, ct); request = owned.Payload;
+                policy = await retention.ReadAsync(owned.Row, ct);
+                if (await PolicyAsync(request, policy, ct) is { } stopped) return stopped;
                 await tx.CommitAsync(ct);
             }
             // Issuance owns a separate transaction. No transport leaves this worker
@@ -39,7 +40,8 @@ public sealed class LookupLinkDelivery(QuillSignDbContext db, LookupDeliveryOpti
             await LookupDeliveryRules.LockAsync(db, ct);
             var current = await OwnedAsync(lease, null, ct);
             if (current.Payload != request) throw Invalid();
-            if (await PolicyAsync(request, ct) is { } stopped) return stopped;
+            policy = await retention.ReadAsync(current.Row, ct);
+            if (await PolicyAsync(request, policy, ct) is { } stopped) return stopped;
             await TokenAsync(binding, ct);
             intentAt = time.GetUtcNow(); if (lease.Until <= intentAt || binding.ExpiresAt <= intentAt) throw Invalid();
             intentPayload = protection.Protect(request with { Issued = binding });
@@ -47,14 +49,14 @@ public sealed class LookupLinkDelivery(QuillSignDbContext db, LookupDeliveryOpti
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.SubmissionStartedAt, intentAt).SetProperty(x => x.Attempts, lease.Attempt)
                     .SetProperty(x => x.PayloadJson, intentPayload), ct);
             if (changed != 1) throw Invalid();
-            if (lease.Until <= time.GetUtcNow() || Deadline(request) <= time.GetUtcNow() || binding.ExpiresAt <= time.GetUtcNow()) throw Invalid();
+            if (lease.Until <= time.GetUtcNow() || Deadline(request, policy) <= time.GetUtcNow() || binding.ExpiresAt <= time.GetUtcNow()) throw Invalid();
             await tx.CommitAsync(ct);
         }
         catch (CryptographicException) { return new(WorkOutcome.Retry, "lookup-payload-unavailable"); }
         catch (InvalidDataException) { return new(WorkOutcome.Failed, "lookup-scope-unavailable"); }
         // Unknown SQL commit acknowledgements propagate: no provider call, no
         // assumption that a persisted intent can be replayed safely.
-        if (!Enabled || Deadline(request) <= time.GetUtcNow() || binding.ExpiresAt <= time.GetUtcNow() || lease.Until <= time.GetUtcNow()) {
+        if (!Enabled || Deadline(request, policy) <= time.GetUtcNow() || binding.ExpiresAt <= time.GetUtcNow() || lease.Until <= time.GetUtcNow()) {
             await ClearAsync(lease, intentAt, intentPayload, ct);
             return new(Enabled ? WorkOutcome.Failed : WorkOutcome.Retry, Enabled ? "lookup-expired" : "delivery-disabled");
         }
@@ -75,12 +77,12 @@ public sealed class LookupLinkDelivery(QuillSignDbContext db, LookupDeliveryOpti
         // intent for WorkStore's existing ambiguous recovery, without another send.
     }
 
-    private DateTimeOffset Deadline(LookupMailPayload p) => new[] { p.Deadline, p.RequestedAt.AddHours(limits.RequestHours) }.Min();
-    private async Task<WorkResult?> PolicyAsync(LookupMailPayload p, CancellationToken ct)
+    private DateTimeOffset Deadline(LookupMailPayload p, LookupContactRetentionSnapshot policy) => LookupContactRetention.DispatchDeadline(p, limits, policy);
+    private async Task<WorkResult?> PolicyAsync(LookupMailPayload p, LookupContactRetentionSnapshot policy, CancellationToken ct)
     {
         limits.Validate();
         if (!Enabled) return new(WorkOutcome.Retry, "delivery-disabled");
-        if (p.RequestedAt > time.GetUtcNow() || Deadline(p) <= time.GetUtcNow()) return new(WorkOutcome.Failed, "lookup-request-expired");
+        if (p.RequestedAt > time.GetUtcNow() || Deadline(p, policy) <= time.GetUtcNow()) return new(WorkOutcome.Failed, "lookup-request-expired");
         if (await db.Suppressions.AnyAsync(x => x.Email == p.Email, ct)) return new(WorkOutcome.Failed, "recipient-suppressed");
         if (!await LookupDeliveryRules.WithinCapsAsync(db, limits, protection, p.Email, p.IpHash, time.GetUtcNow(), true, ct)) return new(WorkOutcome.Retry, "lookup-daily-limit");
         return null;
