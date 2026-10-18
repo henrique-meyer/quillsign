@@ -205,7 +205,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 ## Remaining work
 
 - Hosted readiness: operator disclosures, TSA configuration and rate coordination, immutable final storage, retention and end-to-end validation.
-- Automatic expiry scheduling, reminders, invitation resend and contact correction. The [verified-mailbox lookup flow](docs/document-lookup.md) supports scanner-safe private link entry, a paged retained-document list and an explicit read-only final-packet handoff. Public email requests and lookup-link delivery remain pending; hosted sending stays disabled.
+- Automatic expiry scheduling, reminders, invitation resend and contact correction. The [verified-mailbox lookup flow](docs/document-lookup.md) supports scanner-safe private entry, a paged retained-document list, an explicit final-packet handoff and an internal capped durable mail producer. Pre-envelope contact-data cleanup and the public request form remain pending; hosted sending stays disabled.
 - Remaining Office formats (DOC, ODT, RTF, TXT, PPTX and XLSX) and hosted conversion validation.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - After the rest of the project is complete: optional, sender-approved AI field and signer-role suggestions.

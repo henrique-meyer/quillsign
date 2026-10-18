@@ -1,0 +1,19 @@
+@model QuillSign.Email.LookupEmailModel
+@{ Layout = null; }
+QuillSign
+
+Open your private completed-document list:
+@Html.Raw(Model.Link.AbsoluteUri)
+
+Continue to prepare the link, then choose Open my documents to use it once. Do not forward this private link.
+The link expires at @Model.ExpiresAt.ToString("u") (UTC).
+
+If the link does not open, visit:
+@Html.Raw(Model.Entry.AbsoluteUri)
+Enter this access code, then confirm:
+@Html.Raw(Model.Code)
+
+Only completed documents still retained by this instance can appear. Open a document to save its executed PDF and completion certificate. Lookup does not restore editing or signing, extend retention or guarantee ongoing availability.
+If you did not request this email, you can ignore it.
+
+Demo instance. No uptime or retention guarantees. Not for legally significant documents.

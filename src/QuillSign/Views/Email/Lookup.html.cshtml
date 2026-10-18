@@ -1,0 +1,13 @@
+@model QuillSign.Email.LookupEmailModel
+@{ Layout = null; }
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Private document lookup</title></head>
+<body><p>QuillSign</p><h1>Your private document lookup link</h1>
+<p><a href="@Model.Link.AbsoluteUri" rel="noreferrer">Open your completed-document list</a>.</p>
+<p>Continue to prepare the link, then choose Open my documents to use it once. Do not forward this private link.</p>
+<p>The link expires at @Model.ExpiresAt.ToString("u") (UTC).</p>
+<p>If the link does not open, visit <a href="@Model.Entry.AbsoluteUri" rel="noreferrer">access entry</a>, enter the following code, then confirm:</p>
+<p style="overflow-wrap:anywhere;word-break:break-all"><code>@Model.Code</code></p>
+<p>Only completed documents still retained by this instance can appear. Open a document to save its executed PDF and completion certificate. Lookup does not restore editing or signing, extend retention or guarantee ongoing availability.</p>
+<p>If you did not request this email, you can ignore it.</p>
+<p>Demo instance. No uptime or retention guarantees. Not for legally significant documents.</p>
+</body></html>

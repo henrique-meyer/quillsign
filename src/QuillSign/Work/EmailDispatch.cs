@@ -72,7 +72,7 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
 public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options, EmailPayloadProtection protection,
     VerificationEmailTemplate template, IEmailSender sender, TimeProvider time,DeclinePayloadProtection? declines = null,
     DeclineEmailTemplate? declineTemplate = null,SignerInvitationDelivery? invitations = null,Func<CompletionNotificationDelivery>? completions=null,
-    Func<VoidNotificationDelivery>? voids=null) : IWorkHandler
+    Func<VoidNotificationDelivery>? voids=null,Func<LookupLinkDelivery>? lookups=null) : IWorkHandler
 {
     public WorkKind Kind => WorkKind.Email;
 
@@ -80,6 +80,7 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
     {
         if (!options.Enabled) return new(WorkOutcome.Retry, "delivery-disabled");
         var email = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id, cancellationToken);
+        if(email.Template==LookupDeliveryProtection.Template)return await (lookups?.Invoke()??throw new InvalidOperationException("Missing lookup delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==VoidNotificationJobs.Template)return await (voids?.Invoke()??throw new InvalidOperationException("Missing void notification delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==CompletionNotificationJobs.Template)return await (completions?.Invoke()??throw new InvalidOperationException("Missing completion notification delivery.")).ExecuteAsync(lease,cancellationToken);
         if (email.Template == "signer-invitation") return await (invitations ?? throw new InvalidOperationException("Missing signer invitation delivery.")).ExecuteAsync(lease,cancellationToken);
