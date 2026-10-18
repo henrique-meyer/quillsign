@@ -156,3 +156,12 @@ Keep the reusable feature disabled until all admission, authority, completion
 and UI slices are integrated. Do not ship an email-changing endpoint in an
 intermediate slice. Reuse permissive dependencies; there is no AI placement or
 new mail provider in this work.
+
+QUILS-112 provides the first, unregistered integrity contract in
+`SignerContactHistory`. Its original roster must already be verified against the
+full historical audit chain. Its current projection includes the latest persisted
+epoch, so a missing A to B to A history cannot be mistaken for legacy identity.
+The canonical record binds retired-entry evidence by hash; it does not create or
+verify the underlying retirement snapshot, authenticate a sender, inspect Finish,
+store revisions, revoke sessions or send an invitation. Those remain mandatory
+integration gates. No active runtime path calls this contract yet.
