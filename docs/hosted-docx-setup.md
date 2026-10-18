@@ -37,7 +37,7 @@ Image and snapshot storage must be accounted for separately. Microsoft currently
 ## Release gates
 
 1. Review the private Bicep/parameter preview, group-scoped assignments, exact pilot operations and cleanup plan; obtain owner approval before deployment.
-2. Validate provider availability, effective access, actual egress denial, two real synthetic conversions, normalized output and final cleanup.
+2. Validate provider availability, effective access, actual egress denial, up to two synthetic conversion attempts, normalized output and final cleanup.
 3. Record measured lifecycle/storage costs and any service limitations. The inspected Python operator SDK is MIT licensed and marked community preview; it is not an application dependency or proof of provider behavior.
 4. Prepare and validate the supported application transport in a separate source slice. Exercise sender upload, conversion failure/recovery, PDF preview/download and explicit confirmation before requesting normal hosted enablement.
 
