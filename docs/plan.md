@@ -66,9 +66,11 @@ Validation: 59 focused resend cases and the combined 88-case original-Send/resen
 
 ## QUILS-94: Design durable sequential signer reminders with bounded scheduling
 
-Status: To Do. Assigned to ChatGPT Codex; native story created before implementation research.
+Status: Done on merge after exact-head checks pass. Assigned to ChatGPT Codex; concrete design assessment precedes separately scoped implementation.
 
 Depends on reviewed invitation replacement/resend delivery semantics. Assess and record a concrete reminder schedule/dispatch design before implementation, split producer/dispatch/UI if needed. Preserve configured default day-3/day-7 reminders and existing expiry/retention limits without inventing a new operator policy. The synthetic demo currently has no reminders; preserve that policy and keep hosted email disabled. Schedule only for the current unfinished sequential signer using durable event-driven work and storage-only future hints, never recurring SQL polling. Deduplicate/revalidate current source, signer, token scope, deadline, suppression/caps and terminal state at dispatch. Establish safe link invalidation/session behavior and uncertain-delivery recovery using supported mail contracts. Cancel/skip obsolete work after Finish, correction, void, decline, expiry or purge; no deadline extension. Test genuine local captured-mail, boundary, duplicate/rollback/concurrency/uncertain outcomes. No live email/TSA/provider, cloud/resource/configuration/permission/deployment change, purchase, new policy or AI. Keep plan/story matched and complete scoped validation/secret scans/PR attachment/exact-head checks/self-merge/native Done for each implemented slice.
+
+Concrete design: see docs/signer-reminders.md. Freeze a canonical demo-empty policy at reviewed Send, anchor each current signer epoch to its original invitation admission, and use deterministic epoch/day work with storage-only hints. System reminder authority must not impersonate sender-ticket resend. Canonical invitation predecessors must include reminders and correction before dispatch can be enabled. Mint fresh scoped links, preserve redeemed sessions, and fail closed on pending/ambiguous predecessors and cutoff/cap/evidence changes. Implement policy/identity, shared successor semantics, producer/dispatch and private status as separate story-first slices. No hosted configuration changed.
 
 ## QUILS-96: Design evidence-preserving unsigned signer contact correction
 
