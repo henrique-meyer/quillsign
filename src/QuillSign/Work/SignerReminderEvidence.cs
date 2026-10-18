@@ -8,8 +8,8 @@ using QuillSign.Signing;
 
 namespace QuillSign.Work;
 
-// Runtime v2 represents the verified legacy contact explicitly. It never mints
-// a contact revision from an address, and the old pure v1 format is not authority.
+// This runtime epoch represents the verified legacy contact explicitly. It never
+// mints a contact revision from an address; the earlier pure format is not authority.
 public sealed record ReminderEpoch(string Version,Guid EnvelopeId,Guid SignerId,Guid InvitationId,SignerContactEpoch Contact,
     string Recipient,string SenderEmail,Guid DocumentId,string DocumentSha256,string DisclosureSha256,
     string Policy,string PolicySha256,DateTimeOffset InvitedAt,DateTimeOffset? SigningDeadline,DateTimeOffset? RetentionDeadline);
