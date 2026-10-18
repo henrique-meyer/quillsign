@@ -17,6 +17,6 @@
         <form method="post" asp-page-handler="Redeem"><input type="hidden" name="nonce" value="@nonce.ToString("N")" /><button type="submit">Open my documents</button></form>
     </section>
 }
-<p><a href="/find/access">Return to access entry</a> · <a href="/find/documents">Return to your document list</a></p>
+<p><a href="/find/request">Request a fresh lookup link</a> · <a href="/find/access">Return to access entry</a> · <a href="/find/documents">Return to your document list</a></p>
 </section>
 @section Scripts { <script src="~/lookup-access.js" asp-append-version="true" defer></script> }

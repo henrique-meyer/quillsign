@@ -187,7 +187,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
         public SendDraftWorkflowTests.Clock Clock=>Run.Signing.H.Clock; public Guid Id=>Run.Signing.Envelope.Id; public string PublicId=>Run.Signing.Envelope.PublicId;
         public string PagePath=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+(Role=="sender" ? "/sent" : "/confirmed");
         public string Resource(string kind)=>"/"+(Role=="sender" ? "draft/" : "sign/")+PublicId+"/final"+(kind.Length==0 ? "" : "/"+kind);
-        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false,bool completionNotifications=false,bool publish=true,bool senderAlsoSigns=false,bool verificationBrowser=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DbCommandInterceptor? readFault=null,int? browserPort=null,string? mailbox=null,bool lookupBrowser=false)
+        public static async Task<Flow> Create(SqlDatabaseFixture fixture,bool completionReaders=false,bool chunkedReader=false,bool completionNotifications=false,bool publish=true,bool senderAlsoSigns=false,bool verificationBrowser=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DbCommandInterceptor? readFault=null,int? browserPort=null,string? mailbox=null,bool lookupBrowser=false,string? requestIp=null)
         {
             var f=new Flow {fixture=fixture,Run=await Run.Create(fixture,senderAlsoSigns:senderAlsoSigns,uploadRetentionDays:uploadRetentionDays,afterUploadDelay:afterUploadDelay,mailbox:mailbox),CompletionNotifications=completionNotifications}; f.Store=new(f.Clock); _=await f.Run.Prepare();
             await using var db=fixture.Open(); if(publish)f.Published=(await f.Publication(db).PublishAsync(f.Id))!;
@@ -224,6 +224,7 @@ public sealed class CompletionDownloadTests(SqlDatabaseFixture fixture) : IClass
                 f.App.Use(async(http,next)=> {http.Response.Headers["X-Content-Type-Options"]="nosniff";http.Response.Headers["Referrer-Policy"]="no-referrer";http.Response.Headers["Content-Security-Policy"]="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";await next();});
                 f.App.UseStaticFiles();
             }
+            if(requestIp is not null)f.App.Use((http,next)=> {http.Connection.RemoteIpAddress=IPAddress.Parse(requestIp);return next();});
             f.App.UseRouting(); if(lookupBrowser)f.App.UseDocumentLookupBrowser(); f.App.UseRateLimiter();if(verificationBrowser)f.App.UseMiddleware<VerificationUploadBoundary>(); f.App.UseAuthentication(); f.App.UseAuthorization(); f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
             f.App.MapGet("/fixture/{role}",async (HttpContext http,string role,SignerReviewBrowser browser)=> {
                 if(role=="sender") {

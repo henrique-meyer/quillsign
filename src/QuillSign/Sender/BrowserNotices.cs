@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace QuillSign.Sender;
 
-public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed, SignerSaved, SignerRemoved, SignersReordered, PreviewRequired, DetailsSaved, RecipientSaved, RecipientRemoved, SignatureAdopted, SignerFieldSaved, SignerReviewPrepared, SignerFinishAccepted, RequestSent, RequestVoided }
+public enum NoticeCode { CheckInbox, InvalidLink, SessionRequired, Unavailable, Retry, DocumentUploaded, PreviewConfirmed, SignerSaved, SignerRemoved, SignersReordered, PreviewRequired, DetailsSaved, RecipientSaved, RecipientRemoved, SignatureAdopted, SignerFieldSaved, SignerReviewPrepared, SignerFinishAccepted, RequestSent, RequestVoided, LookupRequested }
 
 public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvironment environment)
 {
@@ -36,6 +36,7 @@ public sealed class BrowserNotices(IDataProtectionProvider protection, IHostEnvi
     public static string Text(NoticeCode code) => code switch
     {
         NoticeCode.CheckInbox => "Check your inbox. If email can be sent to that address, a verification link will arrive shortly.",
+        NoticeCode.LookupRequested => "Check your inbox. If email can be sent to that address, a private document lookup link will arrive shortly.",
         NoticeCode.InvalidLink => "This verification link is invalid, expired, or already used. Request a new link to start a draft.",
         NoticeCode.SessionRequired => "Verify your email to open a draft. Your previous session may have expired.",
         NoticeCode.Unavailable => "Email delivery is currently unavailable. Please try again later.",

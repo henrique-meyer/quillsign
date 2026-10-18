@@ -1,0 +1,22 @@
+@page "/find/request"
+@model QuillSign.Pages.Lookup.RequestModel
+@{ ViewData["Title"] = "Find your completed documents"; }
+<section class="start-card" aria-labelledby="lookup-request-title">
+<p class="eyebrow">Private document access</p>
+<h1 id="lookup-request-title">Find your completed documents</h1>
+<p>Open completed documents still retained for an email address you used as a sender, signer or completion recipient. No account is needed.</p>
+@if (Model.Notice is not null) { <p class="notice" role="status">@Model.Notice</p> }
+@if (Model.Message is not null) { <p class="document-error" role="alert">@Model.Message</p> }
+@if (Model.CanRequest) {
+    <form method="post" asp-page="/Lookup/Request">
+        <label asp-for="Email">Email address</label>
+        <input asp-for="Email" type="email" autocomplete="email" inputmode="email" required maxlength="320" aria-describedby="lookup-request-help lookup-email-error" />
+        <span asp-validation-for="Email" id="lookup-email-error" class="validation" role="alert"></span>
+        <button type="submit">Email me a lookup link</button>
+    </form>
+    <p id="lookup-request-help" class="hint">If delivery is permitted, a single-use link will arrive shortly. Wait before requesting another link.</p>
+} else if (Model.Message is null) {
+    <p class="notice" role="status">@QuillSign.Pages.Lookup.RequestModel.Unavailable</p>
+}
+<p><a href="/find/access">Use an existing link or access code</a> · <a href="/find/documents">Return to your document list</a></p>
+</section>
