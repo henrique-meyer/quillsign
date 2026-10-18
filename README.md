@@ -98,7 +98,7 @@ The initializer generates local SQL and Azurite credentials in ignored `.env` co
 | SMTP capture | `localhost:1025` | `mailpit:1025` |
 | Gotenberg | Through the app container only | `gotenberg:3000` |
 
-The app shows the verification form when database, storage, email, and background work are configured; otherwise it shows an email-unavailable notice. Verified senders can upload and review PDFs and supported images. DOCX upload also requires the configured, isolated converter; hosted DOCX conversion remains disabled.
+The app shows the verification form when database, storage, email, and background work are configured; otherwise it shows an email-unavailable notice. Verified senders can upload and review PDFs and supported images. DOCX upload also requires the configured, isolated converter; the approved bounded demo now enables DOCX through the isolated sandbox transport, with email still disabled. Real synthetic desktop/mobile upload, preview, exact-byte download and keyboard confirmation checks passed; ordinary mailbox-based entry remains gated by email readiness.
 
 Run `docker compose ps` to check health and `docker compose logs -f app` for application logs. `docker compose down` stops the stack while preserving SQL, blob, and captured-mail data. `docker compose down --volumes` resets **all local stack data**. Changing the generated SQL password requires resetting the SQL volume or changing the existing database password.
 

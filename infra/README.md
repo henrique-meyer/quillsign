@@ -87,6 +87,14 @@ Once the matching image is published and the schema is migrated, set the private
 
 The dispatch job runs `work once`; hourly recovery runs `work recover` without SQL configuration. Run `work verify` explicitly to check the dispatch identity's database/storage/key-ring access, then verify job executions and application health. The manual Deploy workflow updates the app and both jobs to the matching commit image. Keep actual resource values and deployment records in local notes.
 
+## Existing DOCX recovery permissions and configuration
+
+After approval, `sandbox-cleanup-access.bicep` grants SandboxGroup Data Owner to the existing SQL-free purge-recovery job identity on the existing dedicated converter group only. The principal is resolved from that job by ARM reference. This template creates no identity, group or general subscription permission. Supply exact scope values in its ignored parameter file.
+
+Use `sandbox-maintenance.bicep` for the narrow existing-job configuration update. It shares `modules/purge-recovery-job.bicep` with the original staging template, preserving hourly execution, finite timeout, zero retries and the SQL-free command. Enable maintenance only after its separate group grant is approved and verified. The web uses the same protected coordination ledger and its existing group-scoped identity; keep maintenance disabled on web. Set bounded daily/monthly attempt caps explicitly. A pending cleanup consumes no new conversion and counters are never refunded. These are attempt limits, not a provider billing cap.
+
+For the app rollout, update only the checked image and approved DOCX settings while preserving unrelated live environment values, secret references, trust mounts, identities, scale and ingress. Record the exact image, readiness, custom health, role readback, synthetic browser results and final empty sandbox/snapshot/image inventory privately. Email and live timestamp requests require their own authorization. See [DOCX operations and limits](../docs/document-conversion.md#isolated-sandbox-application-transport).
+
 ## GitHub deployment
 
 ### Approved demo staging
