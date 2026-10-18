@@ -70,6 +70,7 @@ public sealed class SenderContactCorrectionPageTests(SqlDatabaseFixture fixture)
         var body = await rejected.Content.ReadAsStringAsync(); Assert.DoesNotContain("checked=", body); Assert.Equal(before, await Counts(r));
         if (kind is "intent" or "statement") Assert.Equal(Forms.Value(review, "ReviewProof"), Forms.Value(body, "ReviewProof"));
         else Assert.DoesNotContain("Confirm email correction</button>", body);
+        if (kind == "stale") { Assert.DoesNotContain("Current email:", body); Assert.Contains(r.Address, body); }
     }
 
     [Theory][InlineData("lost-commit")][InlineData("audit")][InlineData("hint")]
@@ -86,6 +87,13 @@ public sealed class SenderContactCorrectionPageTests(SqlDatabaseFixture fixture)
         using var retry = await r.Post(failed, Confirm(failed)); Assert.Equal(HttpStatusCode.Redirect, retry.StatusCode);
         await using var db = fixture.Open(); Assert.Single(await db.SignerContactRevisions.Where(x => x.EnvelopeId == r.H.Envelope.Id).ToArrayAsync());
         Assert.Equal(1, r.H.Sender.Calls);
+        await r.H.Signals.RecoverAsync(r.H.Clock.GetUtcNow(), default);
+        var command = await db.SignerContactRevisions.Where(x => x.EnvelopeId == r.H.Envelope.Id).Select(x => x.Id).SingleAsync();
+        var workId = InvitationSuccessorJobs.CorrectionWorkId(command);
+        for (var i = 0; i < 12 && await db.WorkItems.Where(x => x.Id == workId).Select(x => x.Status).SingleAsync() != WorkStatus.Completed; i++)
+            Assert.True(await r.H.Once());
+        Assert.Equal(WorkStatus.Completed, await db.WorkItems.Where(x => x.Id == workId).Select(x => x.Status).SingleAsync());
+        Assert.Equal(2, r.H.Sender.Calls);
     }
 
     [Fact]

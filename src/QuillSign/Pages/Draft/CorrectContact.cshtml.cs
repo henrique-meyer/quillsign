@@ -84,7 +84,7 @@ public sealed class CorrectContactModel(Func<SignerContactCorrections> action, S
                 notices.Set(HttpContext, NoticeCode.ContactCorrectionQueued); return Redirect(target);
             }
             if (outcome == SignerContactCorrectionOutcome.InvalidContext) return NotFound();
-            if (outcome is SignerContactCorrectionOutcome.Closed or SignerContactCorrectionOutcome.Unavailable)
+            if (outcome is SignerContactCorrectionOutcome.Closed or SignerContactCorrectionOutcome.Unavailable or SignerContactCorrectionOutcome.Conflict)
                 Data = null;
             CanReview = outcome is SignerContactCorrectionOutcome.Conflict or SignerContactCorrectionOutcome.InvalidConfirmation or
                 SignerContactCorrectionOutcome.DuplicateAddress or SignerContactCorrectionOutcome.Suppressed or SignerContactCorrectionOutcome.Capped;

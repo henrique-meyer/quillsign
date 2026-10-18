@@ -7,7 +7,7 @@
 @if(Model.ErrorMessage is not null) { <p class="document-error" role="alert">@Model.ErrorMessage</p> }
 @if(Model.Data is { } data) {
 <h2>@data.Title</h2>
-<h3>Same named signer</h3><p><strong>@data.Review.Name</strong><span class="signer-email">Current email: @data.Review.OldEmail</span></p>
+<h3>Same named signer</h3><p><strong>@data.Review.Name</strong><span class="signer-email">@(Model.CanConfirm ? "Reviewed email:" : "Current email:") @data.Review.OldEmail</span></p>
 }
 <p>Correct only this person's email address. Their name, role, signing order and the document stay the same.</p>
 <p>Confirming revokes that signer's earlier links and opened sessions, and clears their unfinished signing progress. The corrected mailbox must consent and sign again. Earlier actions remain in the retained history. Already read or downloaded information and submitted email cannot be recalled.</p>
