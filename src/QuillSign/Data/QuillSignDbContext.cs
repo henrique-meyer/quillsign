@@ -200,9 +200,9 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         if(ChangeTracker.Entries<DocumentRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Document retention snapshots are immutable. Purge requires a separate privileged path.");
         if(ChangeTracker.Entries<AuthToken>().Any(x=>x.State==EntityState.Modified &&
-            (x.Entity.Purpose==TokenPurpose.CompletionAccess || x.Property(t=>t.Purpose).OriginalValue==TokenPurpose.CompletionAccess) &&
+            (x.Entity.Purpose is TokenPurpose.CompletionAccess or TokenPurpose.Lookup || x.Property(t=>t.Purpose).OriginalValue is TokenPurpose.CompletionAccess or TokenPurpose.Lookup) &&
             x.Properties.Any(p=>p.IsModified && p.Metadata.Name!=nameof(AuthToken.UsedAt))))
-            throw new InvalidOperationException("Completion access token bindings are immutable.");
+            throw new InvalidOperationException("Readonly access token bindings are immutable.");
         if(ChangeTracker.Entries<CompletionPublicationIntent>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<CompletionPublicationResult>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Completion publication records are immutable.");

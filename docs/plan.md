@@ -2,6 +2,20 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-84: Add verified-mailbox completed-document lookup foundation
+
+Status: In Progress. Depends on merged completion access, publication and retention work. Owned by this chat.
+
+Add the source-only internal foundation for accountless completed-document lookup while records remain retained. Verify mailbox ownership through a dedicated, purpose-bound single-use lookup token and short-lived read-only identity; persist only token hashes and keep capabilities private. Return a bounded list of currently published completed envelopes only for the verified mailbox's actual frozen sender/signer/recipient membership, with minimal own-document metadata and current retention/purge/integrity checks. Do not accept a bare caller email as authorization or restore sender/signing authority.
+
+Inspect existing token/completion access and purge boundaries after matching plan creation and refine this story/plan before implementation as needed. Test true published records, every party role, wrong mailbox/purpose, replay/concurrency/expiry, malformed proofs, retention/purge, changed membership/publication and failure recovery. Reuse permissive dependencies and preserve PDFsharp/MigraDoc 6.2.4.
+
+This slice adds no public page, mail producer, reminder, cloud change, live TSA call or actual email sending. Lookup redemption UI and delivery follow in separately planned slices. Keep hosted email disabled. Validate meaningful local behavior, secrets and CI, commit/push/open/attach/merge a small PR and move native Jira Done.
+
+Lookup design refinement (QUILS-84): Concrete design: reuse the existing Lookup purpose with envelope/party/document/publication fields absent. Store only the random 256-bit token hash and technical lifecycle fields; keep the mailbox solely inside protected link/session payloads, so lookup adds no orphaned mailbox data beyond envelope purge. The protected issuance transport binds normalized mailbox, token/hash, issuance time, original expiry and issuance row revision. Any write to the token invalidates the original link, including a reset of UsedAt after consumption. Redeem once under the token lock and return a separate nonce/revision-bound read-only receipt after confirmed commit. Reject legacy bare hashes and cross-purpose/mixed principals. Unknown commit returns no transport/session; an explicitly issued fresh link is the recovery path.
+
+Use bounded 15-minute link and 30-minute session defaults (maximum 60 minutes each), an independent original session expiry, and protected session-bound keyset cursors. Each finite page considers at most five candidates by default (maximum ten), with a completion-time snapshot ceiling. Verify each current publication/frozen party and actual final pair using existing completion verification, recheck saved first-upload retention and current source after I/O, and authenticate again before returning minimal title/public ID/completion/retention metadata. Deduplicate envelopes with overlapping party roles. Listing does not issue final-access links or create download/edit authority. No schema change is needed; extend the existing token EF mutation guard to Lookup. Validate SQL translation, pagination and genuine published evidence locally. Public delivery/rate limiting and UI remain dependent work.
+
 ## QUILS-3: Create QuillSign SVG logos and matching PNG exports
 
 Status: Done. Branding PRs merged and Jira story closed, including the coral-red product accent.

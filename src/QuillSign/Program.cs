@@ -60,7 +60,7 @@ builder.Services.AddScoped<SenderSentStatus>();
 builder.Services.AddScoped<Func<SenderSentStatus>>(sp=>()=>sp.GetRequiredService<SenderSentStatus>());
 builder.Services.AddScoped<SenderSendReadiness>();
 builder.Services.AddCompletionDownloads();
-builder.Services.AddCompletionAccess(builder.Configuration);
+builder.Services.AddDocumentLookup(builder.Configuration);
 builder.Services.AddCompletionReaderBrowser(builder.Environment);
 builder.Services.AddPdfVerificationBrowser(builder.Configuration);
 var app = builder.Build();
