@@ -9,6 +9,7 @@ This is a source implementation plan, not an announcement of hosted format avail
 | XLSX | Default-disabled [guarded values-only intake](values-xlsx.md) | QUILS-108, QUILS-124 | Values-only cells with bounded print ranges; exclude every formula, refresh source and hidden-content ambiguity |
 | ODT | Default-disabled [guarded static intake](static-odt.md) | QUILS-109, QUILS-124 | Independent ODF manifest, namespace and resource validation; not a renamed DOCX gate |
 | RTF | Default-disabled [guarded literal-formatting intake](static-rtf.md) | QUILS-110, QUILS-124 | Grammar-aware literal/static subset serialized into owned DOCX; unknown destinations fail closed |
+
 | DOC | Rejected; [release no-go decision](legacy-doc.md) | QUILS-111 | No reviewed permissive WordBinary content gate; export to PDF |
 
 The order is TXT integration, PPTX, values-only XLSX, ODT, conservative RTF, then legacy DOC feasibility. A converter being able to import a suffix does not establish that the application safely accepts its content. Neither a MIME label nor a file signature is an acceptance rule.
