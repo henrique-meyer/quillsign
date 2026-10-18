@@ -100,7 +100,7 @@ Validation: all 32 SQL/Azurite delivery/admission cases pass, covering default-o
 
 ## QUILS-121: Freeze reviewed optional reminder policy at Send
 
-Status: Done in PR #122 after exact-head checks passed; native Jira Done. Assigned to ChatGPT Codex. Depends on QUILS-113; creates no scheduled work or mail and leaves demo reminders disabled.
+Status: Done in PR #122 after all ten exact-head checks passed; native Jira Done. Assigned to ChatGPT Codex. Depends on QUILS-113; creates no scheduled work or mail and leaves demo reminders disabled.
 
 Integrate the strict optional reminder policy into sender Send review and immutable sent evidence. Resolve configured generic day-3/day-7 policy with demo always empty and off by default; bind the exact canonical policy/hash to server-derived review so a configuration change requires fresh deliberate review. Atomically persist that snapshot/hash in immutable Send evidence and verify it against audit, preserving old reviewed/sent records through an explicit verified legacy-empty bridge. Present accurate private review text for no reminders or the bounded schedule without implying email delivery. Preserve clean URLs/privacy/metadata exclusions/mobile/keyboard behavior. No reminder producer, live email/TSA/provider, cloud/resource/settings/deployment/permission change, purchase, AI or new operator policy. Test disabled/demo/config-change/replay/rollback/immutable evidence and real local review flows, secret scan, small PR/attachment/exact-head checks/self-merge/native Done. Shared successor runtime remains separately scoped QUILS-114/118.
 
