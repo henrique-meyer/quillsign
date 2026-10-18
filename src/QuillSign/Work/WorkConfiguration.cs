@@ -18,6 +18,8 @@ public static class WorkConfiguration
             options.VisibilitySeconds < options.LeaseSeconds + 60 || options.VisibilitySeconds > 7200)
             throw new InvalidOperationException("Invalid work retry/lease configuration.");
         services.AddSingleton(options);
+        var reminders=config.GetSection("SignerReminders").Get<SignerReminderOptions>()??new();reminders.Validate();
+        services.TryAddSingleton(reminders);
         services.AddScoped<Func<IWorkSignals>>(sp => () => sp.GetRequiredService<IWorkSignals>());
         services.AddSingleton(TimeProvider.System);
         if (options.Enabled)

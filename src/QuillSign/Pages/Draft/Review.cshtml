@@ -66,11 +66,18 @@
 <h2>Send for signing</h2>
 @if(Model.Draft.ExpiresAt is { } expiry) { <p>Request expiry: @expiry.ToString("u").</p> }
 @if(Model.Draft.RetentionDeleteAfter is { } cutoff) { <p class="hint">This demo document's fixed retention ends @cutoff.ToString("u"). The signing deadline cannot be later.</p> }
+@if(Model.Readiness?.Reminders is { } reminders) {
+<h3>Automatic reminders</h3>
+@if(reminders.Days.IsEmpty) { <p>No automatic reminders are scheduled for this request.</p> }
+else { <p>The reviewed reminder policy allows reminders @string.Join(" and ",reminders.Days) day(s) after each current signer's invitation, while signing remains incomplete and before expiry or retention ends.</p>
+<p class="hint">Automatic scheduling is not available yet. This review records the policy; it does not queue reminder emails.</p> }
+}
 @if(Model.Readiness?.Error is { } error) { <p class="document-error" role="status">@error</p> }
 @if(Model.Readiness?.Disclosure is { } disclosure) { <h3>Electronic-record disclosure for this request</h3><pre class="send-disclosure" tabindex="0" aria-label="Electronic-record disclosure for this request">@disclosure.Text</pre> }
 <p>Sending freezes this preparation and queues the first signing invitation. Later signers are invited in order after each signing copy is processed.</p>
 <form method="post" asp-page-handler="Send">
 <input type="hidden" asp-for="Version" /><input type="hidden" name="StatementVersion" value="@SenderSendStatement.Version" />
+@if(Model.Readiness?.Reminders is not null) { <input type="hidden" asp-for="ReminderSha256" /> }
 @if(Model.Draft.RetentionSha256 is not null) { <input type="hidden" asp-for="RetentionSha256" /> }
 <label class="send-check"><input type="checkbox" asp-for="ExclusionsAcknowledged" required /> I confirm this is not a will, court or family-law document, foreclosure/eviction/utility notice, or another excluded record, and this transaction is suitable for electronic signing.</label>
 <label class="send-check"><input type="checkbox" asp-for="SendAcknowledged" required /> @SenderSendStatement.Text</label>

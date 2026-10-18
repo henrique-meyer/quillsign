@@ -9,6 +9,13 @@ and this work does not enable hosted email or add a cloud schedule.
 Reminders are system actions authorized by the sender's reviewed Send, not a
 replayed sender session or an automatic call to the manual resend endpoint.
 Freeze a canonical, versioned reminder policy in the Send audit transaction.
+QUILS-121 binds the server-derived review to the exact policy hash, writes
+the canonical policy/hash in the immutable `sent` audit and verifies it during
+saved Send reads. Changed configuration requires a fresh review. Historical
+Send records without either new field have an explicitly empty schedule; an
+old mutable `ReminderDaysJson` array cannot authorize reminders. A partial,
+noncanonical or mismatched new evidence pair fails closed. No scheduled work
+is created by that policy slice.
 The generic application's existing day offsets are 3 and 7; an empty schedule
 disables reminders. A demo envelope always freezes an empty schedule. An
 operator must explicitly enable reminders and configure bounded daily global,
