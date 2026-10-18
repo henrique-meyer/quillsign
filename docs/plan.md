@@ -4,7 +4,7 @@ Tasks are recorded here and in Jira before implementation. Private deployment na
 
 ## QUILS-90: Refresh hosted readiness and prepare the lookup release delta
 
-Status: To Do. Documentation only. Prerequisite lookup request PR #94 (QUILS-89) remains in validation; preserve that independent work.
+Status: In Progress. Documentation only. Prerequisite lookup request PR #94 (QUILS-89) remains in validation; preserve that independent work.
 
 Refresh README and hosted readiness/rollout documentation after approved QUILS-83 staging and merged QUILS-84 through QUILS-88 lookup work, reconciling QUILS-89 before merge. Replace stale claims that disclosures, TSA trust and immutable storage are unconfigured with dated demonstrated readiness and truthful outstanding hosted/email/Office and naturally elapsed retention validation. Keep public docs practical and free of private resource identifiers or deployment-specific operational inventories.
 
