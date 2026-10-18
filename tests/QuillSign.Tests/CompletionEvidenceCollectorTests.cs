@@ -219,9 +219,9 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
         private SqlDatabaseFixture fixture=null!;
         public async Task<T> Use<S,T>(Func<S,Task<T>> action) where S:notnull {using var scope=H.App.Services.CreateScope(); return await action(scope.ServiceProvider.GetRequiredService<S>());}
         public async Task<Envelope> Refresh() {await using var db=fixture.Open(); return Envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==Envelope.Id);}
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DateTimeOffset? initialTime=null)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DateTimeOffset? initialTime=null,string? mailbox=null)
         {
-            var run=new Run {fixture=fixture,H=await Shared.Create(fixture,browser:true)}; var email="completion-"+Guid.NewGuid().ToString("N")+"@example.invalid";
+            var run=new Run {fixture=fixture,H=await Shared.Create(fixture,browser:true)}; var email=mailbox??"completion-"+Guid.NewGuid().ToString("N")+"@example.invalid";
             if(initialTime is { } start) {
                 run.H.Clock.Advance(start-run.H.Clock.GetUtcNow());
                 // The raw legacy signer reader uses wall-clock UTC. A historical
