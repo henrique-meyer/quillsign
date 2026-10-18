@@ -1,0 +1,6 @@
+.lookup-list { display: grid; gap: 1rem; list-style: none; padding: 0; }
+.lookup-list > li { border: 1px solid #83909a; border-radius: 5px; padding: 1rem; min-width: 0; }
+.lookup-list h2 { margin-top: 0; overflow-wrap: anywhere; }
+.lookup-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; }
+.lookup-actions form { margin: 0; }
+.lookup-actions button { max-width: 100%; }
