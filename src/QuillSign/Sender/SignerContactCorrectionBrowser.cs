@@ -9,7 +9,7 @@ using QuillSign.Work;
 namespace QuillSign.Sender;
 
 internal sealed record SignerContactCorrectionConfirmation(Guid Id, Guid EnvelopeId, string PublicId, string SenderEmail,
-    DateTimeOffset TicketExpiresAt, DateTimeOffset PreparedAt, DateTimeOffset ExpiresAt, string Title,
+    DateTimeOffset TicketExpiresAt, DateTimeOffset PreparedAt, DateTimeOffset ExpiresAt, DateTimeOffset? RetentionDeadline, string Title,
     string StatementVersion, string StatementSha256, SignerContactCorrectionReview Review);
 
 // Carries an exact review in the private POST body. Only the correction service
@@ -24,11 +24,12 @@ public sealed class SignerContactCorrectionBrowser(IDataProtectionProvider keys,
     {
         var identity = SendDraftWorkflow.Identity(sender, publicId) ?? throw new InvalidOperationException("Missing sender scope.");
         var now = time.GetUtcNow().ToUniversalTime(); until = until.ToUniversalTime();
-        var expires = new[] { now.AddMinutes(10), until, InvitationResendProtection.DayEnd(now) }.Min();
+        var retention = preview.RetentionDeadline?.ToUniversalTime();
+        var expires = new[] { now.AddMinutes(10), until, InvitationResendProtection.DayEnd(now), retention ?? DateTimeOffset.MaxValue }.Min();
         if (expires <= now || preview.Blocked is not null || !Text(preview.Title) || !Review(preview.Review))
             throw new InvalidOperationException("Contact correction review is unavailable.");
         var result = protector.Protect(JsonSerializer.Serialize(new SignerContactCorrectionConfirmation(Guid.NewGuid(), identity.Id,
-            publicId, identity.Email, until, now, expires, preview.Title, SignerContactCorrectionStatement.Version,
+            publicId, identity.Email, until, now, expires, retention, preview.Title, SignerContactCorrectionStatement.Version,
             SignerContactCorrectionStatement.Sha256, preview.Review), Json));
         if (result.Length > MaximumProofLength) throw new InvalidOperationException("Contact correction review is unavailable.");
         return result;
@@ -47,6 +48,7 @@ public sealed class SignerContactCorrectionBrowser(IDataProtectionProvider keys,
                 p.PreparedAt.Offset != TimeSpan.Zero || p.ExpiresAt.Offset != TimeSpan.Zero || p.PreparedAt > now ||
                 p.ExpiresAt <= now || p.ExpiresAt <= p.PreparedAt || p.ExpiresAt > p.PreparedAt.AddMinutes(10) ||
                 p.ExpiresAt > p.TicketExpiresAt || p.ExpiresAt > InvitationResendProtection.DayEnd(p.PreparedAt) || !Text(p.Title) ||
+                (p.RetentionDeadline is { } deadline && (deadline.Offset != TimeSpan.Zero || deadline <= p.PreparedAt || p.ExpiresAt > deadline)) ||
                 p.StatementVersion != SignerContactCorrectionStatement.Version || p.StatementSha256 != SignerContactCorrectionStatement.Sha256 ||
                 !Review(p.Review)) return null;
             return p;

@@ -102,6 +102,35 @@ public sealed class SignerContactCorrectionBrowserTests
         Assert.Throws<InvalidOperationException>(() => service.Create(Principal, owner.PublicId, until, preview with { Blocked = SignerContactCorrectionOutcome.Closed }));
     }
 
+    [Fact]
+    public void Retained_metadata_expires_at_the_verified_cutoff_without_renewal()
+    {
+        var service = new SignerContactCorrectionBrowser(keys, clock); var until = clock.Now.AddHours(2);
+        var deadline = clock.Now.AddSeconds(30);
+        var preview = new SignerContactCorrectionPreview("Synthetic retained metadata", Review(), null) { RetentionDeadline = deadline };
+        var proof = service.Create(Principal, owner.PublicId, until, preview);
+        var saved = service.Read(proof, Principal, owner.PublicId, until)!;
+        Assert.Equal(deadline, saved.ExpiresAt); Assert.Equal(deadline, saved.RetentionDeadline);
+        clock.Now = deadline;
+        Assert.Null(service.Read(proof, Principal, owner.PublicId, until));
+        Assert.Throws<InvalidOperationException>(() => service.Create(Principal, owner.PublicId, until, preview));
+    }
+
+    [Theory][InlineData("before-review")][InlineData("after-cutoff")][InlineData("non-utc")]
+    public void Protected_malformed_retention_bounds_are_not_authority(string kind)
+    {
+        var service = new SignerContactCorrectionBrowser(keys, clock); var until = clock.Now.AddHours(2);
+        var preview = new SignerContactCorrectionPreview("Synthetic", Review(), null) { RetentionDeadline = clock.Now.AddMinutes(2) };
+        var saved = service.Read(service.Create(Principal, owner.PublicId, until, preview), Principal, owner.PublicId, until)!;
+        var changed = kind switch {
+            "before-review" => saved with { RetentionDeadline = saved.PreparedAt },
+            "after-cutoff" => saved with { ExpiresAt = saved.RetentionDeadline!.Value.AddTicks(1) },
+            _ => saved with { RetentionDeadline = saved.RetentionDeadline!.Value.ToOffset(TimeSpan.FromHours(1)) }
+        };
+        var proof = keys.CreateProtector("QuillSign.SenderContactCorrection.Review.v1").Protect(JsonSerializer.Serialize(changed));
+        Assert.Null(service.Read(proof, Principal, owner.PublicId, until));
+    }
+
     private sealed class Clock(DateTimeOffset now) : TimeProvider
     {
         public DateTimeOffset Now { get; set; } = now;

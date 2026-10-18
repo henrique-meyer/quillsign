@@ -84,6 +84,8 @@ public sealed class CorrectContactModel(Func<SignerContactCorrections> action, S
                 notices.Set(HttpContext, NoticeCode.ContactCorrectionQueued); return Redirect(target);
             }
             if (outcome == SignerContactCorrectionOutcome.InvalidContext) return NotFound();
+            if (outcome is SignerContactCorrectionOutcome.Closed or SignerContactCorrectionOutcome.Unavailable)
+                Data = null;
             CanReview = outcome is SignerContactCorrectionOutcome.Conflict or SignerContactCorrectionOutcome.InvalidConfirmation or
                 SignerContactCorrectionOutcome.DuplicateAddress or SignerContactCorrectionOutcome.Suppressed or SignerContactCorrectionOutcome.Capped;
             return Failure(outcome == SignerContactCorrectionOutcome.Capped ? 429 : outcome == SignerContactCorrectionOutcome.Unavailable ? 503 : 409,
@@ -93,7 +95,9 @@ public sealed class CorrectContactModel(Func<SignerContactCorrections> action, S
         {
             // Preserve the command ID through an uncertain acknowledgement.
             // The backend, not a new review, resolves an already-admitted request.
-            return Failure(503, "Confirmation could not be verified. Check saved status before retrying this same confirmation; the correction may already be recorded. Inbox delivery is not confirmed.", true);
+            var live = reviews.Read(ReviewProof, ticket.Principal!, publicId, ticket.Properties!.ExpiresUtc!.Value) is not null;
+            if (!live) Data = null;
+            return Failure(503, "Confirmation could not be verified. Check saved status before retrying this same confirmation; the correction may already be recorded. Inbox delivery is not confirmed.", live);
         }
     }
 

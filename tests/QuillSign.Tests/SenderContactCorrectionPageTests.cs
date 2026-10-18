@@ -122,20 +122,20 @@ public sealed class SenderContactCorrectionPageTests(SqlDatabaseFixture fixture)
     private static void Private(HttpResponseMessage response) { Assert.True(response.Headers.CacheControl?.NoStore); Assert.Contains("noindex", Assert.Single(response.Headers.GetValues("X-Robots-Tag"))); Assert.Equal("no-referrer", Assert.Single(response.Headers.GetValues("Referrer-Policy"))); }
     private async Task<string> Counts(Run r) { await using var db = fixture.Open(); var id = r.H.Envelope.Id; return string.Join(':', await db.AuditEvents.CountAsync(x => x.EnvelopeId == id), await db.WorkItems.CountAsync(x => x.EnvelopeId == id), await db.EmailOutbox.CountAsync(x => x.EnvelopeId == id), await db.AuthTokens.CountAsync(x => x.EnvelopeId == id), await db.SignerContactRevisions.CountAsync(x => x.EnvelopeId == id), r.H.Sender.Calls); }
 
-    private sealed class Run(Shared h) : IAsyncDisposable
+    private sealed class Run(Shared h, int? browserPort = null) : IAsyncDisposable
     {
-        public Shared H => h; public HttpClient Client = h.App.GetTestClient(); private readonly Dictionary<string, string> cookies = [];
+        public Shared H => h; public HttpClient Client = browserPort is null ? h.App.GetTestClient() : new() { BaseAddress = new("http://127.0.0.1:" + browserPort) }; private readonly Dictionary<string, string> cookies = [];
         public string Address { get; } = "corrected-" + Guid.NewGuid().ToString("N") + "@example.invalid";
         public SignerContactCorrectionOptions Options => h.App.Services.GetRequiredService<SignerContactCorrectionOptions>();
         public string Path => "/draft/" + h.Envelope.PublicId + "/correct-contact"; public string Status => "/draft/" + h.Envelope.PublicId + "/sent";
         public string RawToken => Regex.Match(h.Sender.Last?.Text ?? "", "token=([A-Za-z0-9_-]{43})").Groups[1].Value;
-        public static async Task<Run> Create(SqlDatabaseFixture fixture)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture, int? browserPort = null)
         {
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
                 ["SignerContactCorrection:Enabled"] = "true", ["SignerContactCorrection:DailyRequests"] = "1000",
                 ["SignerContactCorrection:DailyAddressRequests"] = "1000", ["SignerContactCorrection:DailyIpRequests"] = "1000", ["SignerContactCorrection:DailySenderRequests"] = "1000"
             }).Build();
-            var h = await Shared.Create(fixture, browser: true, configure: services => services.AddQuillSignSignerContactCorrections(config));
+            var h = await Shared.Create(fixture, browser: true, browserPort: browserPort, configure: services => services.AddQuillSignSignerContactCorrections(config));
             h.Clock.Advance(new DateTimeOffset(DateTime.UtcNow.Date.AddDays(2), TimeSpan.Zero).AddHours(1) - h.Clock.GetUtcNow());
             using (var scope = h.App.Services.CreateScope())
             {
@@ -149,7 +149,7 @@ public sealed class SenderContactCorrectionPageTests(SqlDatabaseFixture fixture)
                 Assert.Equal(SignerSetupError.None, changed.Error);
                 h.Version = Convert.FromBase64String((await setup.GetAsync(h.Principal, h.Envelope.PublicId))!.Version);
             }
-            var run = new Run(h); await run.Session(); var sent = (await h.Send())!;
+            var run = new Run(h, browserPort); await run.Session(); var sent = (await h.Send())!;
             for (var i = 0; i < 12; i++) { await using var db = fixture.Open(); if (await db.WorkItems.Where(x => x.Id == sent.InvitationWorkId).Select(x => x.Status).SingleAsync() == WorkStatus.Completed) return run; Assert.True(await h.Once()); }
             throw new InvalidOperationException("Synthetic original invitation did not settle.");
         }
