@@ -1,10 +1,10 @@
-# DOCX conversion and sender upload
+# Document conversion and sender upload
 
 The [hosted DOCX setup proposal](hosted-docx-setup.md) describes the isolated Azure pilot, scoped permissions, costs and approval gates. Hosted conversion remains disabled pending that work.
 
 `GotenbergDocxConverter` sends one DOCX to the configured Gotenberg LibreOffice conversion route, then validates and normalizes the returned PDF with the same PDFsharp byte/page/geometry rules as PDF upload. It returns the exact normalized bytes, original SHA-256, normalized SHA-256 and page geometry. The caller keeps ownership of the original input stream.
 
-`DocxDocumentWorkflow` joins package validation, conversion, original/PDF storage, audit and upload retention. The verified-sender upload handler selects this workflow only for a `.docx` filename when conversion is configured. Browser MIME labels grant no trust: the package gate validates the actual content before the ordinary Gotenberg HTTP request. The resulting normalized PDF is previewed/downloaded and requires explicit confirmation before preparation continues. No automatic Conversion work producer is used. Other Office formats remain future work.
+`DocxDocumentWorkflow` joins package validation, conversion, original/PDF storage, audit and upload retention. The verified-sender upload handler selects this workflow only for a `.docx` filename when conversion is configured. Browser MIME labels grant no trust: the package gate validates the actual content before the ordinary Gotenberg HTTP request. The resulting normalized PDF is previewed/downloaded and requires explicit confirmation before preparation continues. No automatic Conversion work producer is used. Plain text has internal conversion support below; its public upload integration and other Office formats remain future work.
 
 | Setting | Default / requirement |
 | --- | --- |
@@ -21,6 +21,18 @@ The linked cancellation deadline covers input copying, HTTP and response-body re
 The conversion request asks for flattened exported form fields and tagged PDF structure; it does not claim PDF/UA or archival conformance. See [Gotenberg's LibreOffice route](https://gotenberg.dev/docs/convert-with-libreoffice/convert-to-pdf). Operators still need the pinned, private conversion sidecar and its no-egress controls; client URL validation does not replace network isolation. The existing local Compose service has no published port, uses the conversion-only internal network, disables Chromium/download/webhook routes and denies LibreOffice outbound URLs.
 
 Local verification uses generated synthetic documents with no agreement or personal data. The real pinned sidecar converted an explicit two-page DOCX; both normalized PDF pages were rendered and inspected, and original/normalized hashes and geometry matched. Hosted service enablement and resource changes are outside this slice.
+
+## Internal plain-text conversion
+
+`TextPdfConverter` accepts nonempty strict UTF-8 plain text, with an optional UTF-8 BOM. It rejects invalid UTF-8, binary/control characters other than tab and line endings, XML-incompatible characters, whitespace-only input and size mismatches before HTTP. UTF-16 and legacy encodings must be saved as UTF-8 or exported to PDF. The original hash covers the exact input bytes, including any BOM.
+
+The converter serializes text into a minimal owned DOCX with escaped literal text, paragraphs and tabs, then validates that package through `DocxPackageValidation` and reuses the registered `GotenbergDocxConverter`. It never submits an untrusted `.txt` to format detection. HTML, XML, RTF instructions, formulas and URL-looking strings print literally; they cannot create relationships, fields, scripts or embedded objects. CRLF, CR and LF each produce paragraph boundaries, tabs remain tabs and leading/trailing spaces are preserved. Page layout and available fonts come from LibreOffice; this is a PDF conversion, not a promise to reproduce a text editor's layout.
+
+Original text, generated package and normalized PDF must each fit `Documents__MaximumBytes`; the expanded wrapper XML is additionally capped at 8 MiB. The shared configured total deadline includes input copying, wrapper generation, package validation and HTTP/PDF processing. Existing PDF/page limits, private fixed endpoint, disabled redirects/proxies/request logging, safe errors and no automatic retry remain in force. Excessively large or complex text must be exported to PDF instead.
+
+This is an internal service only: there is no TXT upload choice, persistence workflow, new configuration, schema change or hosted enablement. Future upload integration must preserve the original text separately, record both hashes and require exact PDF preview confirmation with the existing authority and fixed retention checks.
+
+Local validation used the pinned isolated Gotenberg service: a three-page multilingual synthetic text and one-page HTML/RTF-looking examples retained their literal content and exact hashes. All five pages were rendered and inspected. A receiver on the same private test network saw zero callbacks; the converter had no default route and a direct external connection failed. These are local checks, not hosted conversion evidence.
 
 ## DOCX package gate
 
