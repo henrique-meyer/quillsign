@@ -110,6 +110,33 @@ public sealed class SignerContactCorrectionsTests(SqlDatabaseFixture fixture) : 
         Assert.Equal(2, r.H.Sender.Calls);
     }
 
+    [Fact]
+    public async Task Correction_and_cap_audits_bind_the_same_server_timestamp_even_when_the_clock_advances_during_persistence()
+    {
+        await using var r = await Run.Create(fixture); var review = await r.Review(); var id = Guid.NewGuid();
+        r.H.Faults.Event = SignerContactHistory.Event;
+        r.H.Faults.BeforeAudit = _ => { r.H.Clock.Advance(TimeSpan.FromMilliseconds(20)); return Task.CompletedTask; };
+        Assert.Equal(SignerContactCorrectionOutcome.Queued, await r.Request(id, review));
+        await using var db = fixture.Open(); var revision = await db.SignerContactRevisions.SingleAsync(x => x.Id == id);
+        var events = await db.AuditEvents.Where(x => x.EnvelopeId == r.H.Envelope.Id &&
+            (x.Event == SignerContactHistory.Event || x.Event == "signer_contact_correction_requested")).ToArrayAsync();
+        Assert.Equal(2, events.Length); Assert.All(events, x => Assert.Equal(revision.ChangedAt, x.At));
+        Assert.True(r.H.Clock.GetUtcNow() > revision.ChangedAt);
+    }
+
+    [Fact]
+    public async Task Crossing_the_counter_day_during_admission_rolls_back_instead_of_minting_a_new_day_allowance()
+    {
+        await using var r = await Run.Create(fixture); var end = new DateTimeOffset(r.H.Clock.GetUtcNow().UtcDateTime.Date, TimeSpan.Zero).AddDays(1);
+        r.H.Clock.Advance(end - r.H.Clock.GetUtcNow() - TimeSpan.FromSeconds(1)); r.Until = end.AddHours(1);
+        var review = await r.Review(); var id = Guid.NewGuid();
+        r.H.Faults.Event = "signer_contact_correction_requested";
+        r.H.Faults.BeforeAudit = _ => { r.H.Clock.Advance(TimeSpan.FromSeconds(2)); return Task.CompletedTask; };
+        Assert.Equal(SignerContactCorrectionOutcome.Conflict, await r.Request(id, review));
+        await using var db = fixture.Open(); Assert.False(await db.SignerContactRevisions.AnyAsync(x => x.Id == id));
+        Assert.Equal(r.H.First.Email, (await db.Signers.SingleAsync(x => x.Id == r.H.First.Id)).Email);
+    }
+
     [Theory][InlineData("ip")][InlineData("sender")][InlineData("global")][InlineData("address")]
     public async Task Daily_caps_are_immutable_reservations_and_replay_does_not_spend_twice(string cap)
     {
