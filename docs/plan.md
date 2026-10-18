@@ -80,6 +80,12 @@ Implement strict optional reminder settings (off by default), canonical frozen p
 
 Validation: all 55 focused tests pass, including demo/disabled configuration, strict persisted policy parsing/hash, mutation safety, UTC/DST and exact-tick cutoffs, sequential invitation anchors, every identity component and process-culture independence. Release compilation has no warnings; no model, dependency, transport or page changes. Source secret scan passes; exact-head CI gates merge.
 
+## QUILS-121: Freeze reviewed optional reminder policy at Send
+
+Status: In Progress. Assigned to ChatGPT Codex. Depends on QUILS-113; creates no scheduled work or mail and leaves demo reminders disabled.
+
+Integrate the strict optional reminder policy into sender Send review and immutable sent evidence. Resolve configured generic day-3/day-7 policy with demo always empty and off by default; bind the exact canonical policy/hash to server-derived review so a configuration change requires fresh deliberate review. Atomically persist that snapshot/hash in immutable Send evidence and verify it against audit, preserving old reviewed/sent records through an explicit verified legacy-empty bridge. Present accurate private review text for no reminders or the bounded schedule without implying email delivery. Preserve clean URLs/privacy/metadata exclusions/mobile/keyboard behavior. No reminder producer, live email/TSA/provider, cloud/resource/settings/deployment/permission change, purchase, AI or new operator policy. Test disabled/demo/config-change/replay/rollback/immutable evidence and real local review flows, secret scan, small PR/attachment/exact-head checks/self-merge/native Done. Shared successor runtime remains separately scoped QUILS-114/118.
+
 ## QUILS-96: Design evidence-preserving unsigned signer contact correction
 
 Status: In Progress. Assigned to ChatGPT Codex; native story and matched plan updated before implementation research. Source-only design first; hosted policy remains unchanged.
