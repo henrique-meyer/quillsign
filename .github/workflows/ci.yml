@@ -23,6 +23,8 @@ jobs:
           az bicep build --file infra/final-inventory-access.bicep --stdout > /dev/null
           az bicep build --file infra/final-migration-policy.bicep --stdout > /dev/null
           az bicep build --file infra/sandbox-pilot.bicep --stdout > /dev/null
+          az bicep build --file infra/sandbox-cleanup-access.bicep --stdout > /dev/null
+          az bicep build --file infra/sandbox-maintenance.bicep --stdout > /dev/null
 
   application:
     runs-on: ubuntu-latest

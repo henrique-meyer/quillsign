@@ -10,3 +10,6 @@ param hintContainerName = ''
 param queueName = ''
 param image = ''
 param versionCleanupRoleName = ''
+param sandboxMaintenanceEnabled = false
+param sandboxMaintenanceRegion = ''
+param sandboxGroupName = ''
