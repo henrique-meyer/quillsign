@@ -40,10 +40,21 @@ public sealed class DocumentConversionUnavailableException(string message) : Exc
 // package before this request; no automatic Conversion work producer is used.
 public sealed class GotenbergDocxConverter(HttpClient http,GotenbergOptions options,DocumentOptions limits,PdfValidation validation,IHostEnvironment environment,ISandboxDocxTransport? sandbox=null)
 {
-    public async Task<DocxConversion> ConvertAsync(Stream original,long declaredLength,CancellationToken ct=default)
+    public Task<DocxConversion> ConvertAsync(Stream original,long declaredLength,CancellationToken ct=default)
+        =>ConvertCoreAsync(original,declaredLength,null,ct);
+
+    internal async Task<DocxConversion> ConvertOfficeAsync(ValidatedOfficeSource package,CancellationToken ct)
+    {using var original=package.OpenRead();return await ConvertCoreAsync(original,package.Length,package.Kind,ct);}
+
+    private async Task<DocxConversion> ConvertCoreAsync(Stream original,long declaredLength,OfficeSourceKind? kind,CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         if(!options.IsAvailable(environment))throw new DocumentConversionUnavailableException("Document conversion is not enabled.");
+        if(kind is not null && options.Transport!="Http")throw new DocumentConversionUnavailableException("This format requires the separately configured isolated Office HTTP transport.");
+        var upload=kind switch {
+            null=>("document.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            OfficeSourceKind.Pptx=>("document.pptx","application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+            _=>throw new DocumentRejectedException("Choose a supported Office format, or export a PDF.")};
         var endpoint=options.Transport=="Http" ? options.Endpoint(environment) : null;
         if(limits.MaximumBytes is <1024 or >64*1024*1024 || limits.MaximumPages is <1 or >200)throw new InvalidOperationException("Configure supported document conversion limits.");
         ArgumentNullException.ThrowIfNull(original);
@@ -65,8 +76,8 @@ public sealed class GotenbergDocxConverter(HttpClient http,GotenbergOptions opti
             else
             {
                 using var form=new MultipartFormDataContent();var file=new StreamContent(source);
-                file.Headers.ContentType=new MediaTypeHeaderValue("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-                form.Add(file,"files","document.docx");form.Add(new StringContent("false"),"exportFormFields");form.Add(new StringContent("true"),"generateTaggedPdf");
+                file.Headers.ContentType=new MediaTypeHeaderValue(upload.Item2);
+                form.Add(file,"files",upload.Item1);form.Add(new StringContent("false"),"exportFormFields");form.Add(new StringContent("true"),"generateTaggedPdf");
                 using var request=new HttpRequestMessage(HttpMethod.Post,endpoint) {Content=form};
                 using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,token);
                 if(response.StatusCode==HttpStatusCode.BadRequest)throw new DocumentRejectedException("The DOCX could not be converted. Export a PDF and try again.");
