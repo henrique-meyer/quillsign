@@ -138,7 +138,7 @@ Outside Compose, email is disabled by default. Use the `Email` section of `appse
 
 ### Background work
 
-SQL stores durable work and email outbox records. Opaque queue messages wake a finite worker; Blob hints let recovery republish missed wakeups without querying an idle database. Verification payloads are protected with the persistent application key ring, and token validity begins at dispatch. Definite pre-send failures use bounded backoff. A possibly accepted send is recorded as ambiguous and requires explicit reconciliation/resend, rather than an automatic duplicate.
+SQL stores durable work and email outbox records. Opaque queue messages wake a finite worker; Blob hints let recovery republish missed wakeups without querying an idle database. Verification payloads are protected with the persistent application key ring, and token validity begins at dispatch. Definite pre-send failures use bounded backoff. A possibly accepted send is recorded as ambiguous and requires explicit reconciliation before another submission.
 
 With the local stack running, migrate first, then run one item or listen for local work:
 
@@ -209,7 +209,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 ## Remaining work
 
 - Hosted readiness: operator disclosures, TSA configuration and rate coordination, immutable final storage, retention and end-to-end validation.
-- Reminders, invitation resend and contact correction remain future work. The [verified-mailbox lookup flow](docs/document-lookup.md) supports a gated public email-request form, scanner-safe private entry, a paged retained-document list, an explicit final-packet handoff, capped durable mail and scoped contact-data cleanup using the configured demo retention window. Its demo migration/grants and disabled-email navigation checks passed; hosted mailbox delivery and retained-packet retrieval still need separate enablement and validation.
+- Reminders, sender-facing invitation resend and contact correction remain future work. The disabled-by-default [internal invitation-resend foundation](docs/invitation-resend.md) adds deliberate sender admission, safe link replacement and capped durable delivery; it has no public form or endpoint. The [verified-mailbox lookup flow](docs/document-lookup.md) supports a gated public email-request form, scanner-safe private entry, a paged retained-document list, an explicit final-packet handoff, capped durable mail and scoped contact-data cleanup using the configured demo retention window. Its demo migration/grants and disabled-email navigation checks passed; hosted mailbox delivery and retained-packet retrieval still need separate enablement and validation.
 - Remaining Office formats (DOC, ODT, RTF, TXT, PPTX and XLSX) and hosted conversion validation.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - After the rest of the project is complete: optional, sender-approved AI field and signer-role suggestions.
