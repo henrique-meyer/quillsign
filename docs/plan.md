@@ -1446,5 +1446,3 @@ Owner requested a real one-hour purge check instead of waiting seven days. Use t
 
 
 Validation completed 2026-10-18: actual elapsed wait 3,602 seconds, premature cleanup rejected, immutable seven-day policy unchanged. The normal worker-role SQL path removed enrolled private rows and owned originals/normalized objects; detached minimal work and persistent authenticated marker remained. An unrelated live control survived, and storage-only recovery removed one late-written object. Both disposable local fixtures were cleaned up and the operator process exited zero. Initial upload time was explicitly synthetic and fixed before enrollment; later observations used actual UTC. This is a local SQL Server/Azurite validation, not a naturally elapsed seven-day or hosted end-to-end purge, and it does not simulate Azure immutable storage. No production setting, schema, runtime code or permissions changed.
-
-
