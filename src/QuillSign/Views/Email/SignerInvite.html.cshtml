@@ -1,7 +1,8 @@
 @model QuillSign.Email.SignerInviteModel
 @{ Layout = null; }
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Signing request</title></head>
-<body><p>QuillSign</p><h1>Review your signing request</h1>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>@(Model.Heading??"Signing request")</title></head>
+<body><p>QuillSign</p><h1>@(Model.Heading??"Review your signing request")</h1>
+@if(Model.Notice is not null) {<p>@Model.Notice</p>}
 <p>@Model.SignerName @if (!string.IsNullOrWhiteSpace(Model.Role)) {<text>(@Model.Role)</text>},</p>
 <p>@Model.Sender has sent you a signing request for @Model.Title.</p>
 @if (!string.IsNullOrWhiteSpace(Model.Message)) {<p>Message from the sender:</p><p>@foreach (var line in Model.Message.Replace("\r\n","\n").Replace('\r','\n').Split('\n')) { @line<br /> }</p>}

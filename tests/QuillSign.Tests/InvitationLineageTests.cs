@@ -111,13 +111,14 @@ public sealed class InvitationLineageTests(SqlDatabaseFixture fixture) : IClassF
         public ValueTask DisposeAsync()=>run.DisposeAsync();
     }
 
-    private sealed class Run(Shared h,SqlDatabaseFixture fixture,SentDraft sent):IAsyncDisposable
+    internal sealed class Run(Shared h,SqlDatabaseFixture fixture,SentDraft sent):IAsyncDisposable
     {
         private SignerContactRevision? correction;
         public Shared H=>h;public SentDraft Sent=>sent;
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,int? browserPort=null)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,int? browserPort=null,Action<IServiceCollection>? configure=null,bool smtp=false,bool dispatch=true)
         {
-            var h=await Shared.Create(fixture,browser:browserPort is not null,browserPort:browserPort,configure:s=>s.AddScoped<SenderSentStatus>());
+            var h=await Shared.Create(fixture,smtp:smtp,browser:browserPort is not null,browserPort:browserPort,
+                configure:s=>{s.AddScoped<SenderSentStatus>();configure?.Invoke(s);});
             h.Clock.Advance(new DateTimeOffset(DateTime.UtcNow.Date.AddDays(2),TimeSpan.Zero).AddHours(1)-h.Clock.GetUtcNow());
             using(var scope=h.App.Services.CreateScope()) {
                 var db=scope.ServiceProvider.GetRequiredService<QuillSignDbContext>();await using var tx=await db.Database.BeginTransactionAsync();
@@ -127,7 +128,8 @@ public sealed class InvitationLineageTests(SqlDatabaseFixture fixture) : IClassF
             }
             var limits=h.App.Services.GetRequiredService<InvitationResendOptions>();limits.Enabled=true;
             limits.DailyRequests=limits.DailyAddressRequests=limits.DailySenderRequests=limits.DailyIpRequests=1000;
-            var sent=(await h.Send())!;Assert.True(await h.Once());return new(h,fixture,sent);
+            if(browserPort is { } port)h.App.Services.GetRequiredService<QuillSign.Email.EmailOptions>().BaseUrl="http://localhost:"+port;
+            var sent=(await h.Send())!;if(dispatch)Assert.True(await h.Once());return new(h,fixture,sent);
         }
         public async Task<VerifiedInvitationLineage?> Read()
         {
