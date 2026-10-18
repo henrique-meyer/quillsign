@@ -56,7 +56,17 @@ public sealed class CorrectContactModel(Func<SignerContactCorrections> action, S
         }
         if (Step != "confirm") return Failure(400, "Choose review or confirmation from this page.");
         var proof = reviews.Read(ReviewProof, ticket.Principal!, publicId, ticket.Properties!.ExpiresUtc!.Value);
-        if (proof is null) return Failure(409, "This review is invalid or expired. Check saved status and review current details again.");
+        if (proof is null)
+        {
+            // A posted address is only an editable draft, never command authority.
+            // Re-read metadata without preparing a proof or changing the signer.
+            if (NewEmail is { Length: > 0 and <= 254 })
+            {
+                var fresh = await Preview(ticket, publicId, null, ct);
+                if (Response.StatusCode >= 500) return fresh;
+            }
+            return Failure(409, "This review is invalid or expired. Check saved status and explicitly review the current details again. This response does not confirm a change.");
+        }
         Data = new(proof.Title, proof.Review, null); NewEmail = proof.Review.NewEmail; ModelState.Remove(nameof(NewEmail));
         if (!ModelState.IsValid || !Confirmed || StatementVersion != SignerContactCorrectionStatement.Version)
             return Failure(400, "Read the correction statement and affirm it before confirming.", true);

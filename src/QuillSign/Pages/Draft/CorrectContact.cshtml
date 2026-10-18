@@ -10,13 +10,14 @@
 <h3>Same named signer</h3><p><strong>@data.Review.Name</strong><span class="signer-email">Current email: @data.Review.OldEmail</span></p>
 }
 <p>Correct only this person's email address. Their name, role, signing order and the document stay the same.</p>
-<p>Confirming revokes that signer's earlier links and opened sessions, and discards unfinished consent, signatures and entries. The corrected mailbox must consent and sign again. Already read or downloaded information and submitted email cannot be recalled.</p>
+<p>Confirming revokes that signer's earlier links and opened sessions, and clears their unfinished signing progress. The corrected mailbox must consent and sign again. Earlier actions remain in the retained history. Already read or downloaded information and submitted email cannot be recalled.</p>
 <p>Only the current sequential signer can be corrected, before they finish. Other signers wait for their turn. Recording a correction or submitting an invitation does not confirm inbox delivery.</p>
 @if(Model.CanConfirm && Model.Data is { } reviewed) {
 <section aria-labelledby="correction-review"><h2 id="correction-review">Review the new address</h2>
 <p><strong>@reviewed.Review.Name</strong><span class="signer-email">From: @reviewed.Review.OldEmail</span><span class="signer-email">To: @reviewed.Review.NewEmail</span></p>
 <form method="post" asp-page="/Draft/CorrectContact" asp-route-publicId="@RouteData.Values["publicId"]">
 <input type="hidden" name="Step" value="confirm" /><input type="hidden" asp-for="ReviewProof" />
+<input type="hidden" name="NewEmail" value="@reviewed.Review.NewEmail" />
 <input type="hidden" name="StatementVersion" value="@QuillSign.Sender.SignerContactCorrectionStatement.Version" />
 <label class="send-check"><input asp-for="Confirmed" /> <span>@QuillSign.Sender.SignerContactCorrectionStatement.Text</span></label>
 <p>This review expires within ten minutes. Check saved status if a previous confirmation was interrupted.</p>

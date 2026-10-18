@@ -73,7 +73,7 @@ public static class SenderConfiguration
                     PrivateStatusHeaders(context);
                     const string message="Too many contact correction actions. Wait and check saved request status before retrying; this response does not confirm a correction.";
                     if(WantsJson(context))await context.Response.WriteAsJsonAsync(new {message},ct);
-                    else {context.Response.ContentType="text/html; charset=utf-8";await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\""+System.Net.WebUtility.HtmlEncode(context.Request.Path.Value![..^15]+"sent")+"\">Check saved request status</a></p></main></body></html>",ct);}return;
+                    else {context.Response.ContentType="text/html; charset=utf-8";await context.Response.WriteAsync("<!doctype html><html lang=\"en\"><head><title>Wait before retrying</title></head><body><main><h1>Wait before retrying</h1><p>"+message+"</p><p><a href=\""+System.Net.WebUtility.HtmlEncode(context.Request.Path.Value!.TrimEnd('/')[..^15]+"sent")+"\">Check saved request status</a></p></main></body></html>",ct);}return;
                 }
                 if(IsResend(context.Request.Path)) {
                     PrivateStatusHeaders(context);
@@ -195,7 +195,7 @@ public static class SenderConfiguration
     }
 
     public static bool WantsJson(HttpContext context) => context.Request.Headers.Accept.ToString().Contains("application/json", StringComparison.OrdinalIgnoreCase);
-    private static bool IsContactCorrection(PathString path) => path.StartsWithSegments("/draft") && path.Value?.EndsWith("/correct-contact",StringComparison.Ordinal)==true;
+    private static bool IsContactCorrection(PathString path) => path.StartsWithSegments("/draft") && path.Value?.TrimEnd('/').EndsWith("/correct-contact",StringComparison.OrdinalIgnoreCase)==true;
     private static bool IsResend(PathString path) => path.StartsWithSegments("/draft") && path.Value?.EndsWith("/resend",StringComparison.Ordinal)==true;
     // Called before authorization/CSRF/rate rejection as well as page handlers.
     public static void PrivateStatusHeaders(HttpContext context)
