@@ -75,14 +75,14 @@ Verified Essentials pricing is USD 0.00016 per recipient, with no fixed monthly 
 | Bounded item | Calculation | USD |
 | --- | --- | ---: |
 | SES recipient attempts | 30 × 0.00016 | 0.004800000 |
-| Conservative outgoing data | 30 MiB ÷ 1 GiB × 0.12 | 0.003515625 |
+| Conservative outgoing data | 30 × 1,048,576 bytes ÷ 1,000,000,000 × 0.12 | 0.0037748736 |
 | SNS HTTP chunk attempts | 12,000 × 0.0000006 | 0.007200000 |
 | SNS request units | 2,000 × 0.0000005 | 0.001000000 |
-| AWS message/request subtotal (excluding transfer and tax) | Sum of the above | **0.016515625** |
+| AWS message/request subtotal (excluding transfer and tax) | Sum of the above | **0.0167748736** |
 | FreeTSA | At most four approved calls; no subscription/request fee | **0** |
 | New fixed monthly services | No new compute service, plan, IP, add-on, queue or paid support | **0** |
 
-The SNS bounds conservatively include all configured event types, signed bodies up to the existing 512-KiB handler bound, 64-KiB billing chunks and the finite retry policy. A new address-verification message or a larger message is not silently added to this package. No paid plan upgrade, dedicated IP, validation add-on, Mail Manager, SMS or live converter request is included.
+The outgoing-data illustration uses a decimal GB divisor rather than assuming binary GiB billing, and includes the full encoded message bound. The SNS bounds conservatively include all configured event types, signed bodies up to the existing 512-KiB handler bound, 64-KiB billing chunks and the finite retry policy. A new address-verification message or a larger message is not silently added to this package. No paid plan upgrade, dedicated IP, validation add-on, Mail Manager, SMS or live converter request is included.
 
 SNS data transfer, Azure compute, requests, storage, Key Vault, logging, egress, tax and account-wide credits are metered. An exact all-in invoice cannot honestly be quoted before execution. At current regional active rates, the existing web's two-replica maximum for one hour, sixty worst-timeout dispatch executions and two executions of each storage-only recovery job illustrate **USD 0.24525 of compute before free grants**. That is an allocation illustration, not a guaranteed total or an instruction to run sixty jobs. SQL paid overflow stays disabled.
 
