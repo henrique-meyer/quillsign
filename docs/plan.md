@@ -2,6 +2,16 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-85: Allow verified mailbox lookup to open retained final packets
+
+Status: To Do. Depends on QUILS-84 and the merged completed-record retrieval foundation. Queue implementation until QUILS-84 merges. Owned by this chat.
+
+Add an explicit internal handoff from a genuinely authenticated verified-mailbox lookup session to narrow read-only retrieval of one selected retained completed packet. Accept matching protected lookup proof and principal, never a caller-supplied mailbox or cursor as authority. Verify actual frozen sender/signer/recipient membership and exact current publication/files, including overlapping roles without exposing other contacts.
+
+Recheck lookup consumption/revision/session, frozen source and saved first-upload retention after I/O and across the handoff transaction. Preserve independent, bounded original lifetimes; do not extend retention or restore sender/signing/Finish authority. Bind auditable authentication context to the original lookup and chosen party/publication, keeping raw tokens and protected proofs private and out of URLs/logs/audit presentation. Finalize the concrete transaction, canonical role choice, session bound and safe failure/retry design in matching Jira/plan before implementation. Unknown commits return no private session; explicit authenticated retry must remain safe without silently replaying consumed transport.
+
+Test genuine completed packets, all roles and overlapping parties, wrong mailbox/envelope/purpose/principal, forged or stale proofs, expiry, revocation, retention/purge, missing/corrupt files, concurrent handoffs and rollback/uncertain acknowledgements. Keep original sources, acceptance evidence and final files immutable. No public endpoint/browser change, mail producer, actual email, live TSA, cloud mutation, dependency or purchase in this slice. Public lookup delivery and UI follow separately. Commit/push/create/attach/pass checks/merge a small PR and native Jira Done.
+
 ## QUILS-3: Create QuillSign SVG logos and matching PNG exports
 
 Status: Done. Branding PRs merged and Jira story closed, including the coral-red product accent.
