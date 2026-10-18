@@ -21,7 +21,7 @@ public sealed class PublicAnalyticsTests
     private const string SyntheticId = "G-TEST123456";
 
     [Theory]
-    [InlineData("/draft/opaque")][InlineData("/sign/access")][InlineData("/find")]
+    [InlineData("/draft/opaque")][InlineData("/draft/opaque/resend")][InlineData("/draft/opaque/sent")][InlineData("/sign/access")][InlineData("/find")]
     [InlineData("/find/request")][InlineData("/find/access")][InlineData("/find/documents")]
     [InlineData("/verify")][InlineData("/completed/access")][InlineData("/health")]
     [InlineData("/document.pdf")][InlineData("/error")][InlineData("/Index")][InlineData("//")]
@@ -60,7 +60,7 @@ public sealed class PublicAnalyticsTests
     }
 
     [Fact]
-    public async Task Real_Razor_layout_is_opt_in_only_on_the_clean_successful_homepage_without_private_backends()
+    public async Task Real_Razor_layout_has_only_an_invisible_tag_on_the_clean_successful_homepage_without_private_backends()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions {
             ApplicationName = typeof(QuillSign.Pages.IndexModel).Assembly.FullName,
@@ -88,8 +88,10 @@ public sealed class PublicAnalyticsTests
         using var home = await client.GetAsync("/"); var html = await home.Content.ReadAsStringAsync();
         Assert.True(home.IsSuccessStatusCode); Assert.True(home.Headers.CacheControl?.NoStore);
         Assert.Contains("data-measurement-id=\"" + SyntheticId + "\"", html);
-        Assert.Contains("Allow analytics", html); Assert.Contains("Decline analytics", html);
-        Assert.Contains("id=\"analytics-choice\"", html); Assert.Contains("/analytics.js", html);
+        Assert.DoesNotContain("Allow analytics", html); Assert.DoesNotContain("Decline analytics", html);
+        Assert.DoesNotContain("Analytics settings", html); Assert.DoesNotContain("Optional analytics", html);
+        Assert.DoesNotContain("analytics-status", html); Assert.DoesNotContain("analytics-choice", html);
+        Assert.Contains("<script id=\"analytics\"", html); Assert.Contains("/analytics.js", html);
         Assert.DoesNotContain("<script src=\"https://", html);
         var csp = Assert.Single(home.Headers.GetValues("Content-Security-Policy"));
         Assert.Contains("https://www.googletagmanager.com", csp); Assert.Contains("connect-src 'self'", csp);

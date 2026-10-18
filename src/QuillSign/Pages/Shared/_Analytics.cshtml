@@ -2,18 +2,5 @@
 @{ var measurementId = QuillSign.Analytics.PublicAnalytics.MeasurementId(Context, Configuration); }
 @if (measurementId is not null)
 {
-    <div id="analytics" data-measurement-id="@measurementId">
-        <button id="analytics-settings" type="button" class="quiet-button" aria-controls="analytics-choice" aria-expanded="false" hidden>Analytics settings</button>
-        <section id="analytics-choice" class="analytics-choice" aria-labelledby="analytics-title" hidden>
-            <h2 id="analytics-title">Optional analytics</h2>
-            <p>Allow Google Analytics cookies to measure visits to this homepage? Google receives usage data, including your IP address and browser/device information. Signing pages and documents are not tracked. Your choice does not affect using QuillSign.</p>
-            <p>You can change your choice here at any time. <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google's privacy policy</a></p>
-            <div class="analytics-actions">
-                <button id="analytics-accept" type="button">Allow analytics</button>
-                <button id="analytics-decline" type="button" class="quiet-button">Decline analytics</button>
-            </div>
-        </section>
-        <p id="analytics-status" role="status" class="hint"></p>
-    </div>
-    <script src="~/analytics.js" asp-append-version="true" defer></script>
+    <script id="analytics" data-measurement-id="@measurementId" src="~/analytics.js" asp-append-version="true" defer></script>
 }

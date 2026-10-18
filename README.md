@@ -17,7 +17,7 @@ Synthetic end-to-end flows have local automated and browser coverage. The approv
 
 ## Technology stack
 
-Optional opt-in Google Analytics can measure visits to the public homepage.
+Optional Google Analytics can measure visits to the public homepage without visible controls.
 It is disabled by default and excluded from signing and document flows. See
 [analytics configuration and verification](docs/analytics.md).
 
@@ -209,7 +209,7 @@ The manual **Deploy** workflow runs from `main` through the GitHub `production` 
 ## Remaining work
 
 - Hosted readiness: operator disclosures, TSA configuration and rate coordination, immutable final storage, retention and end-to-end validation.
-- Reminders, sender-facing invitation resend and contact correction remain future work. The disabled-by-default [internal invitation-resend foundation](docs/invitation-resend.md) adds deliberate sender admission, safe link replacement and capped durable delivery; it has no public form or endpoint. The [verified-mailbox lookup flow](docs/document-lookup.md) supports a gated public email-request form, scanner-safe private entry, a paged retained-document list, an explicit final-packet handoff, capped durable mail and scoped contact-data cleanup using the configured demo retention window. Its demo migration/grants and disabled-email navigation checks passed; hosted mailbox delivery and retained-packet retrieval still need separate enablement and validation.
+- Reminders and contact correction remain future work. Disabled-by-default [invitation resend](docs/invitation-resend.md) provides private sender review/confirmation, safe unused-link replacement, capped durable delivery and latest-invitation status while preserving redeemed sessions and signing evidence. Hosted enablement and live-mail validation remain separate. The [verified-mailbox lookup flow](docs/document-lookup.md) supports a gated public email-request form, scanner-safe private entry, a paged retained-document list, an explicit final-packet handoff, capped durable mail and scoped contact-data cleanup using the configured demo retention window. Its demo migration/grants and disabled-email navigation checks passed; hosted mailbox delivery and retained-packet retrieval still need separate enablement and validation.
 - Remaining Office formats (DOC, ODT, RTF, TXT, PPTX and XLSX) and hosted conversion validation.
 - A confirmed feedback subscription and SES production access before enabling public delivery.
 - After the rest of the project is complete: optional, sender-approved AI field and signer-role suggestions.

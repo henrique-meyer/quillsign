@@ -9,6 +9,37 @@ internal sealed record ResendSaved(EmailOutbox Row, WorkItem Work, ResendMail Ma
 
 internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationResendOptions limits, InvitationResendProtection protection, TimeProvider time)
 {
+    // Damaged index keys must not make latest lookups lose an admission.
+    // Return one scalar; never load unbounded historical payloads.
+    internal static async Task VerifyIndexAsync(QuillSignDbContext db, Guid envelopeId, CancellationToken ct)
+    {
+        var invalid = await db.Database.SqlQuery<int>($"""
+            SELECT CAST(CASE WHEN
+                (SELECT COUNT_BIG(*) FROM [AuditEvents] WHERE [EnvelopeId]={envelopeId} AND [Event]='invitation_resend_requested') <>
+                (SELECT COUNT_BIG(*) FROM [EmailOutbox] WHERE [EnvelopeId]={envelopeId} AND [Template]='signer-invitation-resend')
+                OR EXISTS (
+                    SELECT 1 FROM [EmailOutbox] m WHERE m.[EnvelopeId]={envelopeId} AND m.[Template]='signer-invitation-resend'
+                    AND NOT EXISTS (SELECT 1 FROM [AuditEvents] a WHERE a.[EnvelopeId]=m.[EnvelopeId] AND a.[Event]='invitation_resend_requested'
+                        AND TRY_CONVERT(uniqueidentifier,JSON_VALUE(a.[DataJson],'$.id'))=m.[Id])
+                )
+                OR EXISTS (
+                    SELECT 1 FROM [AuditEvents] a
+                    LEFT JOIN [EmailOutbox] m ON m.[Id]=TRY_CONVERT(uniqueidentifier,JSON_VALUE(a.[DataJson],'$.id'))
+                        AND m.[EnvelopeId]=a.[EnvelopeId] AND m.[Template]='signer-invitation-resend'
+                    LEFT JOIN [Signers] s ON s.[Id]=TRY_CONVERT(uniqueidentifier,JSON_VALUE(a.[DataJson],'$.signerId')) AND s.[EnvelopeId]=a.[EnvelopeId]
+                    WHERE a.[EnvelopeId]={envelopeId} AND a.[Event]='invitation_resend_requested' AND (
+                        DATALENGTH(a.[DataJson])>24000 OR COALESCE(JSON_VALUE(a.[DataJson],'$.version'),'')<>'resend-admission-v1'
+                        OR m.[Id] IS NULL OR s.[Id] IS NULL OR m.[To]<>s.[Email]
+                        OR DATALENGTH(m.[PayloadJson])>24000 OR m.[AttachmentsJson]<>'[]'
+                        OR COALESCE(JSON_VALUE(a.[DataJson],'$.request.id'),'')<>CONVERT(nvarchar(36),m.[Id])
+                        OR COALESCE(JSON_VALUE(a.[DataJson],'$.request.signerId'),'')<>CONVERT(nvarchar(36),s.[Id])
+                        OR COALESCE(JSON_VALUE(a.[DataJson],'$.request.envelopeId'),'')<>CONVERT(nvarchar(36),a.[EnvelopeId])
+                        OR COALESCE(JSON_VALUE(a.[DataJson],'$.request.email'),'')<>m.[To])
+                ) THEN 1 ELSE 0 END AS int) AS [Value]
+            """).SingleAsync(ct);
+        if (invalid != 0) throw Invalid();
+    }
+
     internal static Task LockAsync(QuillSignDbContext db, CancellationToken ct) => db.Database.ExecuteSqlRawAsync("""
         DECLARE @result int;
         EXEC @result = sys.sp_getapplock @Resource=N'invitation-resend-v1', @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=5000;
@@ -17,11 +48,18 @@ internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationRes
 
     // Also used by original dispatch under the envelope lock: an old original
     // invitation must never become active again after a replacement was admitted.
-    internal static Task<AuditEvent?> LatestAuditAsync(QuillSignDbContext db, Guid envelopeId, Guid signerId, CancellationToken ct) =>
+    private static IQueryable<AuditEvent> LatestAuditQuery(QuillSignDbContext db, Guid envelopeId, Guid signerId) =>
         db.AuditEvents.FromSqlInterpolated($"""
             SELECT TOP(1) * FROM [AuditEvents] WHERE [EnvelopeId]={envelopeId} AND [Event]='invitation_resend_requested'
             AND JSON_VALUE([DataJson],'$.signerId')={signerId.ToString()} ORDER BY [Sequence] DESC
-            """).AsNoTracking().SingleOrDefaultAsync(ct);
+            """).AsNoTracking();
+    internal static async Task<AuditEvent?> LatestAuditAsync(QuillSignDbContext db, Guid envelopeId, Guid signerId, CancellationToken ct)
+    {
+        var query = LatestAuditQuery(db, envelopeId, signerId);
+        var size = await query.Select(x => EF.Functions.DataLength(x.DataJson)).SingleOrDefaultAsync(ct);
+        if (size > 24000) throw Invalid();
+        return await query.SingleOrDefaultAsync(ct);
+    }
 
     internal async Task<ResendSaved?> LatestAsync(Guid envelopeId, Guid signerId, CancellationToken ct)
     {
@@ -37,9 +75,11 @@ internal sealed class InvitationResendRules(QuillSignDbContext db, InvitationRes
         if (events.Length > 1) throw Invalid();
         return events.Length == 0 ? null : await FromAuditAsync(events[0], ct);
     }
-    private async Task<ResendSaved> FromAuditAsync(AuditEvent audit, CancellationToken ct)
+    internal async Task<ResendSaved> FromAuditAsync(AuditEvent audit, CancellationToken ct)
     {
         var p = InvitationResendProtection.ReadEvidence(audit);
+        var size = await db.EmailOutbox.Where(x => x.Id == p.Id).Select(x => new { Payload = EF.Functions.DataLength(x.PayloadJson), Attachments = EF.Functions.DataLength(x.AttachmentsJson) }).SingleOrDefaultAsync(ct);
+        if (size is null || size.Payload > 24000 || size.Attachments != 4) throw Invalid();
         var row = await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == p.Id, ct) ?? throw Invalid();
         var mail = protection.Read(row);
         var work = await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x => x.Id == p.Id, ct) ?? throw Invalid();
