@@ -36,4 +36,4 @@ Required evidence includes:
 
 ## Availability boundary
 
-TXT has a guarded sender workflow with its own default-false opt-in. PPTX, values-only XLSX, static ODT and literal-formatting RTF have separately gated internal implementation slices; their public persistence/intake integration remains a follow-on. Internal tests or a successful local converter run do not enable a hosted extension. DOC remains unsupported by design until the gate above is met.
+TXT has a guarded sender workflow with its own default-false opt-in. PPTX, values-only XLSX, static ODT and literal-formatting RTF have separately gated content components and QUILS-124 sender persistence/intake. All remain default-disabled, require an isolated HTTP converter and explicit exact-PDF confirmation, and are not enabled on the hosted DOCX-only sandbox. Internal tests or a successful local converter run do not enable a hosted extension. DOC remains unsupported by design until the gate above is met.

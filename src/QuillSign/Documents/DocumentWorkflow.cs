@@ -106,6 +106,21 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             normalized,converted.PdfSha256.ToArray(),converted.Pages,provenance),ip,userAgent,ct);
     }
 
+    internal async Task<bool> StoreConvertedOfficeAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,string title,
+        ValidatedOfficeSource source,DocxConversion converted,string? ip,string? userAgent,CancellationToken ct)
+    {
+        var before=await CheckConvertedUploadAsync(sender,publicId,expectedVersion,ct);if(before is null)return false;
+        using var original=source.OpenRead();using var normalized=new MemoryStream(converted.Pdf,false);var family=OfficeDocumentWorkflow.Family(source.Kind);var inputHash=source.ConversionSha256;
+        try
+        {
+            var provenance=new {version=family.Pipeline,originalFilename=title[..^4]+family.Extension,originalMime=family.Mime,
+                originalBytes=source.Length,pdfBytes=converted.Pdf.LongLength,conversionInputBytes=source.ConversionLength,conversionInputSha256=Convert.ToHexStringLower(inputHash)};
+            return await PublishUploadAsync(sender,publicId,expectedVersion,before,new(title,family.Mime,original,source.OriginalSha256,
+                normalized,converted.PdfSha256.ToArray(),converted.Pages,provenance),ip,userAgent,ct);
+        }
+        finally {Array.Clear(inputHash);}
+    }
+
     private sealed record PreparedUpload(string Filename,string Mime,Stream Original,byte[] OriginalHash,Stream Pdf,byte[] PdfHash,
         IReadOnlyList<PageGeometry> Pages,object? Provenance);
 
