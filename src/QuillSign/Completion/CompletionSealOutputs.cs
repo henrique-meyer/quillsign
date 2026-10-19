@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Documents;
+using QuillSign.Email.Pilot;
 using QuillSign.Sealing;
 using QuillSign.Storage;
 
@@ -17,25 +18,33 @@ public sealed record CompletionSealPair(Guid EnvelopeId,Guid CandidateId,Complet
 
 // Explicit internal stages only. Final publication, Completed, work production and delivery are separate.
 public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandidates candidates,CompletionEvidenceCollector collector,
-    CompletionCertificateRenderer renderer,PlatformPdfSeal engine,SealCms verifier,IBlobStore blobs,AuditWriter audit,TimeProvider time,CompletionCommitScope? scope=null)
+    CompletionCertificateRenderer renderer,PlatformPdfSeal engine,SealCms verifier,IBlobStore blobs,AuditWriter audit,TimeProvider time,CompletionCommitScope? scope=null,
+    PilotTimestampBoundary? timestamps=null)
 {
     public const string RecipeVersion="completion-seal-v1";
     private const long MaximumBytes=64*1024*1024;
     private sealed record Metadata(string Provider,string CertificateSha256,string CertificateDer,DateTimeOffset SealedAt,
         DateTimeOffset TimestampAt,string TimestampCertificateSha256,string TimestampPolicy);
 
-    public async Task<CompletionSealPair?> PrepareAsync(Guid envelopeId,CancellationToken ct=default)
+    public async Task<CompletionSealPair?> PrepareAsync(Guid envelopeId,CancellationToken ct=default,CompletionTimestampWork? timestampWork=null)
     {
         ct.ThrowIfCancellationRequested(); if(envelopeId==Guid.Empty)return null;
         try
         {
+            if(timestampWork is not null)
+            {
+                if(timestamps is null || timestampWork.EnvelopeId!=envelopeId)throw new PilotTimestampDeniedException();
+                await timestamps.DemandWorkAsync(timestampWork,ct);
+            }
+            else if(await db.EmailPilotEnrollments.AsNoTracking().AnyAsync(x=>x.SubjectEnvelopeId==envelopeId,ct))
+                throw new PilotTimestampDeniedException();
             var candidate=await candidates.ReadAsync(envelopeId,ct); if(candidate is null)return null;
             var rows=await Rows(envelopeId,ct);
             if(rows.Any(x=>x.CandidateId!=candidate.Id) || rows.Any(x=>x.Kind==CompletionSealKind.Certificate) && rows.All(x=>x.Kind!=CompletionSealKind.Executed))throw Invalid();
             var first=rows.SingleOrDefault(x=>x.Kind==CompletionSealKind.Executed);
-            var executed=first is null ? await PrepareStage(candidate,CompletionSealKind.Executed,null,ct) : await ReadStage(first,candidate,null,ct);
+            var executed=first is null ? await PrepareStage(candidate,CompletionSealKind.Executed,null,ct,timestampWork) : await ReadStage(first,candidate,null,ct);
             rows=await Rows(envelopeId,ct); var second=rows.SingleOrDefault(x=>x.Kind==CompletionSealKind.Certificate);
-            var certificate=second is null ? await PrepareStage(candidate,CompletionSealKind.Certificate,executed,ct) : await ReadStage(second,candidate,executed,ct);
+            var certificate=second is null ? await PrepareStage(candidate,CompletionSealKind.Certificate,executed,ct,timestampWork) : await ReadStage(second,candidate,executed,ct);
             return new(envelopeId,candidate.Id,executed,certificate);
         }
         catch(Azure.RequestFailedException) {throw new IOException("Completion seal storage is unavailable.");}
@@ -63,7 +72,8 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
         {throw Invalid();}
     }
 
-    private async Task<CompletionSealData> PrepareStage(CompletionCandidateData candidate,CompletionSealKind kind,CompletionSealData? executed,CancellationToken ct)
+    private async Task<CompletionSealData> PrepareStage(CompletionCandidateData candidate,CompletionSealKind kind,CompletionSealData? executed,CancellationToken ct,
+        CompletionTimestampWork? timestampWork)
     {
         var owned=new List<DocumentBlob>(); var commitStarted=false; var committed=false;
         try
@@ -75,8 +85,10 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
                 var certificate=renderer.PrepareStandalone(candidate.Evidence,candidate.Packet,executed.Pdf,ct); source=certificate.Bytes; pages=certificate.Pages;
             }
             var sourceHash=SHA256.HashData(source);
-            var sealedPdf=executed is null ? await engine.SealAsync(source,sourceHash,ct) :
-                await engine.SealBoundAsync(source,sourceHash,Convert.FromHexString(executed.Pdf.CertificateSha256),ct);
+            var timestampArtifact=timestampWork is null ? null : await timestamps!.BindArtifactAsync(timestampWork,candidate.Id,kind,sourceHash,
+                executed?.Pdf.Sha256,executed?.RecipeSha256,ct);
+            var sealedPdf=executed is null ? await engine.SealAsync(source,sourceHash,ct,timestampArtifact) :
+                await engine.SealBoundAsync(source,sourceHash,Convert.FromHexString(executed.Pdf.CertificateSha256),ct,timestampArtifact);
             if(!Same(sealedPdf.SourceSha256,sourceHash) || sealedPdf.PageCount!=pages || sealedPdf.SealedAt<candidate.Evidence.PreparedAt)throw Invalid();
             var row=new CompletionSealOutput {
                 EnvelopeId=candidate.EnvelopeId,CandidateId=candidate.Id,Kind=kind,SourceObjectId=kind==CompletionSealKind.Executed ? candidate.PdfObjectId : Guid.NewGuid(),

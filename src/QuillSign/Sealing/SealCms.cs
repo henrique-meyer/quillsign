@@ -12,6 +12,7 @@ using PdfSharp.Pdf.Advanced;
 using PdfSharp.Pdf.IO;
 using PdfSharp.Pdf.Signatures;
 using QuillSign.Documents;
+using QuillSign.Email.Pilot;
 
 namespace QuillSign.Sealing;
 
@@ -96,7 +97,8 @@ public sealed class SealCms(SealOptions options,TimestampAuthority timestamp)
         if(found.Length!=1 || found[0].Values.Count!=1)throw new CryptographicException(); return found[0].Values[0].RawData;
     }
 
-    internal sealed class Signer(SealOptions options,SealCertificateMaterial material,TimestampAuthority authority,DateTimeOffset now,CancellationToken ct) : IDigitalSigner
+    internal sealed class Signer(SealOptions options,SealCertificateMaterial material,TimestampAuthority authority,DateTimeOffset now,CancellationToken ct,
+        CompletionTimestampArtifact? timestampContext=null) : IDigitalSigner
     {
         public string CertificateName=>"QuillSign platform seal";
         public Task<int> GetSignatureSizeAsync() { ct.ThrowIfCancellationRequested(); return Task.FromResult(options.SignatureCapacityBytes); }
@@ -112,7 +114,7 @@ public sealed class SealCms(SealOptions options,TimestampAuthority timestamp)
             signer.SignedAttributes.Add(new Pkcs9SigningTime(now.UtcDateTime));
             signer.SignedAttributes.Add(new AsnEncodedData(new Oid(CertificateBindingOid),new SigningCertificateV2(new EssCertIDv2(SHA256.HashData(material.Certificate.RawData))).GetDerEncoded()));
             cms.ComputeSignature(signer,true); ct.ThrowIfCancellationRequested();
-            var timestamp=await authority.RequestAsync(cms.SignerInfos[0],now,ct);
+            var timestamp=await authority.RequestAsync(cms.SignerInfos[0],now,ct,timestampContext);
             cms.SignerInfos[0].AddUnsignedAttribute(new AsnEncodedData(new Oid(TimestampOid),timestamp.Encoded));
             var result=cms.Encode(); if(result.Length>options.SignatureCapacityBytes)throw new SealUnavailableException("The seal exceeds its reserved signature capacity."); return result;
         }

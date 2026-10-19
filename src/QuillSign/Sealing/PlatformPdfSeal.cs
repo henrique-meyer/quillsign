@@ -5,19 +5,24 @@ using PdfSharp.Pdf.Annotations;
 using PdfSharp.Pdf.IO;
 using PdfSharp.Pdf.Signatures;
 using QuillSign.Documents;
+using QuillSign.Email.Pilot;
 
 namespace QuillSign.Sealing;
 
 // Explicit internal operation only. Finalization must authorize, stage and publish the returned bytes itself.
-public sealed class PlatformPdfSeal(SealOptions options,ISealCertificateProvider certificates,TimestampAuthority timestamps,IHostEnvironment environment,TimeProvider time)
+public sealed class PlatformPdfSeal(SealOptions options,ISealCertificateProvider certificates,TimestampAuthority timestamps,IHostEnvironment environment,TimeProvider time,
+    PilotTimestampPolicy? pilotPolicy=null)
 {
     private static readonly SemaphoreSlim gate=new(1,1);
-    public Task<SealedPdf> SealAsync(byte[] source,byte[] expectedSha256,CancellationToken ct=default)
-        =>SealCore(source,expectedSha256,null,ct);
-    public Task<SealedPdf> SealBoundAsync(byte[] source,byte[] expectedSha256,byte[] expectedCertificateSha256,CancellationToken ct=default)
-        =>SealCore(source,expectedSha256,expectedCertificateSha256 ?? throw new SealUnavailableException("A platform identity binding is required."),ct);
-    private async Task<SealedPdf> SealCore(byte[] source,byte[] expectedSha256,byte[]? expectedCertificateSha256,CancellationToken ct)
+    public Task<SealedPdf> SealAsync(byte[] source,byte[] expectedSha256,CancellationToken ct=default,CompletionTimestampArtifact? timestampContext=null)
+        =>SealCore(source,expectedSha256,null,ct,timestampContext);
+    public Task<SealedPdf> SealBoundAsync(byte[] source,byte[] expectedSha256,byte[] expectedCertificateSha256,CancellationToken ct=default,
+        CompletionTimestampArtifact? timestampContext=null)
+        =>SealCore(source,expectedSha256,expectedCertificateSha256 ?? throw new SealUnavailableException("A platform identity binding is required."),ct,timestampContext);
+    private async Task<SealedPdf> SealCore(byte[] source,byte[] expectedSha256,byte[]? expectedCertificateSha256,CancellationToken ct,
+        CompletionTimestampArtifact? timestampContext)
     {
+        if(pilotPolicy is not null && timestampContext is null)throw new PilotTimestampDeniedException();
         var address=options.Validate(environment.IsDevelopment());options.ValidateRequestCoordination(address);ct.ThrowIfCancellationRequested();
         if(expectedCertificateSha256 is not null && expectedCertificateSha256.Length!=32)throw new SealUnavailableException("Invalid platform identity binding.");
         var certificateBinding=expectedCertificateSha256?.ToArray();
@@ -27,6 +32,7 @@ public sealed class PlatformPdfSeal(SealOptions options,ISealCertificateProvider
         try {
             var owned=source.ToArray(); var sourceHash=SHA256.HashData(owned);
             if(!CryptographicOperations.FixedTimeEquals(sourceHash,expectedSha256))throw new DocumentRejectedException("The prepared PDF changed.");
+            if(timestampContext is not null)await timestampContext.DemandAsync(sourceHash,ct);
             using var sourceInput=new MemoryStream(owned,false); using var normalized=new MemoryStream(); IReadOnlyList<PageGeometry> geometry;
             lock(SenderPdfRenderer.RenderGate)geometry=new PdfValidation(new() { MaximumBytes=options.MaximumBytes,MaximumPages=options.MaximumPages })
                 .Rewrite(sourceInput,new BoundedDocumentStream(normalized,options.MaximumBytes));
@@ -34,9 +40,10 @@ public sealed class PlatformPdfSeal(SealOptions options,ISealCertificateProvider
             var form=document.Internals.Catalog.Elements.GetDictionary("/AcroForm");
             if(form?.Elements.GetArray("/Fields")?.Elements.Count>0)throw new DocumentRejectedException("Flatten the completed document before sealing.");
             using var material=await certificates.AcquireAsync(ct); var now=time.GetUtcNow(); material.Validate(now);
+            if(timestampContext is not null)await timestampContext.DemandAsync(sourceHash,ct);
             if(certificateBinding is not null && !CryptographicOperations.FixedTimeEquals(certificateBinding,SHA256.HashData(material.Certificate.RawData)))
                 throw new SealUnavailableException("The selected platform signing identity changed.");
-            DigitalSignatureHandler.ForDocument(document,new SealCms.Signer(options,material,timestamps,now,ct),new DigitalSignatureOptions {
+            DigitalSignatureHandler.ForDocument(document,new SealCms.Signer(options,material,timestamps,now,ct,timestampContext),new DigitalSignatureOptions {
                 Reason="QuillSign completion integrity seal",AppName="QuillSign",Rectangle=new XRect(0,0,0,0),AppearanceHandler=new InvisibleAppearance() });
             using var output=new MemoryStream();
             try { await document.SaveAsync(new BoundedDocumentStream(output,options.MaximumBytes),false); }
