@@ -2,6 +2,12 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-133: Allow complete local-stack CI validation within forty minutes
+
+Status: In Progress. Assigned to ChatGPT Codex. CI time budget only; no application or hosted behavior change.
+
+Raise only the GitHub Actions local-stack job timeout from twenty-five to forty minutes. Equivalent full-stack runs on QUILS-123 head069ec9b showed 2,875 tests passing in one run while the other was cancelled at the twenty-five-minute boundary without a reported source assertion failure. Preserve every existing service, test, isolation, secret, build and cleanup step; no test skipping or retry masking. Validate YAML and exact one-value scope, secret scan, small independent PR, exact-head checks, self-merge and native Jira Done in the same pass. No cloud/resource/runtime/configuration change or provider call.
+
 ## QUILS-101: Add sender invitation resend UI and delivery status
 
 Status: Done on merge after current-head checks pass. Assigned to ChatGPT Codex. Local captured email only; depends on merged QUILS-93.
@@ -1691,6 +1697,14 @@ Preparation evidence: scoped read-only provider checks confirm the verified SES 
 Status: In Progress. Assigned to ChatGPT Codex. Source-only dependent slice of QUILS-116 using QUILS-125 budget ledger and QUILS-128 owned work scope; base fa9dab8. Root reviewed and approved the exact source/API/file ownership before implementation; singleton engines receive per-call contexts and capture no scoped services.
 
 Propagate typed optional completion work/envelope/artifact/source/digest authority through completion sealing and CMS to the live TSA boundary. Preserve ordinary non-pilot seals and timestamp token validation. Known pilot work remains classified after disable, expiry or changed/removed run configuration; absent/stale/unbound scope never falls through to ordinary or probe authority. After shared coordinator acquisition, revalidate current owned completion lease/run/source/artifact and reserve one of at most four nonrefunded live TSA attempts immediately before fixed HTTPS HTTP; AlreadyConsumed, uncertain commit, lost lease, changed digest/source, disable/expiry or cancellation authorize no call. Recheck directly before HTTP. Failures/retries/unknown acknowledgement remain consumed; validation/read paths consume nothing. Keep no redirects/retries/proxy and default-off behavior. Do not edit email dispatch/transports, sender/preparation, tokens/reads or lookup. Test captured-HTTP denial/success, scope/artifact/digest ownership, coordinator expiry, concurrency/replay/unknown/disable/restart and ordinary seal regressions. No live TSA/cloud/credential/settings/deploy/purchase changes. Separate branch/worktree, scan secrets, small checked PR/selfmerge/native Done.
+
+## QUILS-129: Prepare immutable bounded complete raw MIME artifacts
+
+Status: Done on merge after exact-head checks. Assigned to ChatGPT Codex. Source-only dependent slice of QUILS-116; no provider activation.
+
+Prepare complete raw MIME with the existing pinned MimeKit and ordinary email contracts. Enforce at most 1 MiB of actual encoded bytes including headers, boundaries, base64 and attachments, exact SHA-256/byte count and independent reopenable read-only streams without caller-mutable backing. Snapshot mutable attachments before encoding; bound inputs and output, abort overflow without unbounded buffering, preserve non-ASCII/address/header/body/attachment semantics and cancellation with safe errors. Validate round trips, exact limits/overflow, mutation/stream/hash, cancellation and oversized/hostile inputs. Do not edit dispatch/pilot/transport credential gates or wire the utility into delivery; later reviewed nonrefunded ledger and raw SES slices consume this artifact. No provider/cloud/credential access, live email/TSA/conversion, deployment/settings, purchase or dependency change. Independent branch/worktree, secret scan, small PR/exact-head checks/selfmerge/native Done.
+
+Validation: [Complete MIME preparation contract](bounded-raw-mime.md) and 61 focused no-SQL tests cover actual encoded one-MiB acceptance, one extra header byte rejection, Base64 expansion, complete non-ASCII alternatives/filenames, exact attachment bytes/hash/metadata, no writable/exposable buffers, mutable list/count snapshots, cancellation and safe header/body handling. No dispatch, pilot or transport registration/gate changed; zero real provider calls.
 
 ## QUILS-126: Bound sandbox test-recipient identity bootstrap
 
