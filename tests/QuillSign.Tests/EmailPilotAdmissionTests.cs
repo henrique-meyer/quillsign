@@ -136,10 +136,10 @@ public sealed class EmailPilotAdmissionTests(SqlDatabaseFixture fixture):IClassF
 
     private Harness New()=>new(fixture.Open());
     private static string Hash(string value)=>Convert.ToHexStringLower(SHA256.HashData(Encoding.ASCII.GetBytes(value)));
-    private sealed class Clock:TimeProvider{public DateTimeOffset Now=new(2026,10,18,10,0,0,TimeSpan.Zero);public override DateTimeOffset GetUtcNow()=>Now;}
+    internal sealed class Clock:TimeProvider{public DateTimeOffset Now=new(2026,10,18,10,0,0,TimeSpan.Zero);public override DateTimeOffset GetUtcNow()=>Now;}
     private sealed class LostCommit(int number):DbTransactionInterceptor
     {private int commits;public override Task TransactionCommittedAsync(DbTransaction t,TransactionEndEventData e,CancellationToken ct=default){if(++commits==number)throw new IOException("Synthetic lost admission commit acknowledgement.");return Task.CompletedTask;}}
-    private sealed class Harness: IAsyncDisposable
+    internal sealed class Harness: IAsyncDisposable
     {
         internal readonly QuillSignDbContext Db;internal readonly EmailPilotOptions Options=new(){Enabled=true,RunId=Guid.NewGuid().ToString("N")};
         internal readonly EmailPilotAdmissionOptions Admission=new(){CapabilitySha256=Hash(Capability)};
@@ -158,7 +158,7 @@ public sealed class EmailPilotAdmissionTests(SqlDatabaseFixture fixture):IClassF
             Config=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>{{"ConnectionStrings:Database","configured"},{"Storage:Provider","Azurite"}}).Build();}
         public ValueTask DisposeAsync()=>Db.DisposeAsync();
     }
-    private sealed class Signals:IWorkSignals
+    internal sealed class Signals:IWorkSignals
     {
         internal readonly ConcurrentBag<Guid> Published=[];internal bool FailHint,FailPublish;internal Action? OnHint;
         public Task PutHintAsync(Guid id,DateTimeOffset due,CancellationToken ct){OnHint?.Invoke();if(FailHint)throw new IOException("Synthetic hint failure.");return Task.CompletedTask;}
