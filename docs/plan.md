@@ -2,6 +2,12 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-133: Allow complete local-stack CI validation within forty minutes
+
+Status: In Progress. Assigned to ChatGPT Codex. CI time budget only; no application or hosted behavior change.
+
+Raise only the GitHub Actions local-stack job timeout from twenty-five to forty minutes. Equivalent full-stack runs on QUILS-123 head069ec9b showed 2,875 tests passing in one run while the other was cancelled at the twenty-five-minute boundary without a reported source assertion failure. Preserve every existing service, test, isolation, secret, build and cleanup step; no test skipping or retry masking. Validate YAML and exact one-value scope, secret scan, small independent PR, exact-head checks, self-merge and native Jira Done in the same pass. No cloud/resource/runtime/configuration change or provider call.
+
 ## QUILS-101: Add sender invitation resend UI and delivery status
 
 Status: Done on merge after current-head checks pass. Assigned to ChatGPT Codex. Local captured email only; depends on merged QUILS-93.
@@ -1686,6 +1692,14 @@ Prepare only: refresh the existing dedicated SES/SNS/Key Vault/Container Apps em
 
 Preparation evidence: scoped read-only provider checks confirm the verified SES domain/DKIM/MAIL FROM, Essentials rate, disabled configuration-set sending, zero feedback subscriptions, disabled web/worker email and existing vault secret metadata/worker access without reading secret values. The exact private eight-setting feedback patch, preserved before-state, conditional subscription parameters, cost arithmetic and owner review/rollback package are prepared. Owner-controlled catch-all aliases have been selected privately for all four roles; verification messages and activation remain unapproved. The source has no restricted pilot gate, so full hosted signing remains dependent on To Do QUILS-116 rather than enabling public email. The CloudFormation subscription defaults off and passes pinned cfn-lint 1.57.2; source/docs merge creates no subscription. All-in invoice cannot be guaranteed: listed AWS message/request arithmetic is USD0.0167748736 excluding SNS transfer/tax; Azure compute illustration and the proposed USD1 operator allowance are explicitly not hard billing caps. No provider call, cloud/permission/config change or purchase occurred. 132 local links and staged/full-history secret scans pass. All ten exact-head CI checks passed, including 2,230 .NET and 20 Node tests; PR #114 merged and native Jira is Done. No hosted configuration was applied.
 
+## QUILS-129: Prepare immutable bounded complete raw MIME artifacts
+
+Status: Done on merge after exact-head checks. Assigned to ChatGPT Codex. Source-only dependent slice of QUILS-116; no provider activation.
+
+Prepare complete raw MIME with the existing pinned MimeKit and ordinary email contracts. Enforce at most 1 MiB of actual encoded bytes including headers, boundaries, base64 and attachments, exact SHA-256/byte count and independent reopenable read-only streams without caller-mutable backing. Snapshot mutable attachments before encoding; bound inputs and output, abort overflow without unbounded buffering, preserve non-ASCII/address/header/body/attachment semantics and cancellation with safe errors. Validate round trips, exact limits/overflow, mutation/stream/hash, cancellation and oversized/hostile inputs. Do not edit dispatch/pilot/transport credential gates or wire the utility into delivery; later reviewed nonrefunded ledger and raw SES slices consume this artifact. No provider/cloud/credential access, live email/TSA/conversion, deployment/settings, purchase or dependency change. Independent branch/worktree, secret scan, small PR/exact-head checks/selfmerge/native Done.
+
+Validation: [Complete MIME preparation contract](bounded-raw-mime.md) and 61 focused no-SQL tests cover actual encoded one-MiB acceptance, one extra header byte rejection, Base64 expansion, complete non-ASCII alternatives/filenames, exact attachment bytes/hash/metadata, no writable/exposable buffers, mutable list/count snapshots, cancellation and safe header/body handling. No dispatch, pilot or transport registration/gate changed; zero real provider calls.
+
 ## QUILS-126: Bound sandbox test-recipient identity bootstrap
 
 Status: Done. Assigned to ChatGPT Codex. PR #130 merged after all ten exact-head checks; native Jira Done. Public and configuration-set sending stay disabled.
@@ -1712,7 +1726,7 @@ Source-only foundation for QUILS-116 restricted hosted email pilot. Persist an a
 
 Foundation validation: 43 focused real SQL and protection/permission/persistence checks pass. They include cross-context concurrent 20/10/4 limits, exact mailbox and three-slot enrollment, fixed deadlines through restart and UTC midnight, immutable operation replay, protected-evidence corruption, actual intercepted lost commit acknowledgement, deadline-crossing rollback, pending caller-edit preservation, document deletion without counter deletion and worker-only guarded secret cleanup. The encrypted mailbox manifest expires after seven days; only the exact privileged cleanup procedure can delete it once database UTC confirms expiry. Random operational identifiers and authenticated counter digests remain to prevent reset; they have no document foreign key or contact values. EF reports no pending model changes and builds without warnings. Registration is not wired into startup, and there is no provider call or deployment in this slice. Dependent runtime gates and a bounded cleanup invocation remain required before pilot activation.
 
-Integration validation: 219 combined pilot/accounting/persistence/permissions, reminder/runtime/review/successor and correction-page/proof cases pass with the checked QUILS-123 source and merged QUILS-119/122/111. The appended Reminder work kind and both migrations are preserved; the later pilot migration designer and current snapshot agree. Independent read-only review found no blocking accounting or cleanup defect. Runtime activation remains separate and defaults stay off.
+Integration validation: 219 combined pilot/accounting/persistence/permissions, reminder/runtime/review/successor and correction-page/proof cases pass with the checked QUILS-123 source and merged QUILS-119/122/111. The appended Reminder work kind and both migrations are preserved; the later pilot migration designer and current snapshot agree. Independent read-only review found no blocking accounting or cleanup defect. An additional 89 focused current-base accounting, admission and work-scope cases pass. The merged immutable-MIME foundation and forty-minute CI budget are integrated. Runtime activation remains separate and defaults stay off.
 
 ## QUILS-127: Admit exact synthetic pilot drafts through normal mailbox verification
 
