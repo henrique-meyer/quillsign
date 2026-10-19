@@ -2,6 +2,12 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## QUILS-133: Allow complete local-stack CI validation within forty minutes
+
+Status: In Progress. Assigned to ChatGPT Codex. CI time budget only; no application or hosted behavior change.
+
+Raise only the GitHub Actions local-stack job timeout from twenty-five to forty minutes. Equivalent full-stack runs on QUILS-123 head069ec9b showed 2,875 tests passing in one run while the other was cancelled at the twenty-five-minute boundary without a reported source assertion failure. Preserve every existing service, test, isolation, secret, build and cleanup step; no test skipping or retry masking. Validate YAML and exact one-value scope, secret scan, small independent PR, exact-head checks, self-merge and native Jira Done in the same pass. No cloud/resource/runtime/configuration change or provider call.
+
 ## QUILS-101: Add sender invitation resend UI and delivery status
 
 Status: Done on merge after current-head checks pass. Assigned to ChatGPT Codex. Local captured email only; depends on merged QUILS-93.
