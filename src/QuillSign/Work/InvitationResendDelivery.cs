@@ -57,7 +57,7 @@ public sealed class InvitationResendDelivery(QuillSignDbContext db, InvitationRe
         try { delivery = await sender.SendAsync(outgoing, ct); }
         catch (EmailNotSubmittedException e) {
             await ClearAsync(lease, p, issued, intentAt, intentPayload, ct);
-            return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed, "provider-rejected");
+            return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed, e.FailureCode);
         }
         catch (Exception e) when (e is RecipientSuppressedException or EmailDisabledException) {
             await ClearAsync(lease, p, issued, intentAt, intentPayload, ct);

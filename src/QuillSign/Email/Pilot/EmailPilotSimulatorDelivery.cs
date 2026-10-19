@@ -37,7 +37,7 @@ public sealed class EmailPilotSimulatorDelivery(QuillSignDbContext db,EmailPilot
             // never refunded; a later owned attempt needs its own reservation.
             await db.EmailOutbox.Where(x=>x.Id==lease.Id && x.Status==EmailStatus.Queued && x.Attempts==lease.Attempt)
                 .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.SubmissionStartedAt,(DateTimeOffset?)null),ct);
-            return new(e.Retryable?WorkOutcome.Retry:WorkOutcome.Failed,"provider-rejected");
+            return new(e.Retryable?WorkOutcome.Retry:WorkOutcome.Failed,e.FailureCode);
         }catch(EmailPilotTransportRefusedException) {
             // Refusal/AlreadyConsumed may follow a prior successful invocation.
             // Retain intent and forbid resubmission, including a duplicated call.

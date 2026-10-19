@@ -26,8 +26,32 @@ public sealed class SesPreparedEmailTransport(IAmazonSimpleEmailServiceV2 client
             }, cancellationToken);
         }
         catch (AmazonSimpleEmailServiceV2Exception e) when ((int)e.StatusCode is >= 400 and < 500)
-        { throw new EmailNotSubmittedException((int)e.StatusCode == 429 || e is TooManyRequestsException or LimitExceededException); }
+        { throw new EmailNotSubmittedException((int)e.StatusCode == 429 || e is TooManyRequestsException or LimitExceededException,
+            (int)e.StatusCode, Reason(e)); }
         if (string.IsNullOrWhiteSpace(response.MessageId)) throw new InvalidOperationException("SES returned no delivery identifier.");
         return new("Ses", response.MessageId);
+    }
+
+    private static ProviderRefusalReason Reason(AmazonSimpleEmailServiceV2Exception error)
+    {
+        if ((int)error.StatusCode is 401 or 403) return ProviderRefusalReason.Authorization;
+        if ((int)error.StatusCode == 429 || error is TooManyRequestsException or LimitExceededException)
+            return ProviderRefusalReason.Throttled;
+        var code = error.ErrorCode ?? error.GetType().Name;
+        return code switch {
+            "MessageRejected" or "MessageRejectedException" =>
+                error.Message.Contains("Email address is not verified", StringComparison.OrdinalIgnoreCase)
+                    ? ProviderRefusalReason.UnverifiedIdentity : ProviderRefusalReason.MessageRejected,
+            "SendingPaused" or "SendingPausedException" or "AccountSendingPaused" or "AccountSuspendedException" =>
+                error.Message.Contains("configuration set", StringComparison.OrdinalIgnoreCase)
+                    ? ProviderRefusalReason.ConfigurationPaused : ProviderRefusalReason.AccountPaused,
+            "ConfigurationSetSendingPaused" or "ConfigurationSetSendingPausedException" => ProviderRefusalReason.ConfigurationPaused,
+            "ConfigurationSetDoesNotExist" or "ConfigurationSetDoesNotExistException" => ProviderRefusalReason.ConfigurationMissing,
+            "NotFoundException" => ProviderRefusalReason.ResourceMissing,
+            "MailFromDomainNotVerified" or "MailFromDomainNotVerifiedException" => ProviderRefusalReason.MailFromUnverified,
+            "BadRequest" or "BadRequestException" => ProviderRefusalReason.InvalidRequest,
+            "AccessDenied" or "AccessDeniedException" or "UnauthorizedException" => ProviderRefusalReason.Authorization,
+            _ => ProviderRefusalReason.Other
+        };
     }
 }

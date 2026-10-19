@@ -69,7 +69,7 @@ public sealed class VoidNotificationDelivery(QuillSignDbContext db,VoidNotificat
             return new(WorkOutcome.Completed);
         }
         catch(EmailNotSubmittedException e) {
-            return await ClearKnownUnsent(lease,email.To,payload) ? new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed,"provider-rejected") : new(WorkOutcome.Ambiguous,"void-submission-uncertain");
+            return await ClearKnownUnsent(lease,email.To,payload) ? new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed,e.FailureCode) : new(WorkOutcome.Ambiguous,"void-submission-uncertain");
         }
         catch(Exception e) when(e is RecipientSuppressedException or EmailDisabledException or EmailAttachmentLimitException) {
             var cleared=await ClearKnownUnsent(lease,email.To,payload);
