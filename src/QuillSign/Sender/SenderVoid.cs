@@ -24,9 +24,9 @@ public sealed record SenderVoidResult(SenderVoidOutcome Outcome,SenderVoidRecord
 // The caller
 // supplies the original named sender ticket's expiry, never an expiry from a form.
 public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState checkpoints,AuditWriter audit,TimeProvider time,
-    Func<VoidNotificationJobs>? notifications=null)
+    Func<VoidNotificationJobs>? notifications=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
-    private readonly SenderVoidState state=new(db,checkpoints,time);
+    private readonly SenderVoidState state=new(db,checkpoints,time,pilotBounds);
 
     public async Task<SenderVoidResult> VoidAsync(ClaimsPrincipal sender,string publicId,DateTimeOffset senderTicketExpiresAt,
         byte[]? reviewedVersion,bool confirmed,string? statementVersion,string? reason,string? ip,string? userAgent,CancellationToken ct=default)
@@ -49,12 +49,12 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         await using var tx=await db.Database.BeginTransactionAsync(ct);
         var envelope=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct);
         if(envelope is null || envelope.PublicId!=publicId || envelope.SenderEmail!=email || envelope.SenderVerifiedAt is null || until<=time.GetUtcNow())return new(SenderVoidOutcome.InvalidContext);
-        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct,pilotBounds);
         if(envelope.Status==EnvelopeStatus.Voided) {
             var recorded=await Recorded(envelope,version,reason,ct);if(recorded is null)return new(SenderVoidOutcome.Conflict);
             if(until<=time.GetUtcNow())return new(SenderVoidOutcome.InvalidContext);
             DocumentRetentionAccess.Check(deadline,time);
-            await tx.CommitAsync(ct);return new(SenderVoidOutcome.AlreadyVoided,recorded);
+            await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);return new(SenderVoidOutcome.AlreadyVoided,recorded);
         }
         if(envelope.Status!=EnvelopeStatus.Sent || envelope.ExpiresAt<=time.GetUtcNow())return new(SenderVoidOutcome.Closed);
         if(Convert.ToBase64String(envelope.RowVersion)!=version)return new(SenderVoidOutcome.Conflict);
@@ -75,7 +75,7 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         if(envelope.ExpiresAt<=time.GetUtcNow())return new(SenderVoidOutcome.Closed);
         // A lost acknowledgement propagates. A later explicit saved-state read/repeat
         // can verify the existing action; it cannot create a second void record.
-        await tx.CommitAsync(ct);await tx.DisposeAsync();
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);await tx.DisposeAsync();
         if(producer is not null)await producer.PublishAsync(jobs,ct);
         return new(SenderVoidOutcome.Voided,result);
     }

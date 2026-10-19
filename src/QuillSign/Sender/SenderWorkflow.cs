@@ -16,7 +16,7 @@ public sealed class SenderOptions
     public int WindowMinutes { get; set; } = 10;
 }
 
-public sealed record VerifiedSender(Guid EnvelopeId, string PublicId, string Email);
+public sealed record VerifiedSender(Guid EnvelopeId, string PublicId, string Email,DateTimeOffset? AccessExpiresAt=null);
 public enum SenderRequestOutcome { Neutral, Unavailable }
 
 public sealed class SenderAvailability(EmailOptions email, WorkOptions work, IConfiguration config)
@@ -26,7 +26,7 @@ public sealed class SenderAvailability(EmailOptions email, WorkOptions work, ICo
 }
 
 public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options, SenderAvailability availability,
-    Func<EmailOutboxWriter> getOutbox, AuditWriter audit, TimeProvider time)
+    Func<EmailOutboxWriter> getOutbox, AuditWriter audit, TimeProvider time,Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     public async Task<SenderRequestOutcome> RequestAsync(string address, string? ip, string? userAgent, CancellationToken cancellationToken = default)
     {
@@ -53,7 +53,7 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
             await audit.AppendAsync(envelope.Id, "draft_created", email, ip, userAgent, cancellationToken);
             await audit.AppendAsync(envelope.Id, "sender_verification_requested", email, ip, userAgent, cancellationToken);
             workId = await outbox.PrepareVerificationAsync(envelope.Id, email, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,cancellationToken);
         }
         await outbox.PublishCommittedAsync(workId, cancellationToken);
         return SenderRequestOutcome.Neutral;
@@ -74,11 +74,19 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
             .SingleOrDefaultAsync(cancellationToken);
         if (envelope is null || envelope.Status != EnvelopeStatus.Draft || envelope.SenderVerifiedAt is not null ||
             !string.Equals(envelope.SenderEmail, token.Email, StringComparison.OrdinalIgnoreCase)) return null;
+        DateTimeOffset? accessEnd=null;
+        try {if(pilotBounds is not null)accessEnd=await pilotBounds.ReadAsync(envelope,cancellationToken);}
+        catch(Email.Pilot.EmailPilotAccessUnavailableException){return null;}
         token.UsedAt = now;
         envelope.SenderVerifiedAt = now;
         await audit.AppendAsync(envelope.Id, "sender_email_verified", token.Email, ip, userAgent, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return new(envelope.Id, envelope.PublicId, token.Email);
+        if(pilotBounds is not null) {
+            var current=await pilotBounds.ReadAsync(envelope,cancellationToken);
+            accessEnd=Email.Pilot.EmailPilotReadBounds.Earlier(accessEnd,current);
+            if(accessEnd<=time.GetUtcNow())return null;
+        }
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,cancellationToken);
+        return accessEnd<=time.GetUtcNow() ? null : new(envelope.Id, envelope.PublicId, token.Email,accessEnd);
     }
 }

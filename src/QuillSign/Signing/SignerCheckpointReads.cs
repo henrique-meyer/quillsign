@@ -33,7 +33,7 @@ public sealed class SignerCheckpointReads(QuillSignDbContext db,SignerAccess acc
         var adoption=await state.AcceptanceAsync(f,signer,ct); if(adoption is null)return null;
         var bytes=await blobs.PdfAsync(f,false,ct); await blobs.AssetsAsync(f,adoption,ct);
         if((await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true))?.ConsentAt is null || context.Identity.SessionExpiresAt<=time.GetUtcNow())return null;
-        await transaction.CommitAsync(ct);DocumentRetentionAccess.Check(context.RetentionDeadline,time);
+        await access.CommitAsync(transaction,ct);DocumentRetentionAccess.Check(context.RetentionDeadline,time);
         if(context.Identity.SessionExpiresAt<=time.GetUtcNow())return null;
         return new(SignerFinish.Result(f),bytes){RetentionDeadline=context.RetentionDeadline};
     }

@@ -24,7 +24,7 @@ public sealed record SignerChange(SignerChangeKind Kind, string Version, Guid? S
 public enum SignerSetupError { None, NotFound, PreviewRequired, Conflict, Invalid, Duplicate, Limit, ReferencedFields }
 public sealed record SignerChangeResult(SignerSetupError Error, string? Message = null, string? Field = null);
 
-public sealed class SignerSetup(QuillSignDbContext db, AuditWriter audit, SignerSetupOptions options,TimeProvider? time=null)
+public sealed class SignerSetup(QuillSignDbContext db, AuditWriter audit, SignerSetupOptions options,TimeProvider? time=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     public async Task<SignerSetupSnapshot?> GetAsync(ClaimsPrincipal sender, string publicId,
         CancellationToken cancellationToken = default)
@@ -37,12 +37,12 @@ public sealed class SignerSetup(QuillSignDbContext db, AuditWriter audit, Signer
             x.PublicId == publicId && x.SenderEmail == identity.Value.Email && x.SenderVerifiedAt != null &&
             x.Status == EnvelopeStatus.Draft, cancellationToken);
         if (envelope is null) return null;
-        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time??TimeProvider.System,cancellationToken);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time??TimeProvider.System,cancellationToken,pilotBounds);
         var signers = await db.Signers.AsNoTracking().Where(x => x.EnvelopeId == envelope.Id).OrderBy(x => x.Order)
             .Select(x => new SignerListItem(x.Id, x.Order, x.FullName, x.Email, x.Role)).ToListAsync(cancellationToken);
         var result=new SignerSetupSnapshot(envelope.PublicId, envelope.SenderEmail, envelope.SenderName,
             Convert.ToBase64String(envelope.RowVersion), IsConfirmed(envelope), signers);
-        DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);await transaction.CommitAsync(cancellationToken);return result;
+        DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,cancellationToken);return result;
     }
 
     public async Task<SignerChangeResult> ChangeAsync(ClaimsPrincipal sender, string publicId, SignerChange change,
@@ -59,7 +59,7 @@ public sealed class SignerSetup(QuillSignDbContext db, AuditWriter audit, Signer
         if (envelope is null || envelope.PublicId != publicId || envelope.SenderVerifiedAt is null ||
             envelope.Status != EnvelopeStatus.Draft || !string.Equals(envelope.SenderEmail, identity.Value.Email, StringComparison.OrdinalIgnoreCase))
             return new(SignerSetupError.NotFound);
-        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time??TimeProvider.System,cancellationToken);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time??TimeProvider.System,cancellationToken,pilotBounds);
         if (!IsConfirmed(envelope)) return new(SignerSetupError.PreviewRequired, "Confirm the current PDF preview before setting up signers.");
         if (!MatchesVersion(change.Version, envelope.RowVersion))
             return new(SignerSetupError.Conflict, "This draft changed. Reload the signer list before trying again.");
@@ -133,7 +133,7 @@ public sealed class SignerSetup(QuillSignDbContext db, AuditWriter audit, Signer
         });
         await audit.AppendAsync(envelope.Id, eventName, identity.Value.Email, ip, userAgent, cancellationToken, data);
         DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);
-        await transaction.CommitAsync(cancellationToken);
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,cancellationToken);
         return new(SignerSetupError.None);
     }
 

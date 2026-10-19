@@ -93,7 +93,7 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
             // Storage may have taken time. A session/consent invalidated meanwhile cannot save a preview.
             if (preview.ExpiresAt <= time.GetUtcNow() || (await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null) return null;
             db.SignaturePreviews.Add(preview); await db.SaveChangesAsync(ct);
-            commitStarted = true; await transaction.CommitAsync(ct); committed = true;
+            commitStarted = true; await access.CommitAsync(transaction,ct); committed = true;
             return Data(preview,context.Identity,verified.Signature,verified.Initials);
         }
         finally
@@ -115,7 +115,7 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
         if (!MatchesRevision(preview,signer)) return null;
         var images = await ReadImages(preview,context.Identity,ct);
         if (preview.ExpiresAt <= time.GetUtcNow() || (await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null) return null;
-        await transaction.CommitAsync(ct);
+        await access.CommitAsync(transaction,ct);
         return Data(preview,context.Identity,images.Signature,images.Initials);
     }
 
@@ -153,7 +153,7 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
                 documentSha256 = context.Identity.DocumentHash,disclosureSha256 = context.Identity.DisclosureHash,
                 serverEvidence = "previewed_assets_bound_to_explicit_adoption_request",identityEvidence = "email_link_session_with_prior_consent" }),PartyType.Signer,signer.Id);
         if(!access.IsLive(context))return SignatureAdoptionResult.InvalidContext;
-        await transaction.CommitAsync(ct); return SignatureAdoptionResult.Adopted;
+        await access.CommitAsync(transaction,ct); return SignatureAdoptionResult.Adopted;
     }
 
     // Current adopted marks outlive their original preview and may be read from a fresh
@@ -165,7 +165,7 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
         var context = await access.GetLockedContextAsync(principal,publicId,ct); if (context?.ConsentAt is null) return null;
         var assets = await GetCurrentLockedAsync(context.Identity,ct); if (assets is null) return null;
         if ((await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null) return null;
-        await transaction.CommitAsync(ct); var p = assets.Preview;
+        await access.CommitAsync(transaction,ct); var p = assets.Preview;
         return new(p.Id,assets.Signature,assets.Initials,p.SignatureWidth,p.SignatureHeight,p.InitialsWidth,p.InitialsHeight,p.UsedAt!.Value,p.Method,p.NormalizationVersion);
     }
     // The caller must have checked live consent/scope under the common envelope lock.

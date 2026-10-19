@@ -45,8 +45,11 @@ public sealed record SignerReadContext(VerifiedSigner Identity,string Title,stri
     internal DateTimeOffset AccessExpiresAt=>RetentionDeadline is { } end && end<Identity.SessionExpiresAt ? end : Identity.SessionExpiresAt;
 }
 
-public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerAccessOptions options,TimeProvider time)
+public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerAccessOptions options,TimeProvider time,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction,CancellationToken ct)=>
+        QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
+
     public async Task<VerifiedSigner?> RedeemAsync(string? rawToken,string? ip,string? userAgent,CancellationToken ct = default)
     {
         var hash = SignerInvitationFactory.TokenHash(rawToken); if (hash is null) return null;
@@ -79,7 +82,7 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
                 disclosureSha256 = context.Identity.DisclosureHash,authentication = "single_use_email_link" }),PartyType.Signer,signerId);
         if(corrected)await new SignerContactState(db,time).BindRedeemedSessionLockedAsync(envelope!,context.Identity,token.Id,ct);
         if(!IsLive(context))return null;
-        await transaction.CommitAsync(ct); return context.Identity;
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct); return context.Identity;
     }
 
     public async Task<SignerReadContext?> GetContextAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct = default,bool declinedConfirmation = false)
@@ -89,7 +92,7 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var context = await GetLockedContextAsync(principal,publicId,ct,declinedConfirmation);
         if(context is not null && !IsLive(context))return null;
-        await transaction.CommitAsync(ct); return context;
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct); return context;
     }
     // The caller owns the transaction, so scope validation and mutation share the same lock.
     internal async Task<SignerReadContext?> GetLockedContextAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct,bool declinedConfirmation = false,bool finishConfirmation = false)
@@ -162,7 +165,7 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
     private async Task<SignerReadContext?> RetainedAsync(SignerReadContext context,Envelope envelope,bool newSession,CancellationToken ct)
     {
         DateTimeOffset? deadline;
-        try {deadline=await DocumentRetentionAccess.ReadAsync(db,envelope,ct);}
+        try {deadline=await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds);}
         catch(InvalidDataException) {throw new SignerRetentionEvidenceException();}
         context=context with {RetentionDeadline=deadline};
         if(!IsLive(context))return null;

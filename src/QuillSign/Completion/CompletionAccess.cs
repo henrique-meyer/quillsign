@@ -19,7 +19,7 @@ internal sealed record CompletionReaderPreparation(CompletionReaderSession Sessi
 // Trusted issuance and readonly authentication. HTTP entry authenticates the dedicated
 // scheme and keeps Receipt private; arbitrary claims never replace its protected proof.
 public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState state,CompletionAccessProtection protection,
-    CompletionAccessOptions options,AuditWriter audit,TimeProvider time,Func<CompletionPublication> publication)
+    CompletionAccessOptions options,AuditWriter audit,TimeProvider time,Func<CompletionPublication> publication,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     private sealed record SessionScope(DownloadPublication Saved,DateTimeOffset? Deadline)
     {
@@ -38,7 +38,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         await using var tx=await db.Database.BeginTransactionAsync(ct);
         var link=await PrepareLockedAsync(prepared,party,partyId,ct); if(link is null)return null;
         // Unknown commits return no plaintext transport. An unused hash may expire safely.
-        await tx.CommitAsync(ct); return link;
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct); return link;
     }
 
     // Delivery verifies before its transaction and returns raw transport only in memory.
@@ -52,6 +52,10 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         options.Validate(); if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Completion token preparation requires its caller's transaction.");
         if(prepared.Until<=time.GetUtcNow())return null;
         await state.RecheckLockedAsync(prepared.Saved,ct);
+        if(pilotBounds is not null) {
+            var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==prepared.Saved.EnvelopeId,ct);
+            authorityLimit=Email.Pilot.EmailPilotReadBounds.Earlier(authorityLimit,await pilotBounds.ReadAsync(envelope,ct));
+        }
         var member=await state.PartyLockedAsync(prepared.Saved,party,partyId,ct); if(member is null)return null;
         var now=time.GetUtcNow(); var until=new[]{now.AddHours(options.LinkHours),prepared.Saved.PurgeAfter??DateTimeOffset.MaxValue,authorityLimit??DateTimeOffset.MaxValue}.Min(); if(until<=now)return null;
         var raw=WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
@@ -80,7 +84,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         await using var tx=await db.Database.BeginTransactionAsync(ct);
         var reader=await RedeemLockedAsync(prepared,new(located.Id,raw!,located.ExpiresAt),null,ct); if(reader is null)return null;
         // Never recover an unknown commit by replaying this consumed link into another session.
-        await tx.CommitAsync(ct);DocumentRetentionAccess.Check(reader.Deadline,time);
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);DocumentRetentionAccess.Check(reader.Deadline,time);
         return reader.Session.Identity.ExpiresAt>time.GetUtcNow() ? reader.Session : null;
     }
 
@@ -96,7 +100,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         if(!Shape(token) || token!.UsedAt is not null || token.ExpiresAt<=time.GetUtcNow() || token.ExpiresAt!=link.ExpiresAt || !Same(token.TokenSha256,hash))return null;
         var member=await Member(token,prepared.Saved,ct); if(member is null || !await Issuance(token,ct))return null;
         var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==prepared.Saved.EnvelopeId,ct);
-        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct,pilotBounds);
         var now=time.GetUtcNow(); var until=new[]{now.AddHours(options.SessionHours),sessionLimit??DateTimeOffset.MaxValue,prepared.Saved.PurgeAfter??DateTimeOffset.MaxValue,deadline??DateTimeOffset.MaxValue}.Min(); if(until<=now)return null;
         var consumed=await db.AuthTokens.Where(x=>x.Id==token.Id && x.UsedAt==null).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.UsedAt,now),ct); if(consumed!=1)return null;
         var revision=await db.AuthTokens.AsNoTracking().Where(x=>x.Id==token.Id).Select(x=>x.RowVersion).SingleAsync(ct);
@@ -115,7 +119,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         await using var tx=await db.Database.BeginTransactionAsync(ct);
         var saved=await SessionLocked(i,ct); if(saved is null)return null;
-        await tx.CommitAsync(ct);DocumentRetentionAccess.Check(saved.Deadline,time);return i.ExpiresAt>time.GetUtcNow() ? saved.View(i) : null;
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);DocumentRetentionAccess.Check(saved.Deadline,time);return i.ExpiresAt>time.GetUtcNow() ? saved.View(i) : null;
     }
 
     // Download transactions already hold the parent lock; never open a nested transaction.
@@ -135,7 +139,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         await using var tx=await db.Database.BeginTransactionAsync(ct); var saved=await SessionLocked(identity,ct);
         if(saved is null)return null; if(!saved.Saved.Matches(verified))throw Invalid();
         if(identity.ExpiresAt<=time.GetUtcNow())return null;
-        await tx.CommitAsync(ct);
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);
         DocumentRetentionAccess.Check(saved.Deadline,time);if(identity.ExpiresAt<=time.GetUtcNow())return null;
         return new(kind==FinalDocumentKind.Executed ? verified.ExecutedBytes : verified.CertificateBytes,saved.Saved.Title,
             Hex(kind==FinalDocumentKind.Executed ? verified.Executed.Sha256 : verified.Certificate.Sha256),kind);
@@ -153,7 +157,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         if(!Shape(token) || token!.UsedAt!=i.RedeemedAt || token.ExpiresAt<=i.RedeemedAt || Convert.ToBase64String(token.RowVersion)!=i.TokenRevision ||
             token.Email!=i.Email || token.PartyType!=i.Party || token.PartyId!=i.PartyId || Hex(token.CompletionPartySha256!)!=i.PartySha256)return null;
         if(await Member(token,saved,ct) is null || !await Issuance(token,ct) || !await Consumption(token,i,ct))return null;
-        var deadline=await SenderPreparationRetention.ReadAsync(db,e,time,ct);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,e,time,ct,pilotBounds);
         return i.ExpiresAt>time.GetUtcNow() ? new(saved,deadline) : null;
     }
     private async Task<CompletionAccessParty?> Member(AuthToken token,DownloadPublication saved,CancellationToken ct)

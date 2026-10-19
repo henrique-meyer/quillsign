@@ -32,7 +32,7 @@ public enum InvitationResendOutcome { Queued, AlreadyRequested, Unavailable, Inv
 public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOptions options, EmailOptions email, WorkOptions work,
     InvitationResendProtection protection, SignerInvitationProtection invitations, SignerAccess access, AuditWriter audit,
     Func<IWorkSignals> signals, TimeProvider time, InvitationLineage? lineage=null,InvitationSuccessorProtection? successors=null,
-    CanonicalInvitationResends? canonical=null)
+    CanonicalInvitationResends? canonical=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     private readonly InvitationResendRules rules = new(db, options, protection, time,successors);
     private bool Enabled => options.Enabled && email.Enabled && work.Enabled;
@@ -57,7 +57,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         if (ticketExpiresAt <= time.GetUtcNow() || scope.Value.Envelope.ExpiresAt <= time.GetUtcNow()) return null;
         var reviewed=await BuildReviewAsync(scope.Value,ct);
         DocumentRetentionAccess.Check(scope.Value.Deadline, time);
-        await tx.CommitAsync(ct); DocumentRetentionAccess.Check(scope.Value.Deadline, time);
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct); DocumentRetentionAccess.Check(scope.Value.Deadline, time);
         return Enabled && ticketExpiresAt > time.GetUtcNow() ? new(scope.Value.Envelope.Title!, reviewed, blocked) : null;
     }
     public async Task<InvitationResendOutcome> RequestAsync(ClaimsPrincipal sender, string publicId, DateTimeOffset ticketExpiresAt,
@@ -128,7 +128,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
             if(saved is null)throw InvitationResendRules.Invalid();
             if (saved.Deadline <= time.GetUtcNow()) return InvitationResendOutcome.Closed;
             if (reviewExpiresAt <= time.GetUtcNow()) return InvitationResendOutcome.Conflict;
-            await tx.CommitAsync(ct);
+            await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);
         }
         try { await signals().PublishAsync(id, TimeSpan.Zero, ct); }
         catch (Exception e) when (e is Azure.RequestFailedException or IOException or OperationCanceledException or HttpRequestException) { /* The committed hint recovers. */ }
@@ -166,7 +166,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         var envelope = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct);
         if (envelope is null || envelope.SenderEmail != email || envelope.PublicId != publicId || envelope.SenderVerifiedAt is null ||
             envelope.Status != EnvelopeStatus.Sent || envelope.ExpiresAt <= time.GetUtcNow()) return null;
-        var deadline = await SenderPreparationRetention.ReadAsync(db, envelope, time, ct);
+        var deadline = await SenderPreparationRetention.ReadAsync(db, envelope, time, ct,pilotBounds);
         _ = await SenderSentStatus.ReadSentAsync(db, envelope, null, ct);
         var current = await db.Signers.AsNoTracking().Where(x => x.EnvelopeId == id && x.Status != SignerStatus.Signed).OrderBy(x => x.Order).FirstOrDefaultAsync(ct);
         if (current is null) return null;

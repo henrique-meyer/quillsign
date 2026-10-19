@@ -11,10 +11,11 @@ public sealed class DocumentRetentionExpiredException() : Exception("This demo d
 // it grants no blob capability and performs no enrollment or maintenance.
 internal static class DocumentRetentionAccess
 {
-    internal static async Task<DateTimeOffset?> ReadAsync(QuillSignDbContext db,Envelope envelope,CancellationToken ct)
+    internal static async Task<DateTimeOffset?> ReadAsync(QuillSignDbContext db,Envelope envelope,CancellationToken ct,Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
     {
+        var access=pilotBounds is null ? null : await pilotBounds.ReadAsync(envelope,ct);
         var row=await new UploadRetention(db,new(),TimeProvider.System).ReadAsync(envelope,ct);
-        if(row is not null)return row.DeleteAfter;
+        if(row is not null)return Email.Pilot.EmailPilotReadBounds.Earlier(row.DeleteAfter,access);
         // A removed enrolled policy must not silently become an ordinary read.
         var uploads=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id && x.Event=="document_uploaded").Take(2).ToArrayAsync(ct);
         if(uploads.Length>1)throw Invalid();
@@ -30,7 +31,7 @@ internal static class DocumentRetentionAccess
             }
             catch(Exception e) when(e is JsonException or InvalidOperationException) {throw Invalid();}
         }
-        return null;
+        return access;
     }
     internal static void Check(DateTimeOffset? deadline,TimeProvider time)
     {if(deadline<=time.GetUtcNow())throw new DocumentRetentionExpiredException();}

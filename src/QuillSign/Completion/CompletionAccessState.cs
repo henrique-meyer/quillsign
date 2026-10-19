@@ -8,21 +8,23 @@ namespace QuillSign.Completion;
 internal sealed record CompletionAccessPreparation(DownloadPublication Saved,PublishedCompletion Verified,DateTimeOffset Until);
 internal sealed record CompletionAccessParty(PartyType Type,Guid? Id,string Email,byte[] Sha256);
 
-public sealed class CompletionAccessState(QuillSignDbContext db,CompletionEvidenceCollector collector,Func<CompletionPublication> publication,TimeProvider time)
+public sealed class CompletionAccessState(QuillSignDbContext db,CompletionEvidenceCollector collector,Func<CompletionPublication> publication,TimeProvider time,Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     internal async Task<CompletionAccessPreparation?> PrepareAsync(Guid id,CancellationToken ct)
     {
         if(id==Guid.Empty)return null;
         var saved=await CompletionDownloadState.ReadAsync(db,id,time,ct); if(saved is null || saved.PurgeAfter<=time.GetUtcNow())return null;
+        var pilotEnd=pilotBounds is null?null:await pilotBounds.ReadAsync(new(){Id=id},ct);
         var verified=await publication().ReadAsync(id,ct); if(verified is null || !saved.Matches(verified))throw Invalid();
-        await using var tx=await db.Database.BeginTransactionAsync(ct); await RecheckLockedAsync(saved,ct); await tx.CommitAsync(ct);
-        return new(saved,verified,new[]{time.GetUtcNow().AddMinutes(2),saved.PurgeAfter??DateTimeOffset.MaxValue}.Min());
+        await using var tx=await db.Database.BeginTransactionAsync(ct); await RecheckLockedAsync(saved,ct); await Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);
+        return new(saved,verified,new[]{time.GetUtcNow().AddMinutes(2),saved.PurgeAfter??DateTimeOffset.MaxValue,pilotEnd??DateTimeOffset.MaxValue}.Min());
     }
     internal async Task RecheckLockedAsync(DownloadPublication saved,CancellationToken ct)
     {
         if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Readonly completion scope requires its parent transaction.");
         var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={saved.EnvelopeId}").AsNoTracking().SingleOrDefaultAsync(ct);
         if(e is null || e.Status!=EnvelopeStatus.Completed || e.PurgeAfter<=time.GetUtcNow())throw Invalid();
+        if(pilotBounds is not null)await pilotBounds.ReadAsync(e,ct);
         var current=await CompletionDownloadState.ReadAsync(db,saved.EnvelopeId,time,ct);
         if(current is null || current.Id!=saved.Id || !Same(current.Recipe,saved.Recipe) || !current.Revision.AsSpan().SequenceEqual(saved.Revision) ||
             !Same(DownloadPublication.Reference(current.Executed),DownloadPublication.Reference(saved.Executed)) ||

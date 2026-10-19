@@ -45,7 +45,7 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
             _=await reviews.ReadPdf(candidate,context.Identity,ct);
             if((await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true))?.ConsentAt is null)return new(SignerFinishOutcome.InvalidContext);
             var created=existing.ProcessedAt is null && await jobs.PrepareAsync(existing,ct);
-            await transaction.CommitAsync(ct); await transaction.DisposeAsync();
+            await access.CommitAsync(transaction,ct); await transaction.DisposeAsync();
             if(created)await jobs.PublishAsync(existing.Id,ct);
             return new(SignerFinishOutcome.AlreadyAccepted,Result(existing));
         }
@@ -80,7 +80,7 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
         await jobs.PrepareAsync(accepted,ct);
         if(!Live(p,context.Identity,time.GetUtcNow()))return new(SignerFinishOutcome.InvalidReview);
         if(!access.IsLive(context))return new(SignerFinishOutcome.InvalidContext);
-        await transaction.CommitAsync(ct); await transaction.DisposeAsync(); await jobs.PublishAsync(accepted.Id,ct);
+        await access.CommitAsync(transaction,ct); await transaction.DisposeAsync(); await jobs.PublishAsync(accepted.Id,ct);
         return new(SignerFinishOutcome.Accepted,Result(accepted));
     }
     private static bool Live(SignerReviewCandidate p,VerifiedSigner identity,DateTimeOffset now)=>p.PreparedAt<=now && p.ExpiresAt>now &&

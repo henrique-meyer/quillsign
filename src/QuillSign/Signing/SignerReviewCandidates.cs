@@ -67,7 +67,7 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
                 if(!Matches(existing,state) || !await Evidence(existing,identity,ct))return null;
                 _=await ReadPdf(existing,identity,ct);
                 if(!await Live(existing,principal,publicId,ct))return null;
-                await transaction.CommitAsync(ct); committed=true; return Data(existing,identity);
+                await access.CommitAsync(transaction,ct); committed=true; return Data(existing,identity);
             }
             if(await db.SignerReviewCandidates.CountAsync(x=>x.EnvelopeId==identity.EnvelopeId && x.SignerId==identity.SignerId,ct)>=MaximumCandidatesPerSigner)
                 throw new InvalidOperationException("This request reached its signer review limit. Contact the sender.");
@@ -101,7 +101,7 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
                 candidate.RendererVersion,candidate.SnapshotVersion,candidate.ProspectiveDate,candidate.PreparedAt,candidate.ExpiresAt,
                 serverEvidence="exact_review_pdf_prepared_not_user_review_or_finish" }),PartyType.Signer,identity.SignerId);
             if(!await Live(candidate,principal,publicId,ct))return null;
-            commitStarted=true; await transaction.CommitAsync(ct); committed=true; return Data(candidate,identity);
+            commitStarted=true; await access.CommitAsync(transaction,ct); committed=true; return Data(candidate,identity);
         }
         finally
         {
@@ -116,7 +116,7 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
         var review=await ReadLockedAsync(principal,publicId,receipt,ct); if(review is null)return null;
-        await transaction.CommitAsync(ct); return new(Data(review.Candidate,review.Identity),review.Pdf);
+        await access.CommitAsync(transaction,ct); return new(Data(review.Candidate,review.Identity),review.Pdf);
     }
     internal sealed record LockedReview(SignerReviewCandidate Candidate,VerifiedSigner Identity,byte[] Pdf);
     internal async Task<LockedReview?> ReadLockedAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct)

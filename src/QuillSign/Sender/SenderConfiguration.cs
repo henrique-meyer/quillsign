@@ -26,11 +26,11 @@ public static class SenderConfiguration
         // Resolve the mutation backend only when a trusted caller invokes it.
         services.AddScoped<SenderVoid>(sp=> {
             var db=sp.GetRequiredService<QuillSignDbContext>();var clock=sp.GetRequiredService<TimeProvider>();
-            return new(db,new(db,clock),sp.GetRequiredService<AuditWriter>(),clock,sp.GetService<Func<Work.VoidNotificationJobs>>());
+            return new(db,new(db,clock),sp.GetRequiredService<AuditWriter>(),clock,sp.GetService<Func<Work.VoidNotificationJobs>>(),sp.GetService<Email.Pilot.EmailPilotReadBounds>());
         });
         services.AddScoped<SenderVoidState>(sp=> {
             var db=sp.GetRequiredService<QuillSignDbContext>();var clock=sp.GetRequiredService<TimeProvider>();
-            return new(db,new(db,clock),clock);
+            return new(db,new(db,clock),clock,sp.GetService<Email.Pilot.EmailPilotReadBounds>());
         });
         services.AddScoped<Func<SenderVoidState>>(sp=>()=>sp.GetRequiredService<SenderVoidState>());
         services.AddScoped<Func<Work.EmailOutboxWriter>>(sp => () => sp.GetRequiredService<Work.EmailOutboxWriter>());

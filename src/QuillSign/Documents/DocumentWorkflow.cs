@@ -9,7 +9,7 @@ using QuillSign.Work;
 namespace QuillSign.Documents;
 
 public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, PdfValidation pdf, DocumentOptions options,
-    AuditWriter audit, TimeProvider time, ILogger<DocumentWorkflow> logger,DemoRetentionOptions? retentionOptions=null,DemoPurgeJobs? purgeJobs=null)
+    AuditWriter audit, TimeProvider time, ILogger<DocumentWorkflow> logger,DemoRetentionOptions? retentionOptions=null,DemoPurgeJobs? purgeJobs=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     public static FileStream TemporaryFile() => new(Path.Combine(Path.GetTempPath(), "quillsign-" + Guid.NewGuid().ToString("N")),
         FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
@@ -29,7 +29,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
     public async Task<Envelope?> GetAsync(ClaimsPrincipal sender, string publicId, CancellationToken ct)
     {
         var envelope=await DraftAsync(sender,publicId,false,ct);
-        if(envelope is not null)DocumentRetentionAccess.Check(await DocumentRetentionAccess.ReadAsync(db,envelope,ct),time);
+        if(envelope is not null)DocumentRetentionAccess.Check(await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds),time);
         return envelope;
     }
 
@@ -42,7 +42,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
         var before = await DraftAsync(sender, publicId, false, ct);
         if (before is null) return false;
         Version(before, expectedVersion);
-        DocumentRetentionAccess.Check(await DocumentRetentionAccess.ReadAsync(db,before,ct),time);
+        DocumentRetentionAccess.Check(await DocumentRetentionAccess.ReadAsync(db,before,ct,pilotBounds),time);
         var safeName = Filename(filename);
         if (declaredLength <= 0 || declaredLength > options.MaximumBytes) throw new DocumentRejectedException("Choose a PDF within the upload size limit.");
         await using var original = TemporaryFile();
@@ -68,8 +68,13 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
         try
         {
             var before=await DraftAsync(sender,publicId,false,ct);if(before is null)return null;Version(before,expectedVersion);
+            DocumentRetentionAccess.Check(await DocumentRetentionAccess.ReadAsync(db,before,ct,pilotBounds),time);
             var retention=await new UploadRetention(db,retentionOptions ?? new(),time).ReadAsync(before,ct);UploadRetention.CheckDeadline(retention,time.GetUtcNow());return before;
         }
+        // Converted-upload callers have always received a rejection for an
+        // expired saved retention policy. Keep that ordinary contract while
+        // restricted-run expiry retains its separate access-denial exception.
+        catch(DocumentRetentionExpiredException) {throw new DocumentRejectedException("This demo document has reached its retention deadline.");}
         finally {await db.Database.CloseConnectionAsync();}
     }
 
@@ -140,6 +145,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             var envelope = await DraftAsync(sender, publicId, true, ct);
             if (envelope is null) throw new DocumentConflictException();
             Version(envelope, expectedVersion);
+            DocumentRetentionAccess.Check(await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds),time);
             var retention=await new UploadRetention(db,retentionOptions ?? new(),time).PrepareLockedAsync(envelope,originalBlob.ObjectId,originalHash,normalizedBlob.ObjectId,normalizedHash,ct);
             var newlyEnrolled=retention is not null && db.Entry(retention).State==EntityState.Added;
             var previous = envelope.PdfBlob;
@@ -162,7 +168,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             }
             UploadRetention.CheckDeadline(retention,time.GetUtcNow());
             commitStarted = true;
-            await transaction.CommitAsync(ct);
+            await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
         }
         catch
         {
@@ -189,7 +195,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
         var envelope = await DraftAsync(sender, publicId, true, ct);
         if (envelope is null) return false;
         Version(envelope, expectedVersion);
-        var retentionDeadline=await DocumentRetentionAccess.ReadAsync(db,envelope,ct);
+        var retentionDeadline=await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds);
         DocumentRetentionAccess.Check(retentionDeadline,time);
         if (envelope.PdfBlob is null || envelope.PdfBlob != documentId || envelope.PdfSha256 is null || envelope.PageCount is null)
             throw new DocumentConflictException();
@@ -198,7 +204,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
         await audit.AppendAsync(envelope.Id, "preview_confirmed", envelope.SenderEmail, ip, userAgent, ct,
             JsonSerializer.Serialize(new { document = documentId, pdfSha256 = Convert.ToHexStringLower(envelope.PdfSha256) }));
         DocumentRetentionAccess.Check(retentionDeadline,time);
-        await transaction.CommitAsync(ct);
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
         return true;
     }
 
@@ -211,7 +217,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
     private async Task<FileStream?> ReadVerifiedAsync(ClaimsPrincipal sender, Envelope envelope, string documentId, CancellationToken ct)
     {
         if (envelope.PdfBlob != documentId || !Guid.TryParseExact(documentId, "N", out var id)) return null;
-        var deadline=await DocumentRetentionAccess.ReadAsync(db,envelope,ct);
+        var deadline=await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds);
         DocumentRetentionAccess.Check(deadline,time);
         var file = TemporaryFile();
         try
@@ -222,6 +228,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
                 throw new InvalidDataException("Stored document verification failed.");
             ct.ThrowIfCancellationRequested();
             DocumentRetentionAccess.Check(deadline,time);
+            if(pilotBounds is not null)await pilotBounds.ReadAsync(envelope,ct);
             file.Position = 0; return file;
         }
         catch { await file.DisposeAsync(); throw; }

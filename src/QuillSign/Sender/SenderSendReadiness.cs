@@ -18,10 +18,23 @@ public sealed record SendReadiness(bool Available,string? Error,DisclosureSnapsh
 {
     public SignerReminderPolicy? Reminders {get;init;}
 }
-public sealed class SenderSendReadiness(SenderAvailability availability,ElectronicRecordDisclosure disclosures,TimeProvider time,SignerReminderOptions? reminders=null)
+public sealed class SenderSendReadiness(SenderAvailability availability,ElectronicRecordDisclosure disclosures,TimeProvider time,SignerReminderOptions? reminders=null,
+    Email.Pilot.EmailPilotEnvelopeAccess? pilot=null)
 {
     public bool CanDispatch=>availability.CanSend;
-    public SendReadiness Read(ClaimsPrincipal user,DraftReviewSnapshot draft)
+    public SendReadiness Read(ClaimsPrincipal user,DraftReviewSnapshot draft)=>ReadCore(user,draft,availability.CanSend);
+
+    public async Task<SendReadiness> ReadAsync(ClaimsPrincipal user,DraftReviewSnapshot draft,CancellationToken ct=default)
+    {
+        if(pilot is null || SendDraftWorkflow.Identity(user,draft.PublicId) is not {} identity)return Read(user,draft);
+        var cohort=await pilot.ReadAsync(identity.Id,ct);
+        if(!cohort.IsEnrolled)return Read(user,draft);
+        if(!cohort.Allowed || cohort.RunExpiresAt<=time.GetUtcNow())
+            return new(false,"This restricted test access is unavailable or has ended.",null);
+        return ReadCore(user,draft,true);
+    }
+
+    private SendReadiness ReadCore(ClaimsPrincipal user,DraftReviewSnapshot draft,bool canSend)
     {
         var identity=SendDraftWorkflow.Identity(user,draft.PublicId);
         if(identity is null)return new(false,"This verified sender session is unavailable.",null);
@@ -32,7 +45,7 @@ public sealed class SenderSendReadiness(SenderAvailability availability,Electron
         SignerReminderPolicy policy;
         try {policy=(reminders??new()).Freeze(draft.IsDemo);}
         catch(InvalidOperationException) {return new(false,"Reminder settings are unavailable. Contact this instance's operator before sending.",snapshot);}
-        return (availability.CanSend ? new SendReadiness(true,null,snapshot) : new(false,"Invitation sending is unavailable right now. Your document remains a draft.",snapshot))
+        return (canSend ? new SendReadiness(true,null,snapshot) : new(false,"Invitation sending is unavailable right now. Your document remains a draft.",snapshot))
             with {Reminders=policy};
     }
 }

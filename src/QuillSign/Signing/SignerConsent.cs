@@ -76,7 +76,7 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
                 documentSha256 = context.Identity.DocumentHash,accessReceiptId = evidence.Id,accessMethod = method,agreement,canRetain,
                 serverEvidence = "hash_verified_pdf_prepared",clientEvidence = "signer_reported_access_and_retention" }),PartyType.Signer,context.Identity.SignerId);
         if(!access.IsLive(context))return ConsentResult.InvalidContext;
-        await transaction.CommitAsync(ct); return ConsentResult.Accepted;
+        await access.CommitAsync(transaction,ct); return ConsentResult.Accepted;
     }
     public async Task<SignerReadContext?> DeclineAsync(ClaimsPrincipal principal,string publicId,string? reason,string? ip,string? ua,CancellationToken ct = default)
     {
@@ -99,7 +99,7 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
                 JsonSerializer.Serialize(new { reason,notificationId = notification,documentSha256 = context.Identity.DocumentHash,
                     disclosureSha256 = context.Identity.DisclosureHash }),PartyType.Signer,context.Identity.SignerId);
             if(!access.IsLive(context))return null;
-            await transaction.CommitAsync(ct);
+            await access.CommitAsync(transaction,ct);
         }
         await notifications.PublishAsync(notification,ct); return context;
     }
