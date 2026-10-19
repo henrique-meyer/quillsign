@@ -86,13 +86,15 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
     VerificationEmailTemplate template, IEmailSender sender, TimeProvider time,DeclinePayloadProtection? declines = null,
     DeclineEmailTemplate? declineTemplate = null,SignerInvitationDelivery? invitations = null,Func<CompletionNotificationDelivery>? completions=null,
     Func<VoidNotificationDelivery>? voids=null,Func<LookupLinkDelivery>? lookups=null,Func<InvitationResendDelivery>? resends=null,
-    Func<InvitationSuccessorDelivery>? successors=null) : IWorkHandler
+    Func<InvitationSuccessorDelivery>? successors=null,Email.Pilot.EmailPilotDispatch? pilot=null) : IWorkHandler
 {
     public WorkKind Kind => WorkKind.Email;
 
     public async Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken cancellationToken)
     {
-        if (!options.Enabled) return new(WorkOutcome.Retry, "delivery-disabled");
+        var pilotDecision=pilot is null ? null : await pilot.DecideAsync(lease,cancellationToken);
+        if(pilotDecision?.Refusal is {} refusal)return refusal;
+        if(pilotDecision is null && !options.Enabled)return new(WorkOutcome.Retry,"delivery-disabled");
         var email = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id, cancellationToken);
         if(email.Template==InvitationSuccessorProtection.Template)return await (successors?.Invoke()??throw new InvalidOperationException("Missing invitation successor delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==InvitationResendProtection.Template)return await (resends?.Invoke()??throw new InvalidOperationException("Missing invitation resend delivery.")).ExecuteAsync(lease,cancellationToken);
@@ -152,17 +154,18 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
                 if (token is null)
                 {
                     db.AuthTokens.Add(new() { Id = payload.TokenId, TokenSha256 = hash, Purpose = TokenPurpose.SenderVerify,
-                        EnvelopeId = email.EnvelopeId, Email = email.To, PartyType = PartyType.Sender, ExpiresAt = at.AddMinutes(15) });
+                        EnvelopeId = email.EnvelopeId, Email = email.To, PartyType = PartyType.Sender, ExpiresAt = Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision,at.AddMinutes(15)) });
                     await db.SaveChangesAsync(cancellationToken);
                 }
                 else
                 {
                     if (token.UsedAt is not null || token.EnvelopeId != email.EnvelopeId || token.Email != email.To || token.Purpose != TokenPurpose.SenderVerify ||
                         !CryptographicOperations.FixedTimeEquals(token.TokenSha256, hash)) throw new InvalidOperationException("Token scope is no longer available.");
-                    await db.AuthTokens.Where(x => x.Id == token.Id).ExecuteUpdateAsync(set => set.SetProperty(x => x.ExpiresAt, at.AddMinutes(15)), cancellationToken);
+                    await db.AuthTokens.Where(x => x.Id == token.Id).ExecuteUpdateAsync(set => set.SetProperty(x => x.ExpiresAt, Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision,at.AddMinutes(15))), cancellationToken);
                 }
             }
             if(retentionDeadline<=time.GetUtcNow())return new(WorkOutcome.Failed,"email-retention-expired");
+            if(pilotDecision?.Scope?.RunExpiresAt<=time.GetUtcNow())throw new EmailDisabledException();
             if(lease.Until<=time.GetUtcNow())throw new InvalidOperationException("Work lease is no longer owned.");
             await transaction.CommitAsync(cancellationToken);
         }
@@ -172,7 +175,7 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
         }
         try
         {
-            var delivery = await sender.SendAsync(outgoing, cancellationToken);
+            var delivery = pilot is null ? await sender.SendAsync(outgoing, cancellationToken) : await pilot.SendAsync(lease,outgoing, cancellationToken);
             // Late feedback can advance status; preserve it while recording the receipt.
             await db.EmailOutbox.Where(x => x.Id == lease.Id).ExecuteUpdateAsync(set => set
                 .SetProperty(x => x.Provider, delivery.Provider).SetProperty(x => x.ProviderMessageId, delivery.MessageId)
