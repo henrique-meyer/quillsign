@@ -71,7 +71,7 @@ public sealed class CompletionNotificationDelivery(QuillSignDbContext db,Complet
             return new(WorkOutcome.Completed);
         }
         catch(EmailNotSubmittedException e) {
-            return await ClearKnownUnsent(lease,payload,link?.TokenId) ? new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed,"provider-rejected") : new(WorkOutcome.Ambiguous,"completion-submission-uncertain");
+            return await ClearKnownUnsent(lease,payload,link?.TokenId) ? new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed,e.FailureCode) : new(WorkOutcome.Ambiguous,"completion-submission-uncertain");
         }
         catch(Exception e) when(e is RecipientSuppressedException or EmailDisabledException or EmailAttachmentLimitException) {
             var cleared=await ClearKnownUnsent(lease,payload,link?.TokenId);

@@ -18,6 +18,50 @@ public sealed class EmailPilotRuntimeTests(SqlDatabaseFixture fixture):IClassFix
 {
     private const string Capability="1234567890123456789012345678901234567890123";
     [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public async Task SDK_refusal_survives_actual_worker_persistence_without_private_details_refund_or_replay(bool simulator)
+    {
+        var runId=Guid.NewGuid().ToString("N"); var factories=0;
+        var config=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> {
+            ["EmailPilot:Enabled"]="true",["EmailPilot:RunId"]=runId,["EmailPilot:Admission:CapabilitySha256"]=Convert.ToHexStringLower(SHA256.HashData(Encoding.ASCII.GetBytes(Capability))),
+            ["EmailPilot:Mailboxes:Sender"]="refusal-"+runId+"@example.invalid",["EmailPilot:Mailboxes:FirstSigner"]="first@example.invalid",
+            ["EmailPilot:Mailboxes:SecondSigner"]="second@example.invalid",["EmailPilot:Mailboxes:Recipient"]="recipient@example.invalid"}).Build();
+        using var client=new SesRefusalDiagnosticsTests.RefusingSes(new Amazon.SimpleEmailV2.Model.MessageRejectedException(
+            "Email address is not verified. "+SesRefusalDiagnosticsTests.PrivateDetail) {StatusCode=System.Net.HttpStatusCode.BadRequest});
+        await using var h=await SendDraftWorkflowTests.Harness.Create(fixture,browser:true,configure:services=>{
+            services.AddRestrictedEmailPilotRuntime(config);
+            services.AddScoped<Func<EmailPilotSesSettings,IPreparedEmailTransport>>(_=>settings=>{factories++;return new SesPreparedEmailTransport(client,settings);});
+        });
+        var email=h.App.Services.GetRequiredService<EmailOptions>();email.Enabled=false;email.Provider="Ses";email.Ses.Region="us-east-1";email.Ses.ConfigurationSet="synthetic";
+        using var scope=h.App.Services.CreateScope();
+        var browser=scope.ServiceProvider.GetRequiredService<EmailPilotOperatorBrowser>();var session=Login(browser);
+        var op=scope.ServiceProvider.GetRequiredService<EmailPilotOperator>();
+        var db=scope.ServiceProvider.GetRequiredService<QuillSignDbContext>(); Guid id;
+        if(simulator) {
+            Assert.Equal(EmailPilotOperatorNotice.SimulatorSaved,await op.SimulatorAsync(session,EmailPilotSimulatorKind.Success));
+            id=EmailPilotSimulator.Identity(Guid.ParseExact(runId,"N"),EmailPilotSimulatorKind.Success);
+        } else {
+            Assert.Equal(EmailPilotOperatorNotice.EnvelopeSaved,await op.EnvelopeAsync(session,EmailPilotScenario.Completion,"192.0.2.1","Synthetic refusal test"));
+            var enrollment=await db.EmailPilotEnrollments.SingleAsync(x=>x.RunId==Guid.ParseExact(runId,"N"));
+            id=await db.EmailOutbox.Where(x=>x.EnvelopeId==enrollment.SubjectEnvelopeId).Select(x=>x.Id).SingleAsync();
+        }
+        Assert.Equal(0,factories);
+        var store=scope.ServiceProvider.GetRequiredService<WorkStore>();var lease=(await store.ClaimAsync(id,default)).Lease!;
+        var handler=scope.ServiceProvider.GetServices<IWorkHandler>().Single(x=>x.Kind==WorkKind.Email);
+        var result=await handler.ExecuteAsync(lease,default);
+        Assert.Equal(WorkOutcome.Failed,result.Outcome);Assert.Equal("provider-rejected-400-identity-unverified",result.Code);
+        await store.FinishAsync(lease,result,default);
+        var saved=await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==id);
+        Assert.Equal(EmailStatus.Failed,saved.Status);Assert.Equal(result.Code,saved.LastError);Assert.Null(saved.SubmissionStartedAt);
+        Assert.Equal(result.Code,(await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==id)).LastError);
+        Assert.False(await db.Envelopes.AnyAsync(x=>x.Id==saved.EnvelopeId&&x.SenderVerifiedAt!=null));
+        var budget=(await op.ReadAsync(session))!.Budget;
+        Assert.Equal(simulator?0:1,budget.ApplicationAttempts);Assert.Equal(simulator?1:0,budget.SimulatorAttempts);
+        Assert.True((await store.ClaimAsync(id,default)).Terminal);
+        Assert.Equal(1,client.Calls);Assert.Equal(1,factories);Assert.False(email.Enabled);
+    }
+
+    [Theory]
     [InlineData(EmailPilotScenario.Completion)][InlineData(EmailPilotScenario.Void)][InlineData(EmailPilotScenario.Decline)]
     public async Task Composed_runtime_admits_unverified_then_normal_worker_captures_counted_exact_MIME_and_real_verification(EmailPilotScenario scenario)
     {

@@ -77,7 +77,7 @@ public sealed class LookupLinkDelivery(QuillSignDbContext db, LookupDeliveryOpti
         }
         catch (EmailNotSubmittedException e) {
             await ClearAsync(lease, intentAt, intentPayload, ct, scope);
-            return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed, "provider-rejected");
+            return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed, e.FailureCode);
         }
         catch (Exception e) when (e is RecipientSuppressedException or EmailDisabledException) {
             await ClearAsync(lease, intentAt, intentPayload, ct, scope);
