@@ -1720,7 +1720,7 @@ Implement a disabled-by-default restricted operator run that can initiate normal
 
 ## QUILS-138: Schedule owned delayed restricted-pilot secret cleanup
 
-Status: In Progress. Assigned to ChatGPT Codex. Source-only dependent split from QUILS-116 using the merged QUILS-125 ledger/procedure. Exact design and touched files reviewed with root before implementation.
+Status: Done on merge after exact-head checks. Assigned to ChatGPT Codex. Source-only dependent split from QUILS-116 using the merged QUILS-125 ledger/procedure. Exact design and touched files reviewed with root before implementation.
 
 Add `EmailPilotSecretJobs.PrepareAsync(EmailPilotManifest run, ct)` with deterministic cleanup work identity, recovery and committed-publication outcome. Verify persisted immutable nonpersonal run ID, CreatedAt, DeleteAfter=CreatedAt+7days and manifest digest without decrypting contacts or accessing the key ring. Reuse WorkKind.Purge with a reserved versioned null-envelope payload and optional lazy DemoPurgeHandler pre-route, analogous to lookup contact cleanup; add no enum/table. Acquire run applock before the Work row in ledger order, persist durable hint before commit and publish only committed work; restart or lost acknowledgement recovers the same immutable item. Root116 coordinator will prepare this before any admission; no orchestration activation here.
 
