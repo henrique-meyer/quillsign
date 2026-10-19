@@ -86,12 +86,19 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
     VerificationEmailTemplate template, IEmailSender sender, TimeProvider time,DeclinePayloadProtection? declines = null,
     DeclineEmailTemplate? declineTemplate = null,SignerInvitationDelivery? invitations = null,Func<CompletionNotificationDelivery>? completions=null,
     Func<VoidNotificationDelivery>? voids=null,Func<LookupLinkDelivery>? lookups=null,Func<InvitationResendDelivery>? resends=null,
-    Func<InvitationSuccessorDelivery>? successors=null,Email.Pilot.EmailPilotDispatch? pilot=null,Email.Pilot.EmailPilotLookupAccess? pilotLookups=null) : IWorkHandler
+    Func<InvitationSuccessorDelivery>? successors=null,Email.Pilot.EmailPilotDispatch? pilot=null,
+    Func<Email.Pilot.EmailPilotSimulatorDelivery>? simulators=null,Email.Pilot.EmailPilotLookupAccess? pilotLookups=null) : IWorkHandler
 {
     public WorkKind Kind => WorkKind.Email;
 
     public async Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken cancellationToken)
     {
+        // Simulator work has no document parent. Recognize its reserved template
+        // before the envelope-only pilot decision, and never ordinary-fallback.
+        if(simulators is not null || pilot is not null || options.Enabled) {
+            var simulator=await db.EmailOutbox.AsNoTracking().AnyAsync(x=>x.Id==lease.Id && x.Template==Email.Pilot.EmailPilotSimulator.Template,cancellationToken);
+            if(simulator)return simulators is null ? new(WorkOutcome.Failed,"pilot-simulator-unavailable") : await simulators().ExecuteAsync(lease,cancellationToken);
+        }
         // Only the optional exact lookup mapping/marker may select this typed
         // null-envelope path. The lookup handler independently verifies it.
         if (pilotLookups is not null && await pilotLookups.IsKnownWorkAsync(lease.Id,cancellationToken))

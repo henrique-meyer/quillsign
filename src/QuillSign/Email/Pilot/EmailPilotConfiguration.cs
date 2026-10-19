@@ -5,6 +5,20 @@ namespace QuillSign.Email.Pilot;
 
 public static class EmailPilotConfiguration
 {
+    // Source-only; root composition supplies the approved raw transport factory
+    // and optional worker route only when the complete pilot is checked.
+    public static IServiceCollection AddEmailPilotSimulatorFoundation(this IServiceCollection services,IConfiguration configuration)
+    {
+        services.AddEmailPilotAdmissionFoundation(configuration);
+        services.AddScoped<EmailPilotSimulatorAdmission>(sp=>new(sp.GetRequiredService<EmailPilotOptions>(),sp.GetService<EmailOptions>()??new(),
+            sp.GetService<Work.WorkOptions>()??new(),sp.GetRequiredService<EmailPilotAdmissionOptions>(),
+            ()=>sp.GetRequiredService<EmailPilotLedger>(),()=>sp.GetRequiredService<Work.IWorkSignals>()));
+        services.AddScoped<EmailPilotSimulatorAuthority>(sp=>new(sp.GetRequiredService<EmailPilotOptions>(),sp.GetService<EmailOptions>()??new(),
+            sp.GetService<Work.WorkOptions>()??new(),sp.GetRequiredService<EmailPilotAdmissionOptions>(),
+            ()=>sp.GetRequiredService<EmailPilotLedger>(),sp.GetRequiredService<TimeProvider>()));
+        return services;
+    }
+
     // Source-only composition: application/worker startup still does not call it.
     public static IServiceCollection AddEmailPilotWorkScopeFoundation(this IServiceCollection services,IConfiguration configuration)
     {
