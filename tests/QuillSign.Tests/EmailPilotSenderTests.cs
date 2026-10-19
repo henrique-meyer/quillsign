@@ -54,6 +54,7 @@ public sealed class EmailPilotSenderTests(SqlDatabaseFixture fixture) : IClassFi
     [Theory]
     [InlineData("recipient")][InlineData("envelope")][InlineData("lease")][InlineData("expired")][InlineData("suppressed")]
     [InlineData("disabled")][InlineData("work-disabled")][InlineData("public-email")][InlineData("provider")][InlineData("oversize")][InlineData("cancelled")][InlineData("sender-config")]
+    [InlineData("no-intent")][InlineData("wrong-attempt")][InlineData("receipt")]
     public async Task Invalid_inputs_expiry_suppression_and_gates_never_resolve_provider(string change)
     {
         await using var h = New(); var (id, lease) = await h.Claim(); var message = h.Message(id); var factories = 0;
@@ -67,6 +68,9 @@ public sealed class EmailPilotSenderTests(SqlDatabaseFixture fixture) : IClassFi
         if (change == "public-email") h.Email.Enabled = true;
         if (change == "provider") h.Email.Provider = "Smtp";
         if (change == "sender-config") h.Email.FromEmail = "";
+        if (change == "no-intent") await h.Db.EmailOutbox.Where(x => x.Id == lease.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.SubmissionStartedAt, (DateTimeOffset?)null));
+        if (change == "wrong-attempt") await h.Db.EmailOutbox.Where(x => x.Id == lease.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Attempts, lease.Attempt + 1));
+        if (change == "receipt") await h.Db.EmailOutbox.Where(x => x.Id == lease.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.ProviderMessageId, "synthetic-existing-receipt"));
         if (change == "oversize") message = message with { Text = new string('x', PreparedRawMime.MaximumBytes) };
         using var cts = new CancellationTokenSource(); if (change == "cancelled") cts.Cancel();
         var sender = h.Sender(_ => { factories++; throw new Exception("No credentials expected"); });
@@ -157,16 +161,25 @@ public sealed class EmailPilotSenderTests(SqlDatabaseFixture fixture) : IClassFi
         var results = await Task.WhenAll(Send(), Send());
         Assert.Equal(1, calls); Assert.Single(results, x => x is null); Assert.Single(results, x => x is EmailPilotTransportRefusedException);
         Assert.Equal(1, await h.Db.EmailPilotReservations.CountAsync(x => x.SubjectEnvelopeId == id));
+        Assert.NotNull((await h.Db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id)).SubmissionStartedAt);
+        // A crash before the normal handler records its provider receipt must
+        // retain intent. Lease recovery terminates it rather than re-sending.
+        h.Clock.Now = lease.Until;
+        var recovered = await new WorkStore(h.Db, h.Work, h.Clock).ClaimAsync(lease.Id, default);
+        Assert.True(recovered.Terminal); Assert.Null(recovered.Lease);
+        Assert.Equal("submission-ambiguous", (await h.Db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id)).LastError);
+        Assert.Equal(1, calls);
     }
 
     [Theory]
-    [InlineData("retry")][InlineData("region")][InlineData("endpoint")][InlineData("sender")][InlineData("http")]
+    [InlineData("retry")][InlineData("region")][InlineData("endpoint")][InlineData("sender")][InlineData("http")][InlineData("redirect")]
     public async Task Raw_adapter_refuses_unsafe_client_or_mismatched_sender_before_sdk_call(string change)
     {
         using var client = new CaptureSes(); var settings = new EmailPilotSesSettings("sender@example.invalid", "Synthetic", "us-east-1", "synthetic");
         var prepared = await PreparedRawMime.PrepareAsync(new("recipient@example.invalid", "Synthetic", "Text", "HTML"), settings.FromEmail, settings.FromName);
         if (change == "retry") ((AmazonSimpleEmailServiceV2Config)client.Config).MaxErrorRetry = 1;
         if (change == "http") ((AmazonSimpleEmailServiceV2Config)client.Config).UseHttp = true;
+        if (change == "redirect") ((AmazonSimpleEmailServiceV2Config)client.Config).AllowAutoRedirect = true;
         if (change == "region") settings = settings with { Region = "us-east-2" };
         if (change == "endpoint") ((AmazonSimpleEmailServiceV2Config)client.Config).ServiceURL = "https://example.invalid";
         if (change == "sender") settings = settings with { FromEmail = "other@example.invalid" };
@@ -198,7 +211,12 @@ public sealed class EmailPilotSenderTests(SqlDatabaseFixture fixture) : IClassFi
             var service = new EmailPilotAdmission(Options, Admission, Email, Work, new SenderOptions(), () => new(Email, Work, config), () => Ledger,
                 () => new(Db, new EmailPilotAdmissionTests.Signals(), payload, Work, Email, Clock), () => payload, Clock);
             var admitted = (await service.RequestAsync(Capability, EmailPilotScenario.Completion))!;
-            return (admitted.EnvelopeId, (await new WorkStore(Db, Work, Clock).ClaimAsync(admitted.VerificationWorkId, default)).Lease!);
+            var lease = (await new WorkStore(Db, Work, Clock).ClaimAsync(admitted.VerificationWorkId, default)).Lease!;
+            // The transport fixture establishes its prerequisite committed
+            // intent. Normal typed handler issuance is covered separately.
+            await Db.EmailOutbox.Where(x => x.Id == lease.Id).ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.SubmissionStartedAt, Clock.Now).SetProperty(x => x.Attempts, lease.Attempt));
+            return (admitted.EnvelopeId, lease);
         }
         internal OutgoingEmail Message(Guid id) => new(Options.Mailboxes.Sender, "Synthetic non-agreement", "Text", "<p>Text</p>", id);
         internal EmailPilotSender Sender(Func<EmailPilotSesSettings,IPreparedEmailTransport> provider, Func<EmailPilotLedger>? ledger = null, QuillSignDbContext? db = null)
@@ -213,7 +231,7 @@ public sealed class EmailPilotSenderTests(SqlDatabaseFixture fixture) : IClassFi
     { public override async Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData, CancellationToken ct = default) => await after(); }
     private sealed class CaptureTransport(Action call) : IPreparedEmailTransport
     { public Task<EmailDelivery> SendAsync(PreparedRawMime message, CancellationToken ct) { ct.ThrowIfCancellationRequested(); call(); return Task.FromResult(new EmailDelivery("Synthetic", "synthetic-id")); } }
-    private sealed class CaptureSes() : AmazonSimpleEmailServiceV2Client(new AnonymousAWSCredentials(), new AmazonSimpleEmailServiceV2Config { RegionEndpoint = RegionEndpoint.USEast1, MaxErrorRetry = 0 })
+    private sealed class CaptureSes() : AmazonSimpleEmailServiceV2Client(new AnonymousAWSCredentials(), new AmazonSimpleEmailServiceV2Config { RegionEndpoint = RegionEndpoint.USEast1, MaxErrorRetry = 0, AllowAutoRedirect = false })
     {
         internal int Calls; internal SendEmailRequest? Request; internal byte[]? Bytes; internal Exception? Failure;
         public override async Task<SendEmailResponse> SendEmailAsync(SendEmailRequest request, CancellationToken cancellationToken = default)

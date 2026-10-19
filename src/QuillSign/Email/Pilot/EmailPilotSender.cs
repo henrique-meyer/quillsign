@@ -33,7 +33,7 @@ public sealed class EmailPilotSender(EmailPilotOptions options, EmailOptions ema
             scope.MailRole(message.To) is not (EmailPilotRole.Sender or EmailPilotRole.FirstSigner or EmailPilotRole.SecondSigner or EmailPilotRole.Recipient))
             throw new EmailPilotTransportRefusedException();
         var role = scope.MailRole(message.To);
-        await DemandUnsuppressed(message.To, ct);
+        await DemandReady(lease, scope.EnvelopeId, message.To, ct);
         // Serialize exactly once. Later accounting and SES consume this same
         // artifact; retrying this method cannot reopen the consumed attempt.
         var prepared = await PreparedRawMime.PrepareAsync(message, settings.FromEmail, settings.FromName, ct);
@@ -46,9 +46,11 @@ public sealed class EmailPilotSender(EmailPilotOptions options, EmailOptions ema
         // This uses an isolated committed ledger transaction. Any exception,
         // including a lost commit acknowledgement, exits before the factory.
         // The same deterministic ID also fences changed bytes or role on replay.
+        // A refusal proves nothing about a PRIOR invocation's provider outcome:
+        // callers must preserve intent rather than clear/retry on this exception.
         var outcome = await ledger().ReserveAsync(request, prepared.Recipient, ct);
         if (outcome != EmailPilotReservationOutcome.Reserved) throw new EmailPilotTransportRefusedException();
-        await DemandUnsuppressed(prepared.Recipient, ct);
+        await DemandReady(lease, scope.EnvelopeId, prepared.Recipient, ct);
         await DemandCurrent(verifier, scope, settings, ct);
         ct.ThrowIfCancellationRequested();
         // Cancellation remains bounded by the original run/lease, even while a
@@ -58,7 +60,7 @@ public sealed class EmailPilotSender(EmailPilotOptions options, EmailOptions ema
         if (remaining <= TimeSpan.Zero) throw new EmailPilotTransportRefusedException();
         bounded.CancelAfter(remaining);
         var provider = transport(settings);
-        await DemandUnsuppressed(prepared.Recipient, bounded.Token);
+        await DemandReady(lease, scope.EnvelopeId, prepared.Recipient, bounded.Token);
         await DemandCurrent(verifier, scope, settings, bounded.Token);
         bounded.Token.ThrowIfCancellationRequested();
         // No catch/refund/retry: both definite and ambiguous failures consumed
@@ -66,10 +68,16 @@ public sealed class EmailPilotSender(EmailPilotOptions options, EmailOptions ema
         return await provider.SendAsync(prepared, bounded.Token);
     }
 
-    private async Task DemandUnsuppressed(string recipient, CancellationToken ct)
+    private async Task DemandReady(WorkLease lease, Guid envelopeId, string recipient, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        if (await database().Suppressions.AsNoTracking().AnyAsync(x => x.Email == recipient, ct)) throw new RecipientSuppressedException();
+        var db = database();
+        var row = await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == lease.Id, ct);
+        if (row is null || row.EnvelopeId != envelopeId || row.To != recipient || row.Status != EmailStatus.Queued ||
+            row.SubmissionStartedAt is not { } started || started.Offset != TimeSpan.Zero || started > time.GetUtcNow() ||
+            row.Attempts != lease.Attempt || row.Provider is not null || row.ProviderMessageId is not null)
+            throw new EmailPilotTransportRefusedException();
+        if (await db.Suppressions.AsNoTracking().AnyAsync(x => x.Email == recipient, ct)) throw new RecipientSuppressedException();
     }
 
     private async Task DemandCurrent(EmailPilotWorkAuthority verifier, EmailPilotWorkScope scope, EmailPilotSesSettings settings, CancellationToken ct)

@@ -10,7 +10,7 @@ public sealed class SesPreparedEmailTransport(IAmazonSimpleEmailServiceV2 client
     public async Task<EmailDelivery> SendAsync(PreparedRawMime message, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (client.Config.MaxErrorRetry != 0 || client.Config.UseHttp || client.Config.RegionEndpoint?.SystemName != settings.Region ||
+        if (client.Config.MaxErrorRetry != 0 || client.Config.AllowAutoRedirect || client.Config.UseHttp || client.Config.RegionEndpoint?.SystemName != settings.Region ||
             !string.IsNullOrEmpty(client.Config.ServiceURL) || message.Sender != settings.FromEmail ||
             message.ByteCount is < 1 or > PreparedRawMime.MaximumBytes) throw new EmailPilotTransportRefusedException();
         using var bytes = message.OpenRead();
