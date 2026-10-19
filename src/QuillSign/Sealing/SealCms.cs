@@ -101,22 +101,41 @@ public sealed class SealCms(SealOptions options,TimestampAuthority timestamp)
         CompletionTimestampArtifact? timestampContext=null) : IDigitalSigner
     {
         public string CertificateName=>"QuillSign platform seal";
-        public Task<int> GetSignatureSizeAsync() { ct.ThrowIfCancellationRequested(); return Task.FromResult(options.SignatureCapacityBytes); }
+        private int? reservedCapacity;
+        public Task<int> GetSignatureSizeAsync()
+        {
+            ct.ThrowIfCancellationRequested();
+            if(reservedCapacity is null) {
+                // Size the same local CMS profile, including the configured certificate chain.
+                // The timestamp token is smaller than its bounded RFC 3161 response. Allow
+                // additional DER length fields and variable-length EC signatures; never call
+                // the authority, consume a timestamp allowance or exceed the configured ceiling.
+                var localBytes=CreateCms([0]).Encode().Length;
+                var bounded=checked(localBytes+options.TsaMaximumResponseBytes+1024);
+                reservedCapacity=Math.Min(options.SignatureCapacityBytes,checked((bounded+4095)/4096*4096));
+            }
+            return Task.FromResult(reservedCapacity.Value);
+        }
         public async Task<byte[]> GetSignatureAsync(Stream stream)
         {
             ct.ThrowIfCancellationRequested(); if(stream.Length is <=0 || stream.Length>options.MaximumBytes)throw new SealUnavailableException("The signed byte ranges exceed their limits.");
             // PDFsharp's RangedStream throws from CanSeek. Rewind directly and read complete bounded ranges.
             var bytes=new byte[checked((int)stream.Length)]; stream.Position=0; var offset=0;
             while(offset<bytes.Length) { ct.ThrowIfCancellationRequested(); var read=stream.Read(bytes,offset,bytes.Length-offset); if(read==0)throw new EndOfStreamException(); offset+=read; }
+            var capacity=await GetSignatureSizeAsync(); var cms=CreateCms(bytes);
+            var timestamp=await authority.RequestAsync(cms.SignerInfos[0],now,ct,timestampContext);
+            cms.SignerInfos[0].AddUnsignedAttribute(new AsnEncodedData(new Oid(TimestampOid),timestamp.Encoded));
+            var result=cms.Encode(); if(result.Length>capacity)throw new SealUnavailableException("The seal exceeds its reserved signature capacity."); return result;
+        }
+        private SignedCms CreateCms(byte[] bytes)
+        {
             var cms=new SignedCms(new ContentInfo(bytes),true); var signer=new CmsSigner(SubjectIdentifierType.IssuerAndSerialNumber,material.Certificate) {
                 DigestAlgorithm=new Oid(Sha256),IncludeOption=X509IncludeOption.EndCertOnly };
             foreach(var certificate in material.Chain)signer.Certificates.Add(certificate);
             signer.SignedAttributes.Add(new Pkcs9SigningTime(now.UtcDateTime));
             signer.SignedAttributes.Add(new AsnEncodedData(new Oid(CertificateBindingOid),new SigningCertificateV2(new EssCertIDv2(SHA256.HashData(material.Certificate.RawData))).GetDerEncoded()));
             cms.ComputeSignature(signer,true); ct.ThrowIfCancellationRequested();
-            var timestamp=await authority.RequestAsync(cms.SignerInfos[0],now,ct,timestampContext);
-            cms.SignerInfos[0].AddUnsignedAttribute(new AsnEncodedData(new Oid(TimestampOid),timestamp.Encoded));
-            var result=cms.Encode(); if(result.Length>options.SignatureCapacityBytes)throw new SealUnavailableException("The seal exceeds its reserved signature capacity."); return result;
+            return cms;
         }
     }
 }
