@@ -30,6 +30,8 @@ Capture immutable policy values independently of later mutable options; validate
 
 Acceptance: meaningful pure configuration/canonicalization/state-table/clock/tamper/prospective-change tests, warning-free build, preserved existing behavior and permissive dependencies, small checked PR/secret scan/self-merge/native Done. Source-only contract with no active configuration binding, endpoints, database schema, retention change, deletion/hold command, cloud mutation, provider call or public email. The full production readiness gate remains open in the dependent stories.
 
+Validation: all 37 focused production-policy cases pass with a warning-free Release build, covering every lifecycle clock, explicit indefinite retention, pending/incomplete disposition, prospective configuration, canonical replay/tamper/missing-field rejection and deadline overflow. No runtime registration, schema or hosted setting changed. Docker is unavailable locally; full existing SQL regression remains an exact-head CI gate.
+
 ## QUILS-151: Persist and audit frozen production retention policies
 
 Status: To Do. Assigned to ChatGPT Codex. Required production implementation; depends on QUILS-146.
