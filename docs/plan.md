@@ -2,6 +2,84 @@
 
 Tasks are recorded here and in Jira before implementation. Private deployment names, identifiers, domains, and personal configuration stay in ignored local files.
 
+## Production self-hosting release gate
+
+Owner scope confirmed on 2026-10-19: the reusable app must support self-hosting for real ordinary contracts. A successful demo/sandbox signing test does not complete this release gate. Production retention, deletion, legal holds, usable privileged operator controls and recovery acceptance are required release work; they are not deferred optional enhancements. This does not claim universal enforceability, regulated-use certification or qualified signatures.
+
+Sequence: finish the approved QUILS-139 sandbox validation, then QUILS-146, QUILS-147, QUILS-148, QUILS-149 and QUILS-150 in small dependent checked slices. Existing demo policy and the approved bounded sandbox window remain unchanged. New cloud resources, permissions, live services and actual record destruction require a concrete separately approved rollout. AI placement remains deferred. No implementation story below is complete merely because this backlog is merged.
+
+## QUILS-145: Plan production self-hosted retention deletion and legal holds
+
+Status: Planning documentation deliverable; completion requires checked documentation PR merge and native Jira Done in the same pass. Assigned to ChatGPT Codex. Implementation remains in the following To Do stories.
+
+The owner requires the reusable application to be ready for self-hosted real contracts, not merely the synthetic demo. Update the tracked implementation plan with production retention, deletion, privileged legal holds and self-hosted acceptance as required release work. Create separate dependent implementation stories with matching scope and measurable acceptance. This story delivers the backlog and planning documentation only, not the implementation or a readiness certification.
+
+Treat a successful restricted demo sandbox run as evidence for its tested configuration, not completion of the production readiness gate. Preserve the existing demo policy and approved sandbox schedule/caps. Implementation follows in small dependent checked PRs after the current signing validation; keep future stories To Do until work starts. No cloud mutation, new service, live email/timestamp, permission change, actual record deletion or legal-hold operation is authorized by this planning task.
+
+Acceptance: tracked plan and native Jira agree on the required production work, dependencies, limitations and release gates; distinguish configuration from missing implementation; preserve historical demo decisions; update ignored source-of-truth requirements with the owner decision. Validate documentation and privacy/secret checks; commit, push, create/attach and self-merge the small documentation PR after all exact-head checks pass. Move only this planning story to Done on merge; implementation stories remain open.
+
+## QUILS-146: Freeze versioned production record lifecycle policies
+
+Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
+
+Dependencies: QUILS-139, QUILS-145.
+
+Implement a production retention policy contract independent of synthetic-demo enrollment. Depends on the approved production lifecycle plan. Define operator-configured finite completion-based retention and deliberately selected indefinite retention; separately handle abandoned/unverified drafts, expiry, decline, void and failed/incomplete completion so they neither disappear prematurely nor live forever accidentally. Define the authoritative archive responsibility, retention clock and policy version for each state. Missing or inconsistent real-use configuration must not silently select the demo policy or a deletion deadline.
+
+Freeze and audit each record policy with its origin, applicable policy version, start/deadline and source evidence at the correct lifecycle boundary. Configuration changes are prospective; retention extensions or legacy migration require explicit auditable disposition, and no change may shorten existing immutable protection or rewrite signed disclosure/audit/publication evidence. Resolve indefinite retention versus case-specific legal holds explicitly. Bind real-use disclosures, access expiry, completion publication, pending work and stored protection to the saved policy while preserving historical recipe compatibility.
+
+Acceptance: table-driven state transitions, prospective config changes, legacy missing-policy handling, concurrency, deadline boundaries and corrupted-policy refusal pass; sender/signer/lookup views report actual access and retainable-copy expectations without leaking hold reasons. Existing demo and completed-packet regression cases remain valid. No guessed statutory duration or operator disclosure text. No new cloud settings, storage policies or resource grants without a separately reviewed deployment.
+
+## QUILS-147: Preserve production records with authorized durable legal holds
+
+Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
+
+Dependencies: QUILS-146.
+
+Implement durable case-scoped legal-hold commands and evidence on the production lifecycle policy foundation. Select and document an explicit operator authentication/authorization mechanism appropriate to the existing no-account participant model before implementing privileged endpoints. Ordinary sender/signer magic links must never grant hold placement, release or arbitrary archive access. Require attributable operator identity, purpose/reason and reference, exact record scope, command idempotency, protected transport, CSRF where applicable, and append-only placement/release evidence with restricted sensitive details.
+
+Preserve the complete defined evidence bundle under an active hold: original/normalized/current/final PDFs, signatures and referenced assets, disclosure snapshots, audit/acceptance/publication evidence and necessary contact/history data. Coordinate authoritative hold state with database cleanup, worker leases, object versions, storage recovery markers and provider-level protection. Fence hold placement/release against concurrent purge decisions and individual destructive operations; a hold cannot be reported effective for already deleted evidence. Reconcile uncertain commits, protection failures and partial deletion without silently clearing a hold or claiming preservation that did not occur.
+
+Release is a separate explicit privileged, reviewed and audited command. Multiple active holds require release of every relevant hold before deletion eligibility. Releasing a hold must not shorten locked storage retention, restore expired participant sessions or grant new public access; reevaluate the original retention policy without resetting its clock. Failure or inconsistent hold/protection state blocks deletion and is visible to operators. Acceptance includes unauthorized/replay/CSRF rejection, concurrent placement-versus-purge, multiple holds, restart/recovery, partial deletion and release-versus-retention cases. Actual provider permissions/policy mutations remain separately reviewed rollout work.
+
+## QUILS-148: Add private production retention and legal-hold operator controls
+
+Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
+
+Dependencies: QUILS-146, QUILS-147.
+
+Build the minimal privileged self-hosting operator workflow on the production policy and hold command foundations. Use their explicit operator authentication/authorization boundary; do not create a general document-browsing privilege for participant links or expose a public administrator signup. Provide bounded exact-record search/status, policy/deadline and preservation/deletion state, an evidence inventory/export for an authorized purpose, deliberate hold placement and separately reviewed release, and clear acknowledgement of incomplete/uncertain outcomes.
+
+Display ordinary retention, blocked deletion, active holds and actual storage protection accurately. Separate permission to administer a hold from authority to read sensitive document contents. Restrict operator identity/reasons/references and exports; use clean URLs, no-store/noindex/no-referrer responses, request bounds, rate limits, CSRF, expiring purpose-bound confirmations and immutable audit. No raw provider IDs/capabilities or actions in query strings, no implicit action on GET, bulk destructive defaults or record/session resurrection.
+
+Acceptance: real synthetic desktop/mobile/keyboard flows cover authorized status, export, hold, release and missing/wrong/expired privilege, stale state, replay, concurrency and unknown outcomes; unauthenticated/default-disabled routes expose no record metadata. Follow the local page/metadata regression runbook when implementing visible routes. This is a required production operator capability, not a demo participant feature. Keep deployment private settings and operator access configuration out of Git.
+
+## QUILS-149: Delete expired production records with hold-aware durable recovery
+
+Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
+
+Dependencies: QUILS-146, QUILS-147, QUILS-148.
+
+Extend durable lifecycle maintenance to ordinary production records after the policy, legal-hold foundation and usable privileged operator controls are ready. Define a complete owned inventory and state-specific eligibility for expired drafts, declined/voided/expired requests and completed records. Verify the saved policy, active holds and actual immutable version protection before scheduling and immediately around each destructive boundary. Preserve completed records until their retained-copy and archive commitments allow deletion; email submission alone is not proof of those commitments.
+
+Use exact opaque record/version references, conditional deletion, bounded batches/cursors, durable idempotent intents, leases/fencing and storage-only recovery rather than recurring idle SQL polling. Cover replaced/orphan assets, checkpoints, final versions, signature assets, disclosures, protected outbox/token payloads, contact/lookup records and audit data according to the reviewed retention/hold rules. Explicitly decide what minimal non-identifying tombstone is retained to reconcile late writes and prevent restoration/replay; do not erase the only authority needed for safe recovery before storage cleanup is verified.
+
+Active holds and unexpired or inconsistent protection block deletion; the worker must never shorten/remove locked retention or release holds to make progress. Reconcile SQL/Blob partial failure, cancellation, crash/restart, duplicate events, uncertain provider outcomes and late writes without exceeding scope or restoring participant access. Report logical expiry, inaccessible, pending deletion, protection/hold blocked and verified active-data cleanup separately. Soft-delete, historical versions, backups, logs and participant-held copies have explicit documented limits; do not claim universal physical erasure.
+
+Acceptance: accelerated synthetic clock plus real bounded integration/browser/operator flows demonstrate finite and indefinite policies, all terminal states, concurrent hold/release races, protected versions, retries and late-write recovery. Existing seven-day demo semantics and failure-safe cleanup remain unchanged. No actual production/cloud deletion or permission/policy rollout in source implementation without a reviewed operator-approved package.
+
+## QUILS-150: Validate production lifecycle recovery and self-hosting release readiness
+
+Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
+
+Dependencies: QUILS-139, QUILS-149.
+
+Make ordinary-contract self-hosting readiness an explicit release gate after production policy, hold, operator and deletion slices, with the current hosted signing validation as a separate prerequisite. Publish practical production setup and acceptance instructions for the supported deployment path: real operator disclosures/privacy/retention, archive responsibility, HTTPS, runtime schema/least privilege, private storage/immutability, persistent application/sealing keys and timestamp trust, worker/recovery execution, email feedback/suppression and delivery. Do not reuse the synthetic disclosure profile or describe a purchased certificate as sufficient legal readiness.
+
+Define and exercise backup/restore and key/certificate renewal/recovery with preserved historic verification and legal holds. A restored database, storage recovery marker or older backup must not silently bypass a later hold, resurrect purged public access, rerun old mail or delete based on stale policy; quarantine or explicitly reconcile inconsistent restore state before maintenance resumes. Document backup/soft-delete/log retention and legal-hold responsibilities, privacy/data-request handling, outage/retry/ambiguous-delivery procedures and monitoring without private deployment inventories. Clarify any manual operator steps and remaining unsupported capabilities rather than claiming automatic protection.
+
+Acceptance: synthetic non-demo deployment checks the full sender-to-two-signers-to-retainable-final-packet flow and exact evidence exports, actual policy-based expiry/purge, hold blocks, audited release after policy expiry, interrupted cleanup, restart, backup restoration and key/certificate transition. Complete a scoped production security/access review and the applicable existing e-signature acceptance checklist; keep ordinary-signature, mailbox-authentication and specialized-use limits explicit. A sandbox pass alone cannot close this release gate. Any hosted resource, grant, email or paid-service test requires its own concrete scoped owner approval; local fake/captured tests need no live services. AI placement remains deferred.
+
 ## QUILS-133: Allow complete local-stack CI validation within forty minutes
 
 Status: Done in PR #136 after all ten exact-head checks passed; native Jira Done. Assigned to ChatGPT Codex. CI time budget only; no application or hosted behavior change.
