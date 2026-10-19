@@ -88,7 +88,7 @@ public sealed class DemoPurgeJobs(QuillSignDbContext db,Func<IWorkSignals> signa
 }
 
 // Lazy dependencies keep empty deliveries and unrelated work free of key-ring I/O.
-public sealed class DemoPurgeHandler(QuillSignDbContext db,Func<DemoPurgeSql> sql,Func<DemoPurgeRecovery> recovery,TimeProvider time,Func<LookupContactCleanup>? lookupCleanup=null):IWorkHandler
+public sealed class DemoPurgeHandler(QuillSignDbContext db,Func<DemoPurgeSql> sql,Func<DemoPurgeRecovery> recovery,TimeProvider time,Func<LookupContactCleanup>? lookupCleanup=null,Func<QuillSign.Email.Pilot.EmailPilotSecretCleanup>? pilotCleanup=null):IWorkHandler
 {
     public WorkKind Kind=>WorkKind.Purge;
     public async Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)
@@ -98,6 +98,8 @@ public sealed class DemoPurgeHandler(QuillSignDbContext db,Func<DemoPurgeSql> sq
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         var row=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==lease.Id,ct);
         if(row is null || row.Kind!=Kind)return new(WorkOutcome.Failed,"invalid-purge-scope");
+        if(QuillSign.Email.Pilot.EmailPilotSecretJobs.IsPayload(row.PayloadJson))return pilotCleanup is null
+            ? new(WorkOutcome.Retry,"pilot-secret-cleanup-unavailable") : await pilotCleanup().ExecuteAsync(lease,ct);
         if(LookupContactRetention.IsPayload(row.PayloadJson))return lookupCleanup is null
             ? new(WorkOutcome.Retry,"lookup-cleanup-unavailable") : await lookupCleanup().ExecuteAsync(lease,ct);
         try{binding=DemoPurgeSql.ReadPayload(row.PayloadJson);if(lease.Id!=DemoPurgeJobs.WorkId(binding.Id))return new(WorkOutcome.Failed,"invalid-purge-scope");}
