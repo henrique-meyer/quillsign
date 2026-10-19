@@ -162,14 +162,14 @@ public sealed class PilotTimestampBoundaryTests(SqlDatabaseFixture fixture):ICla
     {public async Task<SealCertificateMaterial> AcquireAsync(CancellationToken ct){var value=await inner.AcquireAsync(ct);hook();return value;}}
     private sealed class LostCommit:DbTransactionInterceptor
     {public override Task TransactionCommittedAsync(DbTransaction tx,TransactionEndEventData e,CancellationToken ct=default)=>throw new IOException("Synthetic lost counter acknowledgement.");}
-    private sealed class Coordinator:ITimestampRequestCoordinator
+    internal sealed class Coordinator:ITimestampRequestCoordinator
     {
         internal int Acquires;internal bool Held;internal Action? OnAcquire;internal Action<int>? OnEnsure;
         public Task<ITimestampRequestLease> AcquireAsync(Uri uri,CancellationToken ct){Acquires++;Held=true;OnAcquire?.Invoke();return Task.FromResult<ITimestampRequestLease>(new Lease(this));}
         private sealed class Lease(Coordinator owner):ITimestampRequestLease
         {private int ensures;public CancellationToken Token=>CancellationToken.None;public Task EnsureOwnedAsync(CancellationToken ct){owner.OnEnsure?.Invoke(++ensures);ct.ThrowIfCancellationRequested();return Task.CompletedTask;}public ValueTask DisposeAsync(){owner.Held=false;return ValueTask.CompletedTask;}}
     }
-    private sealed class Harness:IAsyncDisposable
+    internal sealed class Harness:IAsyncDisposable
     {
         internal SealRun Run=null!;internal QuillSignDbContext Db=null!,AdmissionDb=null!;internal QuillSignDbContext? ReservationDatabase;
         internal EmailPilotOptions Options=new(){Enabled=true,RunId=Guid.NewGuid().ToString("N")};internal EmailOptions Email=null!;internal WorkOptions Work=null!;
