@@ -7,7 +7,7 @@ param(
     [Parameter(Mandatory)][guid]$RuntimeClientId,
     [Parameter(Mandatory)][guid]$MigrationClientId,
     [guid]$WorkerClientId,
-    [ValidateSet('provision-identities', 'provision-worker', 'migrate', 'grant-runtime', 'grant-demo-purge')]
+    [ValidateSet('provision-identities', 'provision-worker', 'migrate', 'grant-runtime', 'grant-demo-purge', 'grant-lookup-retention', 'grant-email-pilot-retention')]
     [string[]]$Operations = @('provision-identities', 'migrate', 'grant-runtime')
 )
 $ErrorActionPreference = 'Stop'
