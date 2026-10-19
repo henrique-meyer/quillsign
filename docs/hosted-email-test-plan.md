@@ -37,7 +37,7 @@ The private package contains the exact eight environment settings, existing scop
 
 ## Phase B: feedback simulator, at most ten recipient attempts
 
-Requires separate explicit authorization for the finite sending window. Keep public application email disabled.
+The owner approved this finite sending window as part of the restricted pilot package. Keep public application email disabled; no further approval is needed within the approved limits.
 
 Use only the existing scoped send-only identity and existing configuration set. Temporarily enable that set for the approved window; use tiny synthetic messages, no attachments or human recipients. Cover success, permanent bounce, complaint and one transient-bounce case where supported. Use fresh simulator labels to avoid preexisting suppression. Reserve every attempted provider submission, including definite failures/retries/unknown acknowledgements; do not refund or blindly repeat it.
 
@@ -47,7 +47,7 @@ No real mailbox address is required for this phase. Simulator messages are billa
 
 ## Phase C: private full signing pilot, at most twenty recipient attempts
 
-This phase is planned but **not activatable with current source**. Before owner approval of deployment, implement and validate the QUILS-116 disabled-by-default pilot capability with these requirements:
+The disabled-by-default QUILS-116 capability and its prerequisites are implemented and merged. The owner approved the bounded deployment and test package. QUILS-139 records deployment and actual hosted validation; source/local checks alone do not establish hosted delivery. The implemented capability has these requirements:
 
 - Public sender and lookup intake remain unavailable. Only an explicit operator-started run can request the initial verification and access its enrolled test envelopes; no anonymous test backdoor, bypass token in URLs or global sending enablement.
 - Exact owner-approved recipient allowlist, at most three explicitly enrolled synthetic envelopes, immutable run identity and UTC expiry, and a durable cross-process provider-call budget. Enforce scope in admission and immediately before every transport call. Unknown/old queued work and non-allowlisted addresses cannot obtain credentials or submit. Narrow the existing SES identity's recipient permissions as defense in depth only under separate reviewed approval.
@@ -92,7 +92,7 @@ Propose a separate **USD 1 incremental operator allowance**, with no new fixed m
 
 Disable configuration-set sending first on failure, disable the pilot/dispatch sending path, and verify all new provider submissions have stopped. Preserve protected budgets and uncertain receipts. Restore only the reviewed runtime values, leaving unrelated disclosure/retention/analytics/identity/scale/secrets intact. Remove the newly created subscription only if that rollback was approved; never delete the topic, sender identity, suppression evidence or final protected documents. Preserve the original before-state and inspect drift before restoring it. Do not broaden IAM recipient permissions during rollback without the approved original-policy restoration scope.
 
-Preparation is complete when templates/docs/private patch and deterministic costs are validated, secret-scanned, reviewed through a small PR and merged. Feedback and full-flow execution remain separate approval gates. Publish results only after real mailbox, callback, worker, attachment and final-storage evidence passes; public launch is a later decision.
+Preparation is complete when templates/docs/private patch and deterministic costs are validated, secret-scanned, reviewed through a small PR and merged. The owner has approved feedback and full-flow execution within the restricted package; do not request duplicate approval. Publish successful execution results only after real mailbox, callback, worker, attachment and final-storage evidence passes; public launch is a later decision.
 
 ## Sources
 
