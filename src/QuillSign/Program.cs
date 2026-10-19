@@ -1,5 +1,6 @@
 using QuillSign.Data;
 using QuillSign.Email;
+using QuillSign.Email.Pilot;
 using QuillSign.Work;
 using QuillSign.Storage;
 using QuillSign.Sender;
@@ -64,6 +65,7 @@ builder.Services.AddDocumentLookup(builder.Configuration);
 builder.Services.AddCompletionReaderBrowser(builder.Environment);
 builder.Services.AddDocumentLookupBrowser(builder.Environment);
 builder.Services.AddPdfVerificationBrowser(builder.Configuration);
+builder.Services.AddRestrictedEmailPilotRuntime(builder.Configuration);
 var app = builder.Build();
 app.UseForwardedHeaders();
 

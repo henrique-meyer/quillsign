@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Email;
+using QuillSign.Email.Pilot;
 using QuillSign.Storage;
 using QuillSign.Signing;
 using QuillSign.Documents;
@@ -52,6 +53,7 @@ public static class WorkCommands
                 builder.Services.AddQuillSignDatabase(builder.Configuration);
                 builder.Services.AddQuillSignStorage(builder.Configuration, builder.Environment);
                 builder.Services.AddQuillSignEmail(builder.Configuration, builder.Environment);
+                builder.Services.AddRestrictedEmailPilotRuntime(builder.Configuration);
             }
             if (args[0] == "listen" && !builder.Environment.IsDevelopment()) throw new InvalidOperationException("Listen is Development-only.");
             using var app = builder.Build();

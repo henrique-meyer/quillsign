@@ -1,0 +1,50 @@
+@page "/operator/pilot"
+@model QuillSign.Pages.Operator.PilotModel
+@{ViewData["Title"]="Restricted signing test";}
+<section class="start-card" aria-labelledby="pilot-title">
+<p class="eyebrow">Private operator access</p>
+<h1 id="pilot-title">Restricted signing test</h1>
+@if(Model.Message is not null){<p class="notice" role="status">@Model.Message</p>}
+@if(!Model.Unlocked){
+    <p>Use the private operator capability. It authorizes only the configured synthetic test; public email remains disabled.</p>
+    <form method="post" asp-page-handler="Unlock">
+        <label for="pilot-capability">Operator capability</label>
+        <input id="pilot-capability" name="Capability" type="password" autocomplete="off" maxlength="43" required />
+        <button type="submit">Open operator controls</button>
+    </form>
+}else{
+    <p>Each saved scenario is reused on retries. Continue through the normal inbox links, consent, manual placement, review and Finish screens. Use synthetic non-agreements only.</p>
+    @if(Model.Saved is {} saved){
+        <p>Fixed run deadline: <time datetime="@saved.ExpiresAt.ToString("O")">@saved.ExpiresAt.ToString("u")</time> (UTC).</p>
+        <dl>
+            <dt>Application recipient submissions</dt><dd>@saved.Budget.ApplicationAttempts / 20</dd>
+            <dt>Simulator submissions</dt><dd>@saved.Budget.SimulatorAttempts / 10</dd>
+            <dt>Timestamp attempts</dt><dd>@saved.Budget.TimestampAttempts / 4</dd>
+            <dt>Encoded mail bytes</dt><dd>@saved.Budget.EncodedBytes / 31457280</dd>
+        </dl>
+        <ul>@foreach(var item in saved.Envelopes){<li>@item.Scenario: @item.Status</li>}</ul>
+        @if(saved.Expired){<p class="notice">The run has expired. These controls cannot renew it.</p>}
+    }else{<p>No saved run is shown. The first explicit action starts its fixed sixty-minute window.</p>}
+    @if(Model.Saved?.Expired!=true){
+        <h2>Signing scenarios</h2>
+        <p>Each starts with an ordinary sender verification message to the configured sender. Roster restrictions are checked when sending.</p>
+        <form method="post" asp-page-handler="Envelope">
+            <button type="submit" name="scenario" value="Completion">Start or recover two-signer completion</button>
+            <button type="submit" name="scenario" value="Void">Start or recover sender void</button>
+            <button type="submit" name="scenario" value="Decline">Start or recover signer decline</button>
+        </form>
+        <h2>Completed document lookup</h2>
+        <p>Available after the completion scenario publishes. Sends one lookup link to the configured sender and lists only that completed packet.</p>
+        <form method="post" asp-page-handler="Lookup"><button type="submit">Request or recover lookup link</button></form>
+        <h2>SES feedback</h2>
+        <p>These use the three fixed AWS simulator destinations. No document is attached.</p>
+        <form method="post" asp-page-handler="Simulator">
+            <button type="submit" name="kind" value="Success">Request or recover delivery simulator</button>
+            <button type="submit" name="kind" value="Bounce">Request or recover bounce simulator</button>
+            <button type="submit" name="kind" value="Complaint">Request or recover complaint simulator</button>
+        </form>
+    }
+    <p><a href="/operator/pilot">Refresh saved status</a></p>
+    <form method="post" asp-page-handler="Lock"><button type="submit">Close operator controls</button></form>
+}
+</section>

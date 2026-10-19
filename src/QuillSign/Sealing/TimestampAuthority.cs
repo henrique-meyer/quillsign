@@ -45,11 +45,14 @@ public sealed class TimestampAuthority(SealOptions options,IHostEnvironment envi
                 var permit=await timestampContext.ReserveAsync(encodedRequest,timeout.Token);
                 if(lease is not null)await lease.EnsureOwnedAsync(timeout.Token);
                 await permit.DemandSendAsync(encodedRequest,timeout.Token);
+            }
+            if(timestampContext?.Work.KnownPilot==true)
+            {
                 message.Version=System.Net.HttpVersion.Version11;message.VersionPolicy=HttpVersionPolicy.RequestVersionExact;
                 message.Headers.ConnectionClose=true;
             }
             timeout.Token.ThrowIfCancellationRequested();
-            using var response=await (timestampContext is null ? http : restrictedHttp).SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
+            using var response=await (timestampContext?.Work.KnownPilot==true ? restrictedHttp : http).SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
             if(response.StatusCode!=System.Net.HttpStatusCode.OK || !string.Equals(response.Content.Headers.ContentType?.MediaType,"application/timestamp-reply",StringComparison.OrdinalIgnoreCase) ||
                 response.Content.Headers.ContentEncoding.Count!=0 || response.Content.Headers.ContentLength>options.TsaMaximumResponseBytes)
                 throw new SealUnavailableException("The timestamp service did not return a bounded timestamp response.");
