@@ -13,6 +13,18 @@ public sealed class EmailPilotOperatorTests(SqlDatabaseFixture fixture):IClassFi
 {
     private const string Capability="1234567890123456789012345678901234567890123";
     [Fact]
+    public async Task Authenticated_status_reports_only_the_protected_lower_allowance_and_does_not_renew_it()
+    {
+        await using var h=new EmailPilotAdmissionTests.Harness(fixture.Open());
+        h.Options.Allowance=new(13,7,2,31440842);var (service,_,session)=Setup(h);
+        Assert.Equal(EmailPilotOperatorNotice.EnvelopeSaved,await service.EnvelopeAsync(session,EmailPilotScenario.Completion,null,null));
+        var status=await service.ReadAsync(session);Assert.NotNull(status);
+        Assert.Equal(h.Options.Allowance,status.Allowance);Assert.Equal(new EmailPilotBudget(0,0,0,0),status.Budget);
+        Assert.Equal(status.ExpiresAt,(await service.ReadAsync(session))!.ExpiresAt);
+        h.Options.Allowance=EmailPilotLimits.Maximum;
+        await Assert.ThrowsAsync<InvalidDataException>(()=>service.ReadAsync(session));
+    }
+    [Fact]
     public async Task Status_GET_cannot_start_a_run_or_schedule_any_work()
     {
         await using var h=new EmailPilotAdmissionTests.Harness(fixture.Open());var (service,_,session)=Setup(h);

@@ -16,12 +16,7 @@
     <p>Each saved scenario is reused on retries. Continue through the normal inbox links, consent, manual placement, review and Finish screens. Use synthetic non-agreements only.</p>
     @if(Model.Saved is {} saved){
         <p>Fixed run deadline: <time datetime="@saved.ExpiresAt.ToString("O")">@saved.ExpiresAt.ToString("u")</time> (UTC).</p>
-        <dl>
-            <dt>Application recipient submissions</dt><dd>@saved.Budget.ApplicationAttempts / 20</dd>
-            <dt>Simulator submissions</dt><dd>@saved.Budget.SimulatorAttempts / 10</dd>
-            <dt>Timestamp attempts</dt><dd>@saved.Budget.TimestampAttempts / 4</dd>
-            <dt>Encoded mail bytes</dt><dd>@saved.Budget.EncodedBytes / 31457280</dd>
-        </dl>
+        <partial name="_PilotBudget" model="saved" />
         <ul>@foreach(var item in saved.Envelopes){<li>@item.Scenario: @item.Status</li>}</ul>
         @if(saved.Expired){<p class="notice">The run has expired. These controls cannot renew it.</p>}
     }else{<p>No saved run is shown. The first explicit action starts its fixed sixty-minute window.</p>}

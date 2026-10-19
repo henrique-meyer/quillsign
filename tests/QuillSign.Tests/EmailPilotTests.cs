@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using System.Data.Common;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using QuillSign.Data;
@@ -12,6 +13,51 @@ namespace QuillSign.Tests;
 
 public sealed class EmailPilotProtectionTests
 {
+    [Theory]
+    [InlineData(-1,0,0,0L)][InlineData(21,0,0,0L)][InlineData(0,-1,0,0L)][InlineData(0,11,0,0L)]
+    [InlineData(0,0,-1,0L)][InlineData(0,0,5,0L)][InlineData(0,0,0,-1L)][InlineData(0,0,0,31457281L)]
+    public void Allowances_cannot_expand_hard_limits_or_use_negative_values(int application,int simulator,int timestamp,long bytes)
+    {
+        var options=new EmailPilotOptions {Enabled=true,RunId=Guid.NewGuid().ToString("N"),Mailboxes=Mailboxes(),
+            Allowance=new(application,simulator,timestamp,bytes)};
+        Assert.Throws<InvalidOperationException>(options.Validate);
+        options.Allowance=null!; Assert.Throws<InvalidOperationException>(options.Validate);
+    }
+
+    [Fact]
+    public void Complete_lower_allowance_binds_without_SQL_and_all_zero_is_valid()
+    {
+        var values=new Dictionary<string,string?> { ["EmailPilot:Enabled"]="true",["EmailPilot:RunId"]=Guid.NewGuid().ToString("N"),
+            ["EmailPilot:Mailboxes:Sender"]="sender@example.invalid",["EmailPilot:Mailboxes:FirstSigner"]="first@example.invalid",
+            ["EmailPilot:Mailboxes:SecondSigner"]="second@example.invalid",["EmailPilot:Mailboxes:Recipient"]="recipient@example.invalid",
+            ["EmailPilot:Allowance:ApplicationAttempts"]="13",["EmailPilot:Allowance:SimulatorAttempts"]="7",
+            ["EmailPilot:Allowance:TimestampAttempts"]="2",["EmailPilot:Allowance:EncodedBytes"]="31440842" };
+        var services=new ServiceCollection(); services.AddEmailPilotFoundation(new ConfigurationBuilder().AddInMemoryCollection(values).Build());
+        using var provider=services.BuildServiceProvider(); var options=provider.GetRequiredService<EmailPilotOptions>();
+        options.Validate(); Assert.Equal(new EmailPilotBudget(13,7,2,31440842),options.Allowance);
+        options.Allowance=new(0,0,0,0); options.Validate();
+        Assert.Equal(new EmailPilotBudget(20,10,4,31457280),new EmailPilotOptions().Allowance);
+        Assert.Equal(new EmailPilotBudget(20,10,4,31457280),EmailPilotLimits.Maximum);
+        values.Remove("EmailPilot:Allowance:ApplicationAttempts");values.Remove("EmailPilot:Allowance:SimulatorAttempts");values.Remove("EmailPilot:Allowance:EncodedBytes");
+        var partial=new ConfigurationBuilder().AddInMemoryCollection(values).Build().GetSection("EmailPilot").Get<EmailPilotOptions>()!;
+        partial.Validate();Assert.Equal(new EmailPilotBudget(20,10,2,31457280),partial.Allowance);
+        Assert.Equal(new EmailPilotBudget(20,10,4,31457280),EmailPilotLimits.Maximum);
+    }
+
+    [Fact]
+    public void Legacy_manifest_canonical_bytes_are_preserved_and_new_allowance_is_protected()
+    {
+        var now=new DateTimeOffset(2026,10,18,10,0,0,TimeSpan.Zero);var id=Guid.NewGuid();var boxes=Mailboxes();var hash=new string('a',64);
+        var legacy=new {Version=EmailPilotLimits.Version,RunId=id,CreatedAt=now,ExpiresAt=now.AddMinutes(60),CapabilitySha256=hash,Mailboxes=boxes};
+        var bytes=JsonSerializer.SerializeToUtf8Bytes(legacy); var manifest=JsonSerializer.Deserialize<EmailPilotManifest>(bytes)!;
+        Assert.Null(manifest.Allowance); Assert.Equal(EmailPilotLimits.Maximum,manifest.EffectiveAllowance);
+        Assert.Equal(bytes,JsonSerializer.SerializeToUtf8Bytes(manifest));
+        var narrowed=manifest with {Allowance=new(13,7,2,31440842)};
+        Assert.NotEqual(EmailPilotCanonical.Hash(manifest),EmailPilotCanonical.Hash(narrowed));
+        var protection=new EmailPilotProtection(new EphemeralDataProtectionProvider());
+        Assert.Equal(narrowed,protection.Read<EmailPilotManifest>(id,"manifest",protection.Protect(id,"manifest",narrowed),16384));
+    }
+
     [Fact]
     public async Task Disabled_foundation_needs_no_database_key_ring_or_provider()
     {
@@ -58,6 +104,63 @@ public sealed class EmailPilotLedgerTests(SqlDatabaseFixture fixture) : IClassFi
 {
     private const string Capability = "1234567890123456789012345678901234567890123";
     private const string Hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    [Fact]
+    public async Task Legacy_protected_manifest_keeps_its_original_hash_and_does_not_adopt_new_configuration()
+    {
+        await using var run=New();await run.CreateLegacy();
+        var old=await run.Ledger.CreateAsync(Capability);Assert.Null(old.Allowance);
+        var envelope=await run.Draft();Assert.True(await run.Ledger.EnrollAsync(Capability,envelope.Id,EmailPilotScenario.Completion));
+        Assert.Equal(EmailPilotReservationOutcome.Reserved,await run.Ledger.ReserveAsync(App(envelope.Id),run.Options.Mailboxes.Sender));
+        run.Options.Allowance=new(0,0,0,0);
+        await Assert.ThrowsAsync<InvalidDataException>(()=>run.Ledger.CreateAsync(Capability));
+        run.Options.Allowance=EmailPilotLimits.Maximum;
+        Assert.Equal(new EmailPilotBudget(1,0,0,100),await run.Ledger.ReadBudgetAsync());
+        Assert.Null((await run.Ledger.CreateAsync(Capability)).Allowance);
+    }
+
+    [Theory]
+    [InlineData(EmailPilotAttemptKind.Application,2)][InlineData(EmailPilotAttemptKind.Simulator,1)][InlineData(EmailPilotAttemptKind.Timestamp,2)]
+    public async Task Concurrent_continuation_reservations_stop_at_the_protected_lower_allowance(EmailPilotAttemptKind kind,int limit)
+    {
+        await using var run=New(); run.Options.Allowance=new(2,1,2,300);var envelope=await run.Start();
+        var results=await Task.WhenAll(Enumerable.Range(0,limit+3).Select(async _=> {
+            await using var db=fixture.Open();var request=kind switch {
+                EmailPilotAttemptKind.Application=>App(envelope),
+                EmailPilotAttemptKind.Simulator=>new(Guid.NewGuid(),null,Guid.NewGuid(),kind,EmailPilotRole.Simulator,100,Hash),
+                _=>new EmailPilotReservation(Guid.NewGuid(),envelope,Guid.NewGuid(),kind,EmailPilotRole.None,0,Hash)};
+            return await run.For(db).ReserveAsync(request,kind==EmailPilotAttemptKind.Application ? run.Options.Mailboxes.Sender : null);
+        }));
+        Assert.Equal(limit,results.Count(x=>x==EmailPilotReservationOutcome.Reserved));
+        Assert.Equal(3,results.Count(x=>x==EmailPilotReservationOutcome.Refused));
+        Assert.Equal(limit,await run.Db.EmailPilotReservations.CountAsync(x=>x.RunId==run.Id));
+    }
+
+    [Fact]
+    public async Task Lower_byte_bound_zero_categories_and_consumed_status_do_not_refund_or_expand_allowance()
+    {
+        await using var run=New();run.Options.Allowance=new(2,0,0,100);var envelope=await run.Start();var request=App(envelope);
+        Assert.Equal(EmailPilotReservationOutcome.Reserved,await run.Ledger.ReserveAsync(request,run.Options.Mailboxes.Sender));
+        Assert.Equal(EmailPilotReservationOutcome.AlreadyConsumed,await run.Ledger.ReserveAsync(request,run.Options.Mailboxes.Sender));
+        Assert.Equal(EmailPilotReservationOutcome.Refused,await run.Ledger.ReserveAsync(App(envelope),run.Options.Mailboxes.Sender));
+        Assert.Equal(EmailPilotReservationOutcome.Refused,await run.Ledger.ReserveAsync(new(Guid.NewGuid(),envelope,Guid.NewGuid(),EmailPilotAttemptKind.Timestamp,EmailPilotRole.None,0,Hash),null));
+        Assert.Equal(EmailPilotReservationOutcome.Refused,await run.Ledger.ReserveAsync(new(Guid.NewGuid(),null,Guid.NewGuid(),EmailPilotAttemptKind.Simulator,EmailPilotRole.Simulator,1,Hash),null));
+        Assert.Equal(new EmailPilotBudget(1,0,0,100),await run.Ledger.ReadBudgetAsync());
+    }
+
+    [Fact]
+    public async Task Changing_any_allowance_after_creation_cannot_reopen_or_widen_the_run()
+    {
+        await using var run=New();var chosen=new EmailPilotBudget(2,1,2,300);run.Options.Allowance=chosen;var envelope=await run.Start();
+        foreach(var changed in new[]{chosen with {ApplicationAttempts=3},chosen with {SimulatorAttempts=2},chosen with {TimestampAttempts=3},chosen with {EncodedBytes=301},chosen with {TimestampAttempts=1}}) {
+            run.Options.Allowance=changed;
+            await Assert.ThrowsAsync<InvalidDataException>(()=>run.Ledger.CreateAsync(Capability));
+            await Assert.ThrowsAsync<InvalidDataException>(()=>run.Ledger.ReserveAsync(App(envelope),run.Options.Mailboxes.Sender));
+            run.Options.Allowance=chosen;
+        }
+        Assert.Equal(chosen,(await run.Ledger.CreateAsync(Capability)).Allowance);
+        Assert.Equal(new EmailPilotBudget(0,0,0,0),await run.Ledger.ReadBudgetAsync());
+    }
 
     [Fact]
     public async Task Restart_returns_original_deadline_and_cannot_renew_expired_run_or_change_configuration()
@@ -267,6 +370,16 @@ public sealed class EmailPilotLedgerTests(SqlDatabaseFixture fixture) : IClassFi
         internal Guid Id=>Guid.ParseExact(Options.RunId,"N");
         internal EmailPilotLedger Ledger=>For(Db);
         internal EmailPilotLedger For(QuillSignDbContext context)=>new(Options,Email,()=>context,()=>protection,Clock);
+        internal async Task CreateLegacy()
+        {
+            var hash=EmailPilotCanonical.Capability(Capability);
+            var manifest=new {Version=EmailPilotLimits.Version,RunId=Id,CreatedAt=Clock.Now,ExpiresAt=Clock.Now.AddMinutes(60),
+                CapabilitySha256=Convert.ToHexStringLower(hash),Mailboxes=Options.Mailboxes};
+            Db.EmailPilotRuns.Add(new(){Id=Id,CreatedAt=manifest.CreatedAt,ExpiresAt=manifest.ExpiresAt,
+                ManifestSha256=EmailPilotCanonical.Hash(manifest),CapabilitySha256=hash});
+            Db.EmailPilotSecrets.Add(new(){RunId=Id,ProtectedManifest=protection.Protect(Id,"manifest",manifest),DeleteAfter=Clock.Now.AddDays(7)});
+            await Db.SaveChangesAsync();
+        }
         internal async Task<Envelope> Draft(string? sender=null,bool demo=true)
         { var value=new Envelope{SenderEmail=sender??Options.Mailboxes.Sender,IsDemo=demo};Db.Add(value);await Db.SaveChangesAsync();return value; }
         internal async Task<Guid> Start()

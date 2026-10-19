@@ -78,15 +78,17 @@ public sealed class EmailPilotSenderTests(SqlDatabaseFixture fixture) : IClassFi
         Assert.Equal(0, factories); Assert.False(await h.Db.EmailPilotReservations.AnyAsync(x => x.SubjectEnvelopeId == id));
     }
 
-    [Fact]
-    public async Task Exhausted_application_budget_cannot_resolve_credentials_or_add_a_reservation()
+    [Theory]
+    [InlineData(20)][InlineData(1)][InlineData(0)]
+    public async Task Exhausted_application_budget_cannot_resolve_credentials_or_add_a_reservation(int limit)
     {
-        await using var h = New(); var (id, lease) = await h.Claim(); var factories = 0;
-        for (var i = 0; i < EmailPilotLimits.ApplicationAttempts; i++)
+        await using var h = New(); h.Options.Allowance=EmailPilotLimits.Maximum with {ApplicationAttempts=limit};
+        var (id, lease) = await h.Claim(); var factories = 0;
+        for (var i = 0; i < limit; i++)
             Assert.Equal(EmailPilotReservationOutcome.Reserved, await h.Ledger.ReserveAsync(new(Guid.NewGuid(), id, Guid.NewGuid(),
                 EmailPilotAttemptKind.Application, EmailPilotRole.Sender, 1, new string('a', 64)), h.Options.Mailboxes.Sender));
         await Assert.ThrowsAsync<EmailPilotTransportRefusedException>(() => h.Sender(_ => { factories++; throw new Exception("No credentials"); }).SendAsync(lease, h.Message(id)));
-        Assert.Equal(0, factories); Assert.Equal(EmailPilotLimits.ApplicationAttempts, (await h.Ledger.ReadBudgetAsync())!.ApplicationAttempts);
+        Assert.Equal(0, factories); Assert.Equal(limit, (await h.Ledger.ReadBudgetAsync())!.ApplicationAttempts);
     }
 
     [Fact]

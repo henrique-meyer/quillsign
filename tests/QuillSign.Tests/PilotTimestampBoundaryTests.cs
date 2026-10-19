@@ -46,10 +46,11 @@ public sealed class PilotTimestampBoundaryTests(SqlDatabaseFixture fixture):ICla
 {
     private const string Capability="1234567890123456789012345678901234567890123";
 
-    [Fact]
-    public async Task Admitted_verified_two_signer_chain_seals_exact_pair_and_reads_spend_nothing_then_replay_is_denied()
+    [Theory]
+    [InlineData(2)][InlineData(4)]
+    public async Task Admitted_verified_two_signer_chain_seals_exact_pair_and_reads_spend_nothing_then_replay_is_denied(int limit)
     {
-        await using var h=await Harness.Create(fixture);var context=await h.Context();
+        await using var h=await Harness.Create(fixture,EmailPilotLimits.Maximum with {TimestampAttempts=limit});var context=await h.Context();
         h.Run.Seal.RequestObserved=()=>Assert.True(h.Coordinator.Held);
         var pair=Assert.IsType<CompletionSealPair>(await h.Outputs.PrepareAsync(h.Id,timestampWork:context));
         Assert.Equal(2,h.Run.Seal.Requests);Assert.Equal(2,(await h.Ledger.ReadBudgetAsync())!.TimestampAttempts);
@@ -126,14 +127,15 @@ public sealed class PilotTimestampBoundaryTests(SqlDatabaseFixture fixture):ICla
         Assert.Equal(0,h.Run.Seal.Requests);Assert.Equal(1,(await h.Ledger.ReadBudgetAsync())!.TimestampAttempts);
     }
 
-    [Fact]
-    public async Task Four_attempt_ceiling_is_enforced_after_coordinator_and_before_any_HTTP()
+    [Theory]
+    [InlineData(0)][InlineData(1)][InlineData(2)][InlineData(4)]
+    public async Task Chosen_attempt_ceiling_is_enforced_after_coordinator_and_before_any_HTTP(int limit)
     {
-        await using var h=await Harness.Create(fixture);var work=await h.Context();var source=h.Run.Candidate.Packet.Bytes;
+        await using var h=await Harness.Create(fixture,EmailPilotLimits.Maximum with {TimestampAttempts=limit});var work=await h.Context();var source=h.Run.Candidate.Packet.Bytes;
         var artifact=await h.Boundary.BindArtifactAsync(work,h.Run.Candidate.Id,CompletionSealKind.Executed,SHA256.HashData(source),null,null);
-        for(var i=0;i<4;i++){var id=Guid.NewGuid();Assert.Equal(EmailPilotReservationOutcome.Reserved,await h.Ledger.ReserveAsync(new(id,h.Id,id,EmailPilotAttemptKind.Timestamp,EmailPilotRole.None,0,new string('a',64)),null));}
+        for(var i=0;i<limit;i++){var id=Guid.NewGuid();Assert.Equal(EmailPilotReservationOutcome.Reserved,await h.Ledger.ReserveAsync(new(id,h.Id,id,EmailPilotAttemptKind.Timestamp,EmailPilotRole.None,0,new string('a',64)),null));}
         await Assert.ThrowsAsync<PilotTimestampDeniedException>(()=>h.Engine.SealAsync(source,SHA256.HashData(source),timestampContext:artifact));
-        Assert.Equal(1,h.Coordinator.Acquires);Assert.Equal(0,h.Run.Seal.Requests);Assert.Equal(4,(await h.Ledger.ReadBudgetAsync())!.TimestampAttempts);
+        Assert.Equal(1,h.Coordinator.Acquires);Assert.Equal(0,h.Run.Seal.Requests);Assert.Equal(limit,(await h.Ledger.ReadBudgetAsync())!.TimestampAttempts);
     }
 
     [Fact]
@@ -181,9 +183,9 @@ public sealed class PilotTimestampBoundaryTests(SqlDatabaseFixture fixture):ICla
         internal EmailPilotLedger LedgerFor(QuillSignDbContext db)=>new(Options,Email,()=>db,()=>new(Keys),Run.Signing.H.Clock);
         internal EmailPilotWorkAuthority Authority()=>new(Options,Email,Work,Admission,()=>Ledger,()=>Db,()=>Payload,Run.Signing.H.Clock);
         internal Task<CompletionTimestampWork> Context()=>Boundary.ReadCompletionAsync(Lease,Id,Db.WorkItems.AsNoTracking().Single(x=>x.Id==Lease.Id).PayloadJson);
-        internal static async Task<Harness> Create(SqlDatabaseFixture fixture)
+        internal static async Task<Harness> Create(SqlDatabaseFixture fixture,EmailPilotBudget? allowance=null)
         {
-            var h=new Harness();var sender="pilot-tsa-"+h.Options.RunId+"@example.invalid";
+            var h=new Harness();h.Options.Allowance=allowance??EmailPilotLimits.Maximum;var sender="pilot-tsa-"+h.Options.RunId+"@example.invalid";
             h.Options.Mailboxes=new(sender,"first@example.invalid","second@example.invalid","recipient@example.invalid");
             h.Run=await SealRun.Create(fixture,mailbox:sender,signerMailbox:i=>i==1?h.Options.Mailboxes.FirstSigner:h.Options.Mailboxes.SecondSigner,
                 recipientMailbox:h.Options.Mailboxes.Recipient,requestSender:async(shared,_)=>{

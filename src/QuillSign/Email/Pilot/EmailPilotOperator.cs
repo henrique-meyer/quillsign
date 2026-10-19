@@ -5,7 +5,10 @@ namespace QuillSign.Email.Pilot;
 
 public sealed record EmailPilotOperatorEnvelope(EmailPilotScenario Scenario, EnvelopeStatus Status);
 public sealed record EmailPilotOperatorStatus(DateTimeOffset ExpiresAt, EmailPilotBudget Budget,
-    IReadOnlyList<EmailPilotOperatorEnvelope> Envelopes, bool Expired);
+    IReadOnlyList<EmailPilotOperatorEnvelope> Envelopes, bool Expired)
+{
+    public EmailPilotBudget Allowance { get; init; } = EmailPilotLimits.Maximum;
+}
 
 public sealed partial class EmailPilotLedger
 {
@@ -25,8 +28,8 @@ public sealed partial class EmailPilotLedger
             saved.Add(new(item.Scenario,parent.Status));
         }
         var budget=Budget(await Reservations(db,run,ct));
-        if(!Enabled || run.RunId!=RunId || run.Mailboxes!=options.Mailboxes)throw EmailPilotProtection.Invalid();
-        return new(run.ExpiresAt,budget,saved,run.ExpiresAt<=Now);
+        if(!Enabled || run.RunId!=RunId || run.Mailboxes!=options.Mailboxes || run.EffectiveAllowance!=options.Allowance)throw EmailPilotProtection.Invalid();
+        return new(run.ExpiresAt,budget,saved,run.ExpiresAt<=Now) {Allowance=run.EffectiveAllowance};
     }
 }
 
