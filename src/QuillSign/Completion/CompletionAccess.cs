@@ -44,13 +44,16 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
     // Delivery verifies before its transaction and returns raw transport only in memory.
     // The caller owns issuance, submission-intent commit and uncertain-outcome recovery.
     internal Task<CompletionAccessPreparation?> PrepareAsync(Guid envelopeId,CancellationToken ct)=>state.PrepareAsync(envelopeId,ct);
-    internal async Task<CompletionAccessLink?> PrepareLockedAsync(CompletionAccessPreparation prepared,PartyType party,Guid? partyId,CancellationToken ct)
+    internal Task<CompletionAccessLink?> PrepareLockedAsync(CompletionAccessPreparation prepared,PartyType party,Guid? partyId,CancellationToken ct)=>
+        PrepareBoundedLockedAsync(prepared,party,partyId,ct,null);
+
+    internal async Task<CompletionAccessLink?> PrepareBoundedLockedAsync(CompletionAccessPreparation prepared,PartyType party,Guid? partyId,CancellationToken ct,DateTimeOffset? authorityLimit)
     {
         options.Validate(); if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Completion token preparation requires its caller's transaction.");
         if(prepared.Until<=time.GetUtcNow())return null;
         await state.RecheckLockedAsync(prepared.Saved,ct);
         var member=await state.PartyLockedAsync(prepared.Saved,party,partyId,ct); if(member is null)return null;
-        var now=time.GetUtcNow(); var until=new[]{now.AddHours(options.LinkHours),prepared.Saved.PurgeAfter??DateTimeOffset.MaxValue}.Min(); if(until<=now)return null;
+        var now=time.GetUtcNow(); var until=new[]{now.AddHours(options.LinkHours),prepared.Saved.PurgeAfter??DateTimeOffset.MaxValue,authorityLimit??DateTimeOffset.MaxValue}.Min(); if(until<=now)return null;
         var raw=WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var token=new AuthToken {EnvelopeId=prepared.Saved.EnvelopeId,PartyType=party,PartyId=partyId,Email=member.Email,Purpose=TokenPurpose.CompletionAccess,
             CompletionPublicationId=prepared.Saved.Id,CompletionRecipeSha256=prepared.Saved.Recipe.ToArray(),CompletionPartySha256=member.Sha256.ToArray(),
