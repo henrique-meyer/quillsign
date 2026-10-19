@@ -1,15 +1,15 @@
 # Additional Office format support
 
-This is a source implementation plan, not an announcement of hosted format availability. Public intake accepts PDF, supported PNG/JPEG and configured DOCX. QUILS-92 implements internal strict UTF-8 text conversion; QUILS-106 adds separately opt-in sender TXT intake with defaults disabled. QUILS-98 assessed the remaining families on 2026-10-18; the matched stories below are deliberately separate gates.
+This is a source implementation plan, not an announcement of hosted format availability. Default intake accepts PDF, supported PNG/JPEG and configured DOCX; the additional profiles below require their explicit intake switches. QUILS-92 implements internal strict UTF-8 text conversion; QUILS-106 adds separately opt-in sender TXT intake with defaults disabled. QUILS-98 assessed the remaining families on 2026-10-18; the matched stories below are deliberately separate gates.
 
-| Format | Current boundary | Next scoped story | Main constraint |
+| Format | Current boundary | Source stories | Main constraint |
 | --- | --- | --- | --- |
 | TXT | Optional sender intake implemented; default disabled | QUILS-106 | Persist exact UTF-8 original and confirm normalized PDF; never format-sniff raw text |
-| PPTX | Default-disabled [internal static component](static-pptx.md); public intake rejected | QUILS-107 | Static PresentationML part/relationship allowlist; exclude actions, media and embedded workbooks |
-| XLSX | Default-disabled [internal values-only component](values-xlsx.md); public intake rejected | QUILS-108 | Values-only cells with bounded print ranges; exclude every formula, refresh source and hidden-content ambiguity |
-| ODT | Default-disabled [internal static component](static-odt.md); public intake rejected | QUILS-109 | Independent ODF manifest, namespace and resource validation; not a renamed DOCX gate |
-| RTF | Default-disabled [internal literal formatting component](static-rtf.md); public intake rejected | QUILS-110 | Grammar-aware literal/static subset serialized into owned DOCX; unknown destinations fail closed |
-| DOC | Rejected | QUILS-111 | Defensible Compound File Binary/WordBinary parser decision before any enablement |
+| PPTX | Default-disabled [guarded static intake](static-pptx.md) | QUILS-107, QUILS-124 | Static PresentationML part/relationship allowlist; exclude actions, media and embedded workbooks |
+| XLSX | Default-disabled [guarded values-only intake](values-xlsx.md) | QUILS-108, QUILS-124 | Values-only cells with bounded print ranges; exclude every formula, refresh source and hidden-content ambiguity |
+| ODT | Default-disabled [guarded static intake](static-odt.md) | QUILS-109, QUILS-124 | Independent ODF manifest, namespace and resource validation; not a renamed DOCX gate |
+| RTF | Default-disabled [guarded literal-formatting intake](static-rtf.md) | QUILS-110, QUILS-124 | Grammar-aware literal/static subset serialized into owned DOCX; unknown destinations fail closed |
+| DOC | Rejected; [release no-go decision](legacy-doc.md) | QUILS-111 | No reviewed permissive WordBinary content gate; export to PDF |
 
 The order is TXT integration, PPTX, values-only XLSX, ODT, conservative RTF, then legacy DOC feasibility. A converter being able to import a suffix does not establish that the application safely accepts its content. Neither a MIME label nor a file signature is an acceptance rule.
 
