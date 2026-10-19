@@ -184,6 +184,20 @@ public sealed class EmailPilotSimulatorTests(SqlDatabaseFixture fixture):IClassF
         await Assert.ThrowsAsync<EmailPilotTransportRefusedException>(()=>h.Sender(_=>{factories++;return new Capture();}).SendAsync(lease));
         Assert.Equal(0,factories);Assert.Equal(1,(await h.Ledger.ReadBudgetAsync())!.SimulatorAttempts);
     }
+    [Fact]
+    public async Task Lost_submission_intent_commit_acknowledgement_preserves_intent_without_provider_call()
+    {
+        await using var h=New();var lease=await h.Claim();var factories=0;
+        await using(var db=new QuillSignDbContext(new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer(h.Db.Database.GetConnectionString())
+            .AddInterceptors(new LostCommit(1)).Options)) {
+            var authority=new EmailPilotSimulatorAuthority(h.Options,h.Email,h.Work,h.Admission,()=>h.LedgerFor(db),h.Clock);
+            var delivery=new EmailPilotSimulatorDelivery(db,authority,()=>{factories++;throw new Exception("No provider after lost intent acknowledgement");},h.Clock);
+            await Assert.ThrowsAsync<IOException>(()=>delivery.ExecuteAsync(lease));
+        }
+        Assert.NotNull(await h.Db.EmailOutbox.Where(x=>x.Id==lease.Id).Select(x=>x.SubmissionStartedAt).SingleAsync());
+        Assert.Equal(WorkOutcome.Ambiguous,(await h.Delivery(_=>{factories++;return new Capture();}).ExecuteAsync(lease)).Outcome);
+        Assert.Equal(0,factories);Assert.Equal(0,(await h.Ledger.ReadBudgetAsync())!.SimulatorAttempts);
+    }
     [Theory]
     [InlineData("expiry")][InlineData("operator")][InlineData("public-email")][InlineData("settings")]
     public async Task Changes_after_reservation_commit_consume_attempt_but_never_resolve_credentials(string change)
