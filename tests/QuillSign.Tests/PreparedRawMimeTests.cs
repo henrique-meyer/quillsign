@@ -29,8 +29,8 @@ public sealed class PreparedRawMimeTests
         Assert.Equal("Équipe 日本語 🔏", Assert.Single(parsed.From.Mailboxes).Name);
         Assert.Equal(Sender, Assert.Single(parsed.From.Mailboxes).Address);
         Assert.Equal(Recipient, Assert.Single(parsed.To.Mailboxes).Address);
-        Assert.Equal(message.Text, parsed.TextBody);
-        Assert.Equal(message.Html, parsed.HtmlBody);
+        Assert.Equal(Lines(message.Text), Lines(parsed.TextBody));
+        Assert.Equal(Lines(message.Html), Lines(parsed.HtmlBody));
         Assert.Equal(prepared.MessageId, parsed.MessageId);
         Assert.EndsWith("@quillsign.invalid", parsed.MessageId);
         Assert.Equal(envelope.ToString("N"), parsed.Headers["X-QuillSign-Envelope"]);
@@ -113,7 +113,7 @@ public sealed class PreparedRawMimeTests
         var text = "NO AGREEMENT\r\n\r\nBcc: other@example.invalid\r\nContent-Type: multipart/mixed; boundary=pretend\r\n--pretend\r\nPRIVATE-MARKER";
         var prepared = await Prepare(Message(text, "<p>" + text + "</p>"));
         using var input = prepared.OpenRead(); using var parsed = await MimeMessage.LoadAsync(input);
-        Assert.Equal(text, parsed.TextBody); Assert.Equal("<p>" + text + "</p>", parsed.HtmlBody);
+        Assert.Equal(Lines(text), Lines(parsed.TextBody)); Assert.Equal(Lines("<p>" + text + "</p>"), Lines(parsed.HtmlBody));
         Assert.Empty(parsed.Bcc); Assert.Single(parsed.To); Assert.Empty(parsed.Attachments);
         Assert.Equal(2, Assert.IsType<MultipartAlternative>(parsed.Body).Count);
     }
@@ -209,6 +209,9 @@ public sealed class PreparedRawMimeTests
     {
         var bytes = new byte[length]; Pdf.CopyTo(bytes, 0); return bytes;
     }
+    // MimeKit's text accessor uses the platform newline convention after decoding.
+    // Serialized wire CRLF and exact decoded attachment bytes are asserted separately.
+    private static string Lines(string? text) => Assert.IsType<string>(text).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
     private sealed class ChangingFiles(PdfEmailAttachment first, PdfEmailAttachment second, Action change) : IReadOnlyList<PdfEmailAttachment>
     {
         private PdfEmailAttachment current = first;
