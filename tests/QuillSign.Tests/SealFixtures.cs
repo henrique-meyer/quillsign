@@ -25,7 +25,7 @@ internal sealed class SealFixtures : IAsyncDisposable
     public TimestampAuthority Timestamps=null!; public CountingProvider Certificates=null!; public PlatformPdfSeal Engine=null!;
     public X509Certificate2 Root=null!,Tsa=null!,Seal=null!,BadEku=null!; public RSA RootKey=null!,TsaKey=null!;
     public TimeStampTokenGenerator Tokens=null!; public string Mode="valid"; public int Requests,RedirectRequests,CookieRequests;
-    public Action? RequestObserved;
+    public Action? RequestObserved; public List<byte[]> RequestBodies=[];
     private string directory="";
     public static async Task<SealFixtures> Create(string certificateKind="valid",string tsaKind="valid",DateTimeOffset? initialTime=null)
     {
@@ -77,7 +77,7 @@ internal sealed class SealFixtures : IAsyncDisposable
         if(Mode=="slow") { await Task.Delay(TimeSpan.FromSeconds(10),context.RequestAborted); return; }
         if(Mode=="malformed") { await context.Response.Body.WriteAsync(new byte[]{1,2,3}); return; }
         if(Mode is "large" or "chunked-large") { if(Mode=="large")context.Response.ContentLength=Options.TsaMaximumResponseBytes+1; await context.Response.Body.WriteAsync(new byte[Options.TsaMaximumResponseBytes+1]); return; }
-        using var memory=new MemoryStream(); await context.Request.Body.CopyToAsync(memory); var request=new TimeStampRequest(memory.ToArray());
+        using var memory=new MemoryStream(); await context.Request.Body.CopyToAsync(memory); var requestBytes=memory.ToArray(); lock(RequestBodies)RequestBodies.Add(requestBytes); var request=new TimeStampRequest(requestBytes);
         if(Mode is "imprint" or "nonce" or "algorithm") { var generator=new TimeStampRequestGenerator(); generator.SetCertReq(true);
             request=generator.Generate(Mode=="algorithm" ? TspAlgorithms.Sha384 : TspAlgorithms.Sha256,Mode=="imprint" ? new byte[32] : Mode=="algorithm" ? new byte[48] : request.GetMessageImprintDigest(),Mode=="nonce" ? request.Nonce.Add(Org.BouncyCastle.Math.BigInteger.One) : request.Nonce); }
         var at=Time.GetUtcNow()+(Mode=="stale" ? TimeSpan.FromMinutes(-10) : Mode=="future" ? TimeSpan.FromMinutes(10) : TimeSpan.Zero);

@@ -6,29 +6,50 @@ using Org.BouncyCastle.Cms;
 using Org.BouncyCastle.Tsp;
 using Org.BouncyCastle.X509;
 using QuillSign.Documents;
+using QuillSign.Email.Pilot;
 
 namespace QuillSign.Sealing;
 
 public sealed record VerifiedTimestamp(byte[] Encoded,DateTimeOffset At,string CertificateSha256,string Policy);
 
-public sealed class TimestampAuthority(SealOptions options,IHostEnvironment environment,TimeProvider time,Func<ITimestampRequestCoordinator>? coordinator=null) : IDisposable
+public sealed class TimestampAuthority(SealOptions options,IHostEnvironment environment,TimeProvider time,Func<ITimestampRequestCoordinator>? coordinator=null,
+    PilotTimestampPolicy? pilotPolicy=null) : IDisposable
 {
     private readonly HttpClient http=new(new HttpClientHandler { AllowAutoRedirect=false,UseCookies=false }) { Timeout=Timeout.InfiniteTimeSpan };
-    public async Task<VerifiedTimestamp> RequestAsync(SignerInfo signature,DateTimeOffset startedAt,CancellationToken ct)
+    private readonly HttpClient restrictedHttp=new(new HttpClientHandler { AllowAutoRedirect=false,UseCookies=false,UseProxy=false }) { Timeout=Timeout.InfiniteTimeSpan };
+    public async Task<VerifiedTimestamp> RequestAsync(SignerInfo signature,DateTimeOffset startedAt,CancellationToken ct,
+        CompletionTimestampArtifact? timestampContext=null)
     {
+        ct.ThrowIfCancellationRequested();
+        if(pilotPolicy is not null && timestampContext is null)throw new PilotTimestampDeniedException();
+        if(timestampContext is not null)await timestampContext.DemandAsync(timestampContext.SourceHash,ct);
         var address=options.Validate(environment.IsDevelopment());
         options.ValidateRequestCoordination(address);
+        if(timestampContext?.Work.KnownPilot==true && (!options.TimestampCoordination.Enabled || options.TimestampCoordination.MinimumIntervalMilliseconds<1000))
+            throw new PilotTimestampDeniedException();
         var request=Rfc3161TimestampRequest.CreateFromSignerInfo(signature,HashAlgorithmName.SHA256,
             nonce:RandomNumberGenerator.GetBytes(16),requestSignerCertificates:true);
+        var encodedRequest=request.Encode();
         await using var lease=options.TimestampCoordination.Enabled
             ? await (coordinator?.Invoke() ?? throw new SealUnavailableException("Shared timestamp coordination is not configured.")).AcquireAsync(address,ct) : null;
-        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct,lease?.Token ?? CancellationToken.None);timeout.CancelAfter(TimeSpan.FromSeconds(options.TsaTimeoutSeconds));
+        var remaining=timestampContext is null ? TimeSpan.Zero : timestampContext.Until-timestampContext.Clock.GetUtcNow();
+        using var scopeDeadline=timestampContext is null ? null : new CancellationTokenSource(remaining>TimeSpan.Zero ? remaining : TimeSpan.Zero,timestampContext.Clock);
+        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct,lease?.Token ?? CancellationToken.None,scopeDeadline?.Token ?? CancellationToken.None);
+        timeout.CancelAfter(TimeSpan.FromSeconds(options.TsaTimeoutSeconds));
         try {
-            using var body=new ByteArrayContent(request.Encode()); body.Headers.ContentType=new MediaTypeHeaderValue("application/timestamp-query");
+            using var body=new ByteArrayContent(encodedRequest); body.Headers.ContentType=new MediaTypeHeaderValue("application/timestamp-query");
             using var message=new HttpRequestMessage(HttpMethod.Post,address) { Content=body };
             if(lease is not null)await lease.EnsureOwnedAsync(timeout.Token);
+            if(timestampContext is not null)
+            {
+                var permit=await timestampContext.ReserveAsync(encodedRequest,timeout.Token);
+                if(lease is not null)await lease.EnsureOwnedAsync(timeout.Token);
+                await permit.DemandSendAsync(encodedRequest,timeout.Token);
+                message.Version=System.Net.HttpVersion.Version11;message.VersionPolicy=HttpVersionPolicy.RequestVersionExact;
+                message.Headers.ConnectionClose=true;
+            }
             timeout.Token.ThrowIfCancellationRequested();
-            using var response=await http.SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
+            using var response=await (timestampContext is null ? http : restrictedHttp).SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
             if(response.StatusCode!=System.Net.HttpStatusCode.OK || !string.Equals(response.Content.Headers.ContentType?.MediaType,"application/timestamp-reply",StringComparison.OrdinalIgnoreCase) ||
                 response.Content.Headers.ContentEncoding.Count!=0 || response.Content.Headers.ContentLength>options.TsaMaximumResponseBytes)
                 throw new SealUnavailableException("The timestamp service did not return a bounded timestamp response.");
@@ -36,7 +57,9 @@ public sealed class TimestampAuthority(SealOptions options,IHostEnvironment envi
             await input.CopyToAsync(new BoundedDocumentStream(memory,options.TsaMaximumResponseBytes),timeout.Token);
             var encoded=memory.ToArray(); var token=request.ProcessResponse(encoded,out var consumed);
             if(consumed!=encoded.Length)throw new CryptographicException();
-            return await ValidateAsync(token.AsSignedCms().Encode(),signature,startedAt,timeout.Token);
+            var result=await ValidateAsync(token.AsSignedCms().Encode(),signature,startedAt,timeout.Token);
+            if(timestampContext is not null)await timestampContext.DemandAsync(timestampContext.SourceHash,timeout.Token);
+            return result;
         }
         catch(OperationCanceledException) when(!ct.IsCancellationRequested) { throw new SealUnavailableException("The timestamp service timed out; no seal was returned."); }
         catch(Exception e) when(e is HttpRequestException or IOException or DocumentRejectedException or CryptographicException or Org.BouncyCastle.Tsp.TspException or Org.BouncyCastle.Security.GeneralSecurityException or ArgumentException)
@@ -77,5 +100,5 @@ public sealed class TimestampAuthority(SealOptions options,IHostEnvironment envi
         finally { foreach(var root in roots)root.Dispose(); }
         ct.ThrowIfCancellationRequested(); return new(encoded,at,Convert.ToHexStringLower(SHA256.HashData(actual.RawData)),bc.TimeStampInfo.Policy);
     }
-    public void Dispose()=>http.Dispose();
+    public void Dispose(){http.Dispose();restrictedHttp.Dispose();}
 }
