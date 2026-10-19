@@ -71,6 +71,10 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             DocumentRetentionAccess.Check(await DocumentRetentionAccess.ReadAsync(db,before,ct,pilotBounds),time);
             var retention=await new UploadRetention(db,retentionOptions ?? new(),time).ReadAsync(before,ct);UploadRetention.CheckDeadline(retention,time.GetUtcNow());return before;
         }
+        // Converted-upload callers have always received a rejection for an
+        // expired saved retention policy. Keep that ordinary contract while
+        // restricted-run expiry retains its separate access-denial exception.
+        catch(DocumentRetentionExpiredException) {throw new DocumentRejectedException("This demo document has reached its retention deadline.");}
         finally {await db.Database.CloseConnectionAsync();}
     }
 
