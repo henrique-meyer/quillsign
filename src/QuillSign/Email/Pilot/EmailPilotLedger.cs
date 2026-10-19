@@ -6,7 +6,7 @@ namespace QuillSign.Email.Pilot;
 
 // No endpoint or transport consumes this foundation yet. A reservation is a
 // nonrefunded accounting event, not a reusable permission to invoke a provider.
-public sealed class EmailPilotLedger(EmailPilotOptions options, EmailOptions email, Func<QuillSignDbContext> database,
+public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOptions email, Func<QuillSignDbContext> database,
     Func<EmailPilotProtection> protection, TimeProvider time)
 {
     private bool Enabled => options.Enabled && !email.Enabled;
@@ -94,9 +94,9 @@ public sealed class EmailPilotLedger(EmailPilotOptions options, EmailOptions ema
         var run = await Manifest(db, id, false, ct); return run is null ? null : Budget(await Reservations(db, run, ct));
     }
 
-    private async Task<EmailPilotManifest?> Manifest(QuillSignDbContext db, Guid id, bool live, CancellationToken ct)
+    private async Task<EmailPilotManifest?> Manifest(QuillSignDbContext db, Guid id, bool live, CancellationToken ct, bool configured = true)
     {
-        if (id != RunId) throw EmailPilotProtection.Invalid();
+        if (id == Guid.Empty || configured && id != RunId) throw EmailPilotProtection.Invalid();
         var row = await db.EmailPilotRuns.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct);
         if (row is null) return null;
         var secret = await db.EmailPilotSecrets.AsNoTracking().SingleOrDefaultAsync(x => x.RunId == id, ct) ?? throw EmailPilotProtection.Invalid();
@@ -105,7 +105,7 @@ public sealed class EmailPilotLedger(EmailPilotOptions options, EmailOptions ema
         if (value is null || value.Version != EmailPilotLimits.Version || value.RunId != id || value.CreatedAt.Offset != TimeSpan.Zero || value.ExpiresAt.Offset != TimeSpan.Zero ||
             value.CreatedAt != row.CreatedAt || value.ExpiresAt != row.ExpiresAt || value.ExpiresAt != value.CreatedAt.AddMinutes(60) || value.CreatedAt > Now ||
             secret.DeleteAfter != value.CreatedAt.AddDays(7) || secret.DeleteAfter.Offset != TimeSpan.Zero ||
-            value.Mailboxes is null || !value.Mailboxes.Valid() || value.Mailboxes != options.Mailboxes || !EmailPilotCanonical.Hash(value.CapabilitySha256) ||
+            value.Mailboxes is null || !value.Mailboxes.Valid() || configured && value.Mailboxes != options.Mailboxes || !EmailPilotCanonical.Hash(value.CapabilitySha256) ||
             !CryptographicOperations.FixedTimeEquals(EmailPilotCanonical.Hash(value), row.ManifestSha256) ||
             !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(value.CapabilitySha256), row.CapabilitySha256)) throw EmailPilotProtection.Invalid();
         if (live && value.ExpiresAt <= Now) return null;
@@ -118,9 +118,11 @@ public sealed class EmailPilotLedger(EmailPilotOptions options, EmailOptions ema
         if (rows.Count > 3) throw EmailPilotProtection.Invalid();
         return rows.Select(x => {
             var value = protection().Read<EmailPilotEnrollment>(run.RunId, "enrollment", x.ProtectedBinding, 2048);
-            if (value is null || value != new EmailPilotEnrollment(x.RunId, x.SubjectEnvelopeId, x.Scenario, x.EnrolledAt) ||
+            if (value is null || value.RunId != x.RunId || value.SubjectEnvelopeId != x.SubjectEnvelopeId || value.Scenario != x.Scenario || value.EnrolledAt != x.EnrolledAt ||
                 value.SubjectEnvelopeId == Guid.Empty || !Enum.IsDefined(value.Scenario) || value.EnrolledAt.Offset != TimeSpan.Zero ||
-                value.EnrolledAt < run.CreatedAt || value.EnrolledAt >= run.ExpiresAt || value.EnrolledAt > Now) throw EmailPilotProtection.Invalid();
+                value.EnrolledAt < run.CreatedAt || value.EnrolledAt >= run.ExpiresAt || value.EnrolledAt > Now ||
+                value.Verification is { } v && (v.WorkId == Guid.Empty || !EmailPilotCanonical.Hash(v.DraftSha256) ||
+                    !EmailPilotCanonical.Hash(v.EmailPayloadSha256) || !EmailPilotCanonical.Hash(v.WorkPayloadSha256))) throw EmailPilotProtection.Invalid();
             return value;
         }).ToList();
     }
