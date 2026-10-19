@@ -5,6 +5,19 @@ namespace QuillSign.Email.Pilot;
 
 public static class EmailPilotConfiguration
 {
+    // Also unregistered from application startup until full pipeline gating is ready.
+    public static IServiceCollection AddEmailPilotAdmissionFoundation(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddEmailPilotFoundation(configuration);
+        var admission=configuration.GetSection("EmailPilot:Admission").Get<EmailPilotAdmissionOptions>() ?? new();
+        services.AddSingleton(admission);
+        services.AddScoped<EmailPilotAdmission>(sp=>new(sp.GetRequiredService<EmailPilotOptions>(),admission,
+            sp.GetService<EmailOptions>() ?? new(),sp.GetService<Work.WorkOptions>() ?? new(),sp.GetService<Sender.SenderOptions>() ?? new(),
+            ()=>sp.GetRequiredService<Sender.SenderAvailability>(),()=>sp.GetRequiredService<EmailPilotLedger>(),
+            ()=>sp.GetRequiredService<Work.EmailOutboxWriter>(),()=>sp.GetRequiredService<Work.EmailPayloadProtection>(),sp.GetRequiredService<TimeProvider>()));
+        return services;
+    }
+
     // Not called by application startup until the complete provider/admission
     // integration is checked. Disabled custom hosts resolve no SQL or key ring.
     public static IServiceCollection AddEmailPilotFoundation(this IServiceCollection services, IConfiguration configuration)

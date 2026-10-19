@@ -44,6 +44,19 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
     {
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("Preparing an outbox item requires a transaction.");
         if (!workOptions.Enabled || !emailOptions.Enabled) throw new EmailDisabledException();
+        return await PrepareVerificationCoreAsync(envelopeId,recipient,cancellationToken);
+    }
+
+    internal async Task<Guid> PreparePilotVerificationAsync(Guid envelopeId, string recipient,
+        Email.Pilot.EmailPilotAdmissionScope scope, CancellationToken cancellationToken)
+    {
+        if (!workOptions.Enabled || emailOptions.Enabled) throw new EmailDisabledException();
+        scope.Demand(db,envelopeId,recipient);
+        return await PrepareVerificationCoreAsync(envelopeId,recipient,cancellationToken);
+    }
+
+    private async Task<Guid> PrepareVerificationCoreAsync(Guid envelopeId, string recipient, CancellationToken cancellationToken)
+    {
         recipient = EmailAddress.Normalize(recipient);
         if (!await db.Envelopes.AnyAsync(x => x.Id == envelopeId && x.SenderEmail == recipient && x.Status == EnvelopeStatus.Draft, cancellationToken))
             throw new InvalidOperationException("Verification requires a matching draft sender.");

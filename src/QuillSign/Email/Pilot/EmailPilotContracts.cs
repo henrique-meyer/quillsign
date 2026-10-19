@@ -41,7 +41,9 @@ public static class EmailPilotLimits
 
 public sealed record EmailPilotManifest(string Version, Guid RunId, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt,
     string CapabilitySha256, EmailPilotMailboxes Mailboxes);
-public sealed record EmailPilotEnrollment(Guid RunId, Guid SubjectEnvelopeId, EmailPilotScenario Scenario, DateTimeOffset EnrolledAt);
+public sealed record EmailPilotEnrollment(Guid RunId, Guid SubjectEnvelopeId, EmailPilotScenario Scenario, DateTimeOffset EnrolledAt,
+    EmailPilotVerificationBinding? Verification = null);
+public sealed record EmailPilotVerificationBinding(Guid WorkId, string DraftSha256, string EmailPayloadSha256, string WorkPayloadSha256);
 public sealed record EmailPilotAttempt(Guid Id, Guid RunId, Guid? SubjectEnvelopeId, Guid OperationId,
     EmailPilotAttemptKind Kind, EmailPilotRole Role, int EncodedBytes, string RequestSha256, DateTimeOffset ReservedAt);
 public sealed record EmailPilotReservation(Guid Id, Guid? SubjectEnvelopeId, Guid OperationId,
