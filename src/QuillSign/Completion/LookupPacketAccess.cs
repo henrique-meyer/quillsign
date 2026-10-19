@@ -45,7 +45,7 @@ public sealed class LookupPacketAccess(QuillSignDbContext db, DocumentLookup loo
         var current = await lookup.AuthenticateLockedAsync(principal, receipt, ct);
         if (current != identity || prepared.Saved.PublicId != publicId || prepared.Saved.CompletedAt > identity.RedeemedAt) return null;
         var member = await Member(prepared.Saved, identity.Email, ct); if (member is null) return null;
-        var link = await completion.PrepareLockedAsync(prepared, member.Type, member.Id, ct); if (link is null) return null;
+        var link = await completion.PrepareBoundedLockedAsync(prepared, member.Type, member.Id, ct, restriction.IsPilot ? identity.ExpiresAt : null); if (link is null) return null;
         var reader = await completion.RedeemLockedAsync(prepared, link, identity.ExpiresAt, ct); if (reader is null) return null;
         await audit.AppendAsync(id.Value, "completion_lookup_opened", member.Email, null, null, ct,
             JsonSerializer.Serialize(new

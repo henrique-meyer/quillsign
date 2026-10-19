@@ -15,7 +15,7 @@ public sealed class EmailPilotLookupAdmission(EmailPilotOptions options, EmailOp
     Func<EmailPilotLookupAccess> access, Func<EmailPilotProtection> protection, Func<LookupContactRetention> retention,
     Func<IWorkSignals> signals, TimeProvider time)
 {
-    private sealed record Committed(Guid RequestId, bool Recovered, bool Publish, DateTimeOffset CleanupDue);
+    private sealed record Committed(Guid RequestId, bool Recovered, bool Publish, DateTimeOffset CleanupDue, EmailPilotManifest Run);
     private bool Enabled => options.Enabled && !email.Enabled && work.Enabled;
     private DateTimeOffset Now => time.GetUtcNow().ToUniversalTime();
 
@@ -50,7 +50,7 @@ public sealed class EmailPilotLookupAdmission(EmailPilotOptions options, EmailOp
                 var row = await db.WorkItems.AsNoTracking().SingleAsync(x => x.Id == binding.RequestId, ct);
                 var policy = await retention().ReadAsync(current.Email, ct);
                 if (prepared.Until <= Now || !ledger().EnvelopeCohortLive(run, admission, work)) throw EmailPilotProtection.Invalid();
-                return new(binding.RequestId, true, row.Status == WorkStatus.Queued && current.Email.Status == EmailStatus.Queued, policy.DeleteAfter);
+                return new(binding.RequestId, true, row.Status == WorkStatus.Queued && current.Email.Status == EmailStatus.Queued, policy.DeleteAfter, run);
             }
             var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == enrolled.SubjectEnvelopeId, ct);
             var documentDeadline = await SenderPreparationRetention.ReadAsync(db, envelope, time, ct);
@@ -71,16 +71,19 @@ public sealed class EmailPilotLookupAdmission(EmailPilotOptions options, EmailOp
             await db.SaveChangesAsync(ct);
             await access().ReadRequestLockedAsync(value, ct);
             if (prepared.Until <= Now || !ledger().EnvelopeCohortLive(run, admission, work)) throw EmailPilotProtection.Invalid();
-            return new(value.RequestId, false, true, request.Retention.DeleteAfter);
+            return new(value.RequestId, false, true, request.Retention.DeleteAfter, run);
         }, ct);
         if (saved is null) return null;
+        // Retention recovery remains scheduled even when a commit crosses the
+        // original pilot deadline. No stale result or mail wakeup is exposed.
+        await retention().PublishAsync(saved.RequestId, saved.CleanupDue, ct);
+        if (!Enabled || !ledger().EnvelopeCohortLive(saved.Run, admission, work)) return null;
         var published = !saved.Publish;
         if (saved.Publish)
         {
             try { await signals().PublishAsync(saved.RequestId, TimeSpan.Zero, ct); published = true; }
             catch (Exception e) when (e is Azure.RequestFailedException or IOException or HttpRequestException or OperationCanceledException) { }
         }
-        await retention().PublishAsync(saved.RequestId, saved.CleanupDue, ct);
-        return new(saved.RequestId, saved.Recovered, published);
+        return Enabled && ledger().EnvelopeCohortLive(saved.Run, admission, work) ? new(saved.RequestId, saved.Recovered, published) : null;
     }
 }

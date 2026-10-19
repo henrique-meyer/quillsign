@@ -169,7 +169,8 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
             if (await AuthenticateAsync(principal, receipt, ct) is null) return null;
             await tx.CommitAsync(ct);
         }
-        if (i.ExpiresAt <= time.GetUtcNow()) return null;
+        if (i.ExpiresAt <= time.GetUtcNow() || restriction.IsPilot &&
+            (restriction.Request!.ExpiresAt <= time.GetUtcNow() || !pilot!.Live(restriction.Manifest!))) return null;
         var entries = saved.Select(x => new DocumentLookupEntry(x.Publication.PublicId, x.Publication.Title, x.Publication.CompletedAt,
             Min(x.Publication.PurgeAfter, x.Deadline))).ToArray();
         foreach (var entry in entries) DocumentRetentionAccess.Check(entry.RetainedUntil, time);
