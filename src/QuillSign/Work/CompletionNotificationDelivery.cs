@@ -10,11 +10,13 @@ namespace QuillSign.Work;
 // Submission intent is committed before the provider call. Unknown acceptance is never resent.
 public sealed class CompletionNotificationDelivery(QuillSignDbContext db,CompletionAccessState state,CompletionAccess access,
     CompletionNotificationJobs jobs,CompletionNotificationProtection protection,Func<CompletionEmailTemplate> template,IEmailSender sender,
-    EmailOptions options,AuditWriter audit,TimeProvider time)
+    EmailOptions options,AuditWriter audit,TimeProvider time,Email.Pilot.EmailPilotDispatch? pilot=null)
 {
     public async Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)
     {
-        if(!options.Enabled)return new(WorkOutcome.Retry,"delivery-disabled");
+        var pilotDecision=pilot is null ? null : await pilot.DecideAsync(lease,ct);
+        if(pilotDecision?.Refusal is {} refusal)return refusal;
+        if(pilotDecision is null && !options.Enabled)return new(WorkOutcome.Retry,"delivery-disabled");
         if(lease.Kind!=WorkKind.Email)return new(WorkOutcome.Failed,"invalid-completion-notification");
         var email=await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==lease.Id,ct);
         if(email?.EnvelopeId is not Guid envelopeId || email.Template!=CompletionNotificationJobs.Template || email.AttachmentsJson!="[]")return new(WorkOutcome.Failed,"invalid-completion-notification");
@@ -31,7 +33,7 @@ public sealed class CompletionNotificationDelivery(QuillSignDbContext db,Complet
             await using(var tx=await db.Database.BeginTransactionAsync(active)) {
                 await Guard(prepared,lease,email.To,payload,false,active);
                 if(await db.Suppressions.AnyAsync(x=>x.Email==email.To,active))return new(WorkOutcome.Failed,"recipient-suppressed");
-                link=await access.PrepareLockedAsync(prepared,payload.Party,payload.PartyId,active)??throw CompletionNotificationJobs.Invalid();
+                link=await access.PrepareBoundedLockedAsync(prepared,payload.Party,payload.PartyId,active,pilotDecision?.Scope?.RunExpiresAt)??throw CompletionNotificationJobs.Invalid();
                 outgoing=await template().RenderAsync(prepared,payload,email.To,link,active);
                 await Guard(prepared,lease,email.To,payload,false,active);Live(prepared,link);
                 payload=payload with {LastTokenId=link.TokenId};var at=time.GetUtcNow();
@@ -44,7 +46,8 @@ public sealed class CompletionNotificationDelivery(QuillSignDbContext db,Complet
                     executedSha256=CompletionNotificationJobs.Hex(prepared.Saved.Executed.Sha256),certificateSha256=CompletionNotificationJobs.Hex(prepared.Saved.Certificate.Sha256),
                     meaning="Submission prepared; no provider acceptance or delivery is confirmed."
                 }),PartyType.System);
-                await Guard(prepared,lease,email.To,payload,true,active);Live(prepared,link);await tx.CommitAsync(active);
+                await Guard(prepared,lease,email.To,payload,true,active);Live(prepared,link);if(pilotDecision?.Scope?.RunExpiresAt<=time.GetUtcNow())throw new EmailDisabledException();
+                await tx.CommitAsync(active);
             }
             // The lease, token deadline and current frozen scope are checked again after
             // all asynchronous verification/rendering and the acknowledged intent commit.
@@ -52,7 +55,7 @@ public sealed class CompletionNotificationDelivery(QuillSignDbContext db,Complet
                 await Guard(prepared,lease,email.To,payload,true,active);Live(prepared,link);await tx.CommitAsync(active);
             }
             active.ThrowIfCancellationRequested();called=true;
-            var delivery=await sender.SendAsync(outgoing.Message,active);
+            var delivery=pilot is null ? await sender.SendAsync(outgoing.Message,active) : await pilot.SendAsync(lease,outgoing.Message,active);
             await using(var tx=await db.Database.BeginTransactionAsync(active)) {
                 await Guard(prepared,lease,email.To,payload,true,active);
                 await db.EmailOutbox.Where(x=>x.Id==lease.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Provider,delivery.Provider)

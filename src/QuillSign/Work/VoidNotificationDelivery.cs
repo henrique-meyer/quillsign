@@ -9,11 +9,13 @@ namespace QuillSign.Work;
 
 // Informative only. No session, signing link, attachment or signing key is needed.
 public sealed class VoidNotificationDelivery(QuillSignDbContext db,VoidNotificationJobs jobs,VoidNotificationProtection protection,
-    Func<VoidEmailTemplate> template,IEmailSender sender,EmailOptions options,AuditWriter audit,TimeProvider time)
+    Func<VoidEmailTemplate> template,IEmailSender sender,EmailOptions options,AuditWriter audit,TimeProvider time,Email.Pilot.EmailPilotDispatch? pilot=null)
 {
     public async Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)
     {
-        if(!options.Enabled)return new(WorkOutcome.Retry,"delivery-disabled");
+        var pilotDecision=pilot is null ? null : await pilot.DecideAsync(lease,ct);
+        if(pilotDecision?.Refusal is {} refusal)return refusal;
+        if(pilotDecision is null && !options.Enabled)return new(WorkOutcome.Retry,"delivery-disabled");
         if(lease.Kind!=WorkKind.Email)return new(WorkOutcome.Failed,"invalid-void-notification");
         var email=await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==lease.Id,ct);
         if(email?.EnvelopeId is not Guid envelopeId || email.Template!=VoidNotificationJobs.Template || email.AttachmentsJson!="[]")return new(WorkOutcome.Failed,"invalid-void-notification");
@@ -51,7 +53,7 @@ public sealed class VoidNotificationDelivery(QuillSignDbContext db,VoidNotificat
                 await tx.CommitAsync(active);
             }
             active.ThrowIfCancellationRequested();called=true;
-            var delivery=await sender.SendAsync(outgoing,active);
+            var delivery=pilot is null ? await sender.SendAsync(outgoing,active) : await pilot.SendAsync(lease,outgoing,active);
             await using(var tx=await db.Database.BeginTransactionAsync(active)) {
                 await Guard(lease,email.To,payload,true,active);
                 await db.EmailOutbox.Where(x=>x.Id==lease.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Provider,delivery.Provider)
