@@ -33,7 +33,7 @@ public sealed class EmailPilotAdmission(EmailPilotOptions pilot, EmailPilotAdmis
         var ledger=getLedger();await ledger.CreateAsync(capability,ct);
         var result=await ledger.AdmitAsync(capability,async(db,run,enrolled,scope,addEnrollment)=> {
             if(enrolled.SingleOrDefault(x=>x.Scenario==scenario) is { } existing)
-                return await Recover(db,run,existing,ct);
+                return await ReadSourceAsync(db,run,existing,getPayloadProtection,ct);
             if(enrolled.Count>=3)return null;
             var recipient=run.Mailboxes.Sender;
             var lockName="sender-request:"+Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(recipient)));
@@ -61,7 +61,8 @@ public sealed class EmailPilotAdmission(EmailPilotOptions pilot, EmailPilotAdmis
         return result with { WakeupPublished=published.WakeupPublished };
     }
 
-    private async Task<EmailPilotAdmissionResult?> Recover(QuillSignDbContext db,EmailPilotManifest run,EmailPilotEnrollment saved,CancellationToken ct)
+    internal static async Task<EmailPilotAdmissionResult?> ReadSourceAsync(QuillSignDbContext db,EmailPilotManifest run,EmailPilotEnrollment saved,
+        Func<EmailPayloadProtection> getPayloadProtection,CancellationToken ct)
     {
         if(saved.Verification is not { } binding)throw EmailPilotProtection.Invalid();
         var envelope=await db.Envelopes.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==saved.SubjectEnvelopeId,ct);
