@@ -1,0 +1,14 @@
+using './restricted-email-pilot.bicep'
+
+param location = ''
+param environmentName = ''
+param webAppName = ''
+param dispatchJobName = ''
+param runtimeIdentityName = ''
+param workerIdentityName = ''
+param image = ''
+param revisionSuffix = ''
+param sesAccessKeySecretUri = ''
+param sesSecretKeySecretUri = ''
+// Exact captured state and private pilot settings belong in an ignored parameter file.
+param runtimeState = {}

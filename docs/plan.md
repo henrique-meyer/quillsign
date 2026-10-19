@@ -1838,7 +1838,7 @@ Current schema/grant regression validation: all 23 persistence, disclosure-persi
 
 ## QUILS-139: Deploy and validate the approved restricted hosted signing pilot
 
-Status: To Do. Assigned to ChatGPT Codex. Dependent deployment/validation slice after checked QUILS-116 and prerequisites; already approved scope, public email remains disabled.
+Status: In Progress. Assigned to ChatGPT Codex. Dependent deployment/validation slice after checked QUILS-116 and prerequisites; already approved scope, public email remains disabled.
 
 Deploy the checked restricted signing pilot and run the already owner-approved bounded hosted validation after QUILS-116 and all its checked prerequisites merge. This is the deployment/operational evidence slice; do not duplicate source gates or request another approval within the agreed package.
 
@@ -1851,3 +1851,5 @@ The private immutable run is at most sixty active minutes, three explicit synthe
 Use the approved four owner-controlled catch-all roles and real mailbox links, never seeded sender verification, consent, fields, signatures or completion. Exercise actual sender preparation/manual placement/send, two sequential signers and current-copy review/Finish/checkpoints, platform seals and timestamps, immutable publication, exact executed/certificate attachments and private downloads, one limited lookup, sender void, signer decline and the three fixed signed SES feedback/suppression cases. Record meaningful desktop/mobile/keyboard, replay/expiry/unknown outcome and recoverable failure evidence; distinguish queue/receipt/feedback facts. Preserve the known pre-receipt feedback race limitation.
 
 At completion or any boundary failure, restore pilot/configuration-set sending disabled, preserve public email false, reconcile admitted work and delayed cleanup without recurring SQL polling, record exact consumption/results/limitations and provide the owner checkpoint brief. SES production approval is checked separately on its existing four-times-daily schedule and is not required for this verified-recipient sandbox pilot. Launch remains dependent on hosted validation plus production access. Matching plan/story before implementation, Codex assignee/current status, checked small PR/attach/selfmerge and native Done in the merge pass.
+
+Deployment refinement: expose two optional existing SES Key Vault secret URI parameters for the existing web/dispatch identities, with fixed secret names and environment references and empty defaults. Do not copy secret values or create identities, grants, resources or IAM keys. Add a narrow reviewed template for updating only those two existing application resources, preserving captured unrelated settings, identities, scale and worker triggers. Keep all actual URI/settings inputs ignored. Validate compiled ARM defaults and selected-reference behavior before deploying the checked package.
