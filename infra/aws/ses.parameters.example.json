@@ -6,6 +6,10 @@
   {"ParameterKey":"FeedbackTopicName","ParameterValue":""},
   {"ParameterKey":"SenderUserName","ParameterValue":""},
   {"ParameterKey":"ProjectTagValue","ParameterValue":""},
+  {"ParameterKey":"SandboxSenderAddress","ParameterValue":""},
+  {"ParameterKey":"SandboxFirstSignerAddress","ParameterValue":""},
+  {"ParameterKey":"SandboxSecondSignerAddress","ParameterValue":""},
+  {"ParameterKey":"SandboxRecipientAddress","ParameterValue":""},
   {"ParameterKey":"EnableFeedbackSubscription","ParameterValue":"false"},
   {"ParameterKey":"FeedbackEndpoint","ParameterValue":""}
 ]
