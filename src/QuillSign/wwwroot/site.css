@@ -52,3 +52,11 @@ select:focus-visible { outline: 3px solid #172d40; outline-offset: 3px; }
 textarea:focus-visible { outline: 3px solid #172d40; outline-offset: 3px; }
 .recipient-cards { list-style: none; padding: 0; }
 .document-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.document-dropzone { padding: 28px 20px; border: 2px dashed #83909a; border-radius: 8px; text-align: center; background: #faf8f3; transition: background-color .12s, border-color .12s; }
+.document-dropzone .upload-choice-title { margin: 0 0 12px; font-size: 19px; font-weight: 750; color: #172d40; }
+.document-dropzone .quiet-button { margin: 0; background: #fff; }
+.document-dropzone.is-dragging, .document-dropzone:focus-within { border-color: #96342d; background: #fff0e9; }
+.document-dropzone [data-upload-native] { display: grid; gap: 8px; margin-top: 12px; text-align: left; }
+.document-dropzone.is-enhanced [data-upload-native] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.upload-selection { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .document-dropzone { transition: none; } }
