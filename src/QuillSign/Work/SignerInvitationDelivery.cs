@@ -143,7 +143,7 @@ public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess 
                 meaning = "provider_accepted_not_proof_of_delivery" }),PartyType.System);
             await transaction.CommitAsync(ct); return new(WorkOutcome.Completed);
         }
-        catch (EmailNotSubmittedException e) { await RejectedAsync(email.Id,invitation.Record.Id,ct); return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed,"provider-rejected"); }
+        catch (EmailNotSubmittedException e) { await RejectedAsync(email.Id,invitation.Record.Id,ct); return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed,e.FailureCode); }
         catch (Exception e) when (e is RecipientSuppressedException or EmailDisabledException)
         { await RejectedAsync(email.Id,invitation.Record.Id,ct); return new(WorkOutcome.Failed,e is RecipientSuppressedException ? "recipient-suppressed" : "delivery-disabled"); }
         // Unknown outcomes retain submission intent; work recovery forbids another provider call.

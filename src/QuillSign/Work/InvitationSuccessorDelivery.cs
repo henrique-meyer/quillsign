@@ -66,7 +66,7 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
         catch (EmailNotSubmittedException e)
         {
             await ClearAsync(lease, p, issued, intent, intentPayload, ct);
-            return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed, "provider-rejected");
+            return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed, e.FailureCode);
         }
         catch (Exception e) when (e is RecipientSuppressedException or EmailDisabledException)
         {

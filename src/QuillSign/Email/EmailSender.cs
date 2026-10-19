@@ -22,6 +22,34 @@ public sealed class RecipientSuppressedException() : InvalidOperationException("
 public sealed class EmailNotSubmittedException(bool retryable) : Exception("The provider did not accept this email.")
 {
     public bool Retryable { get; } = retryable;
+    public string FailureCode { get; } = "provider-rejected";
+
+    // Only bounded categories can enter durable operational evidence. Never
+    // retain the SDK exception, its message, request ID or arbitrary error code.
+    internal EmailNotSubmittedException(bool retryable, int status, ProviderRefusalReason reason) : this(retryable)
+    {
+        if (status is < 400 or > 499) throw new ArgumentOutOfRangeException(nameof(status));
+        var category = reason switch {
+            ProviderRefusalReason.UnverifiedIdentity => "identity-unverified",
+            ProviderRefusalReason.Authorization => "authorization",
+            ProviderRefusalReason.AccountPaused => "account-paused",
+            ProviderRefusalReason.ConfigurationPaused => "configuration-paused",
+            ProviderRefusalReason.ConfigurationMissing => "configuration-missing",
+            ProviderRefusalReason.ResourceMissing => "resource-missing",
+            ProviderRefusalReason.MailFromUnverified => "mail-from-unverified",
+            ProviderRefusalReason.Throttled => "throttled",
+            ProviderRefusalReason.MessageRejected => "message-rejected",
+            ProviderRefusalReason.InvalidRequest => "invalid-request",
+            _ => "other"
+        };
+        FailureCode = FormattableString.Invariant($"provider-rejected-{status}-{category}");
+    }
+}
+
+internal enum ProviderRefusalReason
+{
+    Other, UnverifiedIdentity, Authorization, AccountPaused, ConfigurationPaused,
+    ConfigurationMissing, ResourceMissing, MailFromUnverified, Throttled, MessageRejected, InvalidRequest
 }
 
 public sealed class EmailSender(EmailOptions options, Func<QuillSignDbContext> database, Func<IEmailTransport> transport) : IEmailSender
