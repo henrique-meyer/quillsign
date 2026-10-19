@@ -16,10 +16,11 @@ public sealed class EmailPilotWorkScope
     internal EmailPilotWorkScope(EmailPilotManifest run,EmailPilotEnrollment enrollment,WorkLease lease,string sourceHash,
         string? emailRecipient)
     {RunId=run.RunId;EnvelopeId=enrollment.SubjectEnvelopeId;Until=run.ExpiresAt<lease.Until?run.ExpiresAt:lease.Until;
-        Lease=lease;SourceHash=sourceHash;Mailboxes=run.Mailboxes;EmailRecipient=emailRecipient;}
+        Lease=lease;SourceHash=sourceHash;Mailboxes=run.Mailboxes;EmailRecipient=emailRecipient;RunExpiresAt=run.ExpiresAt;}
     public Guid RunId {get;}
     public Guid EnvelopeId {get;}
     public DateTimeOffset Until {get;}
+    public DateTimeOffset RunExpiresAt {get;}
     internal WorkLease Lease {get;}
     internal string SourceHash {get;}
     private EmailPilotMailboxes Mailboxes {get;}

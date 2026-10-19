@@ -52,11 +52,13 @@ public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSigna
     }
 }
 public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess access,SignerInvitationFactory tokens,
-    SignerInvitationProtection protection,SignerInvitationTemplate template,IEmailSender sender,EmailOptions options,AuditWriter audit,TimeProvider time,InvitationLineage? lineage=null)
+    SignerInvitationProtection protection,SignerInvitationTemplate template,IEmailSender sender,EmailOptions options,AuditWriter audit,TimeProvider time,InvitationLineage? lineage=null,Email.Pilot.EmailPilotDispatch? pilot=null)
 {
     public async Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)
     {
-        if (!options.Enabled) return new(WorkOutcome.Retry,"delivery-disabled");
+        var pilotDecision=pilot is null ? null : await pilot.DecideAsync(lease,ct);
+        if(pilotDecision?.Refusal is {} refusal)return refusal;
+        if(pilotDecision is null && !options.Enabled)return new(WorkOutcome.Retry,"delivery-disabled");
         var email = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id,ct);
         SignerInvitationPayload payload;
         try { payload = protection.Read(email.PayloadJson); }
@@ -86,7 +88,7 @@ public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess 
             var now = time.GetUtcNow();
             if (owned.Status != WorkStatus.Leased || owned.LeaseOwner != lease.Owner || owned.LeaseExpiresAt <= now) throw new InvalidOperationException("Work lease is no longer owned.");
             var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == envelopeId,ct);
-            invitation = tokens.Create(envelopeId,payload.SignerId,email.To,envelope.ExpiresAt,context.Identity.DocumentId,context.DocumentSha256,context.Disclosure.Sha256,
+            invitation = tokens.Create(envelopeId,payload.SignerId,email.To,Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision,envelope.ExpiresAt??DateTimeOffset.MaxValue),context.Identity.DocumentId,context.DocumentSha256,context.Disclosure.Sha256,
                 payload.ContactRevisionNumber==0 ? null : payload.ContactRevisionId);
             outgoing = await template.RenderAsync(context,envelope.Message,invitation.RawToken,invitation.Record.ExpiresAt,ct);
             if (invitation.Record.ExpiresAt <= time.GetUtcNow()) return new(WorkOutcome.Failed,"invitation-expired");
@@ -94,11 +96,13 @@ public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess 
             var changed = await db.EmailOutbox.Where(x => x.Id == lease.Id && x.Status == EmailStatus.Queued && x.SubmissionStartedAt == null)
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.SubmissionStartedAt,now).SetProperty(x => x.Attempts,lease.Attempt).SetProperty(x => x.PayloadJson,protectedScope),ct);
             if (changed != 1) throw new InvalidOperationException("Invitation submission is no longer available.");
-            db.AuthTokens.Add(invitation.Record); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
+            db.AuthTokens.Add(invitation.Record); await db.SaveChangesAsync(ct);
+            if(pilotDecision?.Scope?.RunExpiresAt<=time.GetUtcNow())throw new EmailDisabledException();
+            await transaction.CommitAsync(ct);
         }
         try
         {
-            var delivery = await sender.SendAsync(outgoing,ct);
+            var delivery = pilot is null ? await sender.SendAsync(outgoing,ct) : await pilot.SendAsync(lease,outgoing,ct);
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             _ = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {envelopeId}").AsNoTracking().SingleAsync(ct);
             await db.EmailOutbox.Where(x => x.Id == lease.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Provider,delivery.Provider)
