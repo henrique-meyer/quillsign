@@ -7,12 +7,12 @@ namespace QuillSign.Work;
 // array is never interpreted as an approved schedule for an old envelope.
 public static class SignerReminderSendEvidence
 {
-    public static void DemandReview(SignerReminderPolicy policy,string? reviewedSha256)
+    public static void DemandReview(SignerReminderPolicy policy,string? reviewedSha256,string? schedulingVersion=null)
     {
         // A pre-upgrade review may send only the same explicitly empty policy.
         // An enabled schedule always needs its exact new review hash.
         if(reviewedSha256 is null && policy.Days.IsEmpty)return;
-        if(reviewedSha256!=policy.Sha256)throw new DocumentConflictException();
+        if(reviewedSha256!=policy.Sha256 || !policy.Days.IsEmpty && schedulingVersion!=SignerReminderEvidence.Version)throw new DocumentConflictException();
     }
     public static SignerReminderPolicy Read(JsonElement sent,bool isDemo)
     {
@@ -26,6 +26,15 @@ public static class SignerReminderSendEvidence
         var saved=SignerReminderPolicy.Read(policy.GetString()!,hash.GetString()!);
         if(isDemo && !saved.Days.IsEmpty)throw Invalid();
         return saved;
+    }
+    public static string? SchedulingVersion(JsonElement sent,bool isDemo)
+    {
+        var policy=Read(sent,isDemo);
+        var members=sent.EnumerateObject().Where(x=>x.Name=="reminderSchedulingVersion").ToArray();
+        if(members.Length==0)return null; // Old policy-only evidence never authorizes work.
+        if(members.Length!=1 || members[0].Value.ValueKind!=JsonValueKind.String || members[0].Value.GetString()!=SignerReminderEvidence.Version ||
+            !sent.TryGetProperty("reminderPolicy",out _) || !sent.TryGetProperty("reminderPolicySha256",out _))throw Invalid();
+        return SignerReminderEvidence.Version;
     }
     private static InvalidDataException Invalid()=>new("The reviewed reminder policy could not be verified.");
 }

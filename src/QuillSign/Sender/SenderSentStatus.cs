@@ -131,7 +131,7 @@ public sealed class SenderSentStatus(QuillSignDbContext db,TimeProvider time,Sig
             }
             await RetentionSigningDeadline.VerifyEvidenceAsync(db,envelope,p,ct);
             return new(envelope.Id,envelope.PublicId,invitation,Convert.ToHexStringLower(envelope.SentPdfSha256),Convert.ToHexStringLower(envelope.ErsdSha256))
-                {Reminders=SignerReminderSendEvidence.Read(p,envelope.IsDemo)};
+                {Reminders=SignerReminderSendEvidence.Read(p,envelope.IsDemo),ReminderSchedulingVersion=SignerReminderSendEvidence.SchedulingVersion(p,envelope.IsDemo)};
         }
         catch(Exception e) when(e is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
         { throw new InvalidDataException("The Send evidence could not be verified.",e); }
