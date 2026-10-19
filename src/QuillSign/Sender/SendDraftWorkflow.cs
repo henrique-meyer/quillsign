@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Email;
+using QuillSign.Email.Pilot;
 using QuillSign.Legal;
 using QuillSign.Signing;
 using QuillSign.Storage;
@@ -22,7 +23,8 @@ public sealed record SentDraft(Guid EnvelopeId,string PublicId,Guid InvitationWo
 public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,DocumentOptions documents,
     SignerSetupOptions signerOptions,FieldEditorOptions fieldOptions,PreparationOptions preparation,SenderPdfRenderer renderer,
     ElectronicRecordDisclosure disclosures,SignerInvitationOutbox outbox,WorkOptions workOptions,EmailOptions emailOptions,
-    AuditWriter audit,TimeProvider time,ILogger<SendDraftWorkflow> logger,SigningExpiryJobs expiry,SignerReminderOptions? reminderOptions=null,SignerReminderJobs? reminderJobs=null)
+    AuditWriter audit,TimeProvider time,ILogger<SendDraftWorkflow> logger,SigningExpiryJobs expiry,SignerReminderOptions? reminderOptions=null,SignerReminderJobs? reminderJobs=null,
+    EmailPilotEnvelopeAccess? pilot=null)
 {
     public async Task<SentDraft?> SendAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,bool exclusionsAcknowledged,
         bool sendAcknowledged,string? statementVersion,string? ip,string? userAgent,CancellationToken ct = default,string? reviewedRetentionSha256=null,
@@ -40,6 +42,7 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             var envelope = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {identity.Value.Id}")
                 .AsNoTracking().SingleOrDefaultAsync(ct);
             if (envelope is null || envelope.PublicId != publicId || envelope.SenderEmail != identity.Value.Email || envelope.SenderVerifiedAt is null) return null;
+            var cohort=pilot is null ? null : await pilot.RequireSendRosterLockedAsync(envelope,ct);
             if(envelope.Status!=EnvelopeStatus.Draft) {
                 var existing=await SenderSentStatus.ReadSentAsync(db,envelope,expectedVersion,ct);
                 var queued=workOptions.Enabled && envelope.Status==EnvelopeStatus.Sent && (envelope.ExpiresAt is null || envelope.ExpiresAt>time.GetUtcNow()) &&
@@ -53,7 +56,9 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
                         if(job.Status==WorkStatus.Queued) {expiryId=job.Id;expiryDue=job.AvailableAt;}
                     }
                 }
+                if(cohort is not null)SameCohort(cohort,await pilot!.RequireSendRosterLockedAsync(envelope,ct));
                 await transaction.CommitAsync(ct); await transaction.DisposeAsync();
+                if(cohort?.IsEnrolled==true)SameCohort(cohort,await pilot!.ReadAsync(envelope.Id,ct));
                 if(queued)await outbox.PublishAsync(existing.InvitationWorkId,ct);
                 if(expiryId is Guid pending)await expiry.PublishAsync(pending,expiryDue!.Value,ct);return existing;
             }
@@ -65,7 +70,7 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             RetentionSigningDeadline.DemandReview(retention,reviewedRetentionSha256);
             RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             envelope.ExpiresAt=retention.Effective;
-            if(!workOptions.Enabled || !emailOptions.Enabled)throw new EmailDisabledException();
+            if(!workOptions.Enabled || !emailOptions.Enabled && cohort?.Allowed!=true)throw new EmailDisabledException();
             if(retention.Policy is not null && !await DemoPurgeJobs.IsPreparedLockedAsync(db,retention.Policy,ct))
                 throw new DocumentRejectedException("This demo document's retention service needs attention before sending.");
             if (envelope.ExpiresAt <= time.GetUtcNow()) throw new DocumentRejectedException("This draft has expired.");
@@ -131,6 +136,11 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             result = new(envelope.Id,envelope.PublicId,invitation,documentHash,disclosureHash){Reminders=reminders,ReminderSchedulingVersion=SignerReminderEvidence.Version};
             RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             if((reminderOptions??new()).Freeze(envelope.IsDemo).Sha256!=reminders.Sha256)throw new DocumentConflictException();
+            if(cohort is not null)SameCohort(cohort,await pilot!.RequireSendRosterLockedAsync(envelope,ct));
+            if(cohort?.IsEnrolled==true) {
+                var savedParent=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==envelope.Id,ct);
+                if(await SenderSentStatus.ReadSentAsync(db,savedParent,expectedVersion,ct)!=result)throw new DocumentConflictException();
+            }
             commitStarted = true; await transaction.CommitAsync(ct);
         }
         catch
@@ -145,11 +155,21 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             }
             throw;
         }
+        if(pilot is not null) {
+            var cohort=await pilot.ReadAsync(result!.EnvelopeId,ct);
+            if(cohort.IsEnrolled && !cohort.Allowed || !cohort.EnvelopeExists)throw new EmailDisabledException();
+        }
         await outbox.PublishAsync(result!.InvitationWorkId,ct);
         if(reminderJobs is not null)await reminderJobs.PublishAsync(reminderSchedule,ct);
         if(expiryId is Guid scheduled)await expiry.PublishAsync(scheduled,expiryDue!.Value,ct);return result;
     }
     private static bool Name(string value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 512 && !value.Any(char.IsControl);
+    private static void SameCohort(EmailPilotEnvelopeCohort before,EmailPilotEnvelopeCohort after)
+    {
+        if(!after.EnvelopeExists || before.IsEnrolled!=after.IsEnrolled || before.RunId!=after.RunId ||
+            before.Scenario!=after.Scenario || before.RunExpiresAt!=after.RunExpiresAt || after.IsEnrolled && !after.Allowed)
+            throw new EmailDisabledException();
+    }
     private static bool Address(string value) { try { return EmailAddress.Normalize(value) == value; } catch (ArgumentException) { return false; } }
     internal static (Guid Id,string Email)? Identity(ClaimsPrincipal principal,string publicId)
     {
