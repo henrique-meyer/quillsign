@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using PdfSharp.Pdf.IO;
+using PdfSharp.Pdf.Signatures;
 using QuillSign.Documents;
 using QuillSign.Sealing;
 
@@ -8,6 +9,66 @@ namespace QuillSign.Tests;
 
 public sealed class PlatformPdfSealTests
 {
+    [Theory]
+    [InlineData("valid")][InlineData("ec")]
+    public async Task Reservation_sizes_local_CMS_without_timestamping_and_retains_old_padded_seal_verification(string kind)
+    {
+        await using var f=await SealFixtures.Create(kind);
+        using var material=await f.Certificates.AcquireAsync(default);
+        var signer=new SealCms.Signer(f.Options,material,f.Timestamps,f.Time.GetUtcNow(),default);
+        var size=await signer.GetSignatureSizeAsync();
+        Assert.Equal(size,await signer.GetSignatureSizeAsync()); Assert.Equal(0,f.Requests);
+        Assert.InRange(size,f.Options.TsaMaximumResponseBytes+1024,76*1024);
+        Assert.True(size<f.Options.SignatureCapacityBytes);
+        // A pre-existing document may reserve the full configured ceiling. Verification
+        // continues to require the exact full-file ByteRange, CMS and all-zero padding.
+        using var document=PdfReader.Open(new MemoryStream(PdfFixtures.Create()),PdfDocumentOpenMode.Modify);
+        DigitalSignatureHandler.ForDocument(document,new FixedReservationSigner(signer,f.Options.SignatureCapacityBytes),new DigitalSignatureOptions());
+        using var output=new MemoryStream(); await document.SaveAsync(output,false);
+        var legacy=output.ToArray();
+        _=await new SealCms(f.Options,f.Timestamps).VerifyAsync(legacy,f.Seal,f.Time.GetUtcNow(),default);
+        Assert.Equal(1,f.Requests);
+        var source=PdfFixtures.Create(); var current=await f.Engine.SealAsync(source,SHA256.HashData(source));
+        Assert.True(legacy.Length-current.Bytes.Length>90*1024); Assert.Equal(2,f.Requests);
+    }
+
+    [Fact]
+    public async Task Reservation_accounts_for_embedded_chain_bytes_and_honors_the_configured_ceiling()
+    {
+        await using var f=await SealFixtures.Create();
+        using var material=await f.Certificates.AcquireAsync(default);
+        var ordinary=await new SealCms.Signer(f.Options,material,f.Timestamps,f.Time.GetUtcNow(),default).GetSignatureSizeAsync();
+        using var key=RSA.Create(2048);
+        var request=new System.Security.Cryptography.X509Certificates.CertificateRequest("CN=Synthetic chain test",key,
+            HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(new System.Security.Cryptography.X509Certificates.X509Extension("1.2.3.4.9",new byte[16000],false));
+        using var extra=request.CreateSelfSigned(f.Time.GetUtcNow().AddDays(-1),f.Time.GetUtcNow().AddDays(1));
+        // Each lease owns distinct handles, including the public chain certificate.
+        using var expanded=new SealCertificateMaterial("Synthetic",System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(
+            f.Seal.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pkcs12),null),
+            [System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificate(extra.RawData)]);
+        var size=await new SealCms.Signer(f.Options,expanded,f.Timestamps,f.Time.GetUtcNow(),default).GetSignatureSizeAsync();
+        Assert.True(size>=ordinary+12*1024); Assert.True(size<=f.Options.SignatureCapacityBytes);
+        f.Options.SignatureCapacityBytes=32*1024;
+        Assert.Equal(32*1024,await new SealCms.Signer(f.Options,expanded,f.Timestamps,f.Time.GetUtcNow(),default).GetSignatureSizeAsync());
+        Assert.Equal(0,f.Requests);
+    }
+
+    [Fact]
+    public async Task Large_valid_timestamp_fits_the_response_bound_without_sizing_network_calls()
+    {
+        await using var f=await SealFixtures.Create(); f.Mode="capacity";
+        var source=PdfFixtures.Create(); var result=await f.Engine.SealAsync(source,SHA256.HashData(source));
+        Assert.Equal(1,f.Requests);
+        _=await new SealCms(f.Options,f.Timestamps).VerifyAsync(result.Bytes,f.Seal,result.SealedAt,default);
+    }
+
+    private sealed class FixedReservationSigner(IDigitalSigner inner,int capacity) : IDigitalSigner
+    {
+        public string CertificateName=>inner.CertificateName;
+        public Task<int> GetSignatureSizeAsync()=>Task.FromResult(capacity);
+        public Task<byte[]> GetSignatureAsync(Stream stream)=>inner.GetSignatureAsync(stream);
+    }
     [Fact]
     public async Task Bound_seals_reject_identity_changes_before_timestamping_and_return_only_the_verified_public_leaf()
     {

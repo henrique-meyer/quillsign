@@ -6,6 +6,7 @@ public sealed class SealOptions
 {
     public long MaximumBytes { get; set; } = 64 * 1024 * 1024;
     public int MaximumPages { get; set; } = 200;
+    // Ceiling for CMS reservation; each operation sizes its certificate profile and TSA bound.
     public int SignatureCapacityBytes { get; set; } = 128 * 1024;
     public string TsaUrl { get; set; } = "";
     public int TsaTimeoutSeconds { get; set; } = 15;

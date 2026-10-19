@@ -16,7 +16,7 @@ public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOpt
     public async Task<EmailPilotManifest> CreateAsync(string capability, CancellationToken ct = default)
     {
         if (!Enabled) throw new EmailDisabledException();
-        var id = RunId; var capabilityHash = EmailPilotCanonical.Capability(capability); var db = database();
+        var id = RunId; var capabilityHash = EmailPilotCanonical.Capability(capability); var allowance=options.Allowance with { }; var db = database();
         await Open(db, ct); await using var tx = await db.Database.BeginTransactionAsync(ct); await Lock(db, id, ct);
         var existing = await Manifest(db, id, false, ct);
         if (existing is not null)
@@ -25,7 +25,8 @@ public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOpt
             await tx.CommitAsync(ct); return existing;
         }
         var now = Now;
-        var value = new EmailPilotManifest(EmailPilotLimits.Version, id, now, now.AddMinutes(60), Convert.ToHexStringLower(capabilityHash), options.Mailboxes with { });
+        var value = new EmailPilotManifest(EmailPilotLimits.Version, id, now, now.AddMinutes(60), Convert.ToHexStringLower(capabilityHash), options.Mailboxes with { })
+            { Allowance=allowance };
         db.EmailPilotRuns.Add(new() { Id = id, CreatedAt = value.CreatedAt, ExpiresAt = value.ExpiresAt,
             ManifestSha256 = EmailPilotCanonical.Hash(value), CapabilitySha256 = capabilityHash });
         db.EmailPilotSecrets.Add(new() { RunId = id, ProtectedManifest = protection().Protect(id, "manifest", value), DeleteAfter = now.AddDays(7) });
@@ -73,12 +74,12 @@ public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOpt
         if (saved.Any(x => x.Kind == request.Kind && x.OperationId == request.OperationId && x.Role == request.Role))
             return EmailPilotReservationOutcome.Refused;
         if (await db.EmailPilotReservations.AnyAsync(x => x.Id == request.Id, ct)) return EmailPilotReservationOutcome.Refused;
-        var budget = Budget(saved);
+        var budget = Budget(saved); var allowance=run.EffectiveAllowance;
         if (request.Kind switch {
-            EmailPilotAttemptKind.Application => budget.ApplicationAttempts >= EmailPilotLimits.ApplicationAttempts,
-            EmailPilotAttemptKind.Simulator => budget.SimulatorAttempts >= EmailPilotLimits.SimulatorAttempts,
-            _ => budget.TimestampAttempts >= EmailPilotLimits.TimestampAttempts
-        } || budget.EncodedBytes + request.EncodedBytes > EmailPilotLimits.AggregateBytes) return EmailPilotReservationOutcome.Refused;
+            EmailPilotAttemptKind.Application => budget.ApplicationAttempts >= allowance.ApplicationAttempts,
+            EmailPilotAttemptKind.Simulator => budget.SimulatorAttempts >= allowance.SimulatorAttempts,
+            _ => budget.TimestampAttempts >= allowance.TimestampAttempts
+        } || budget.EncodedBytes + request.EncodedBytes > allowance.EncodedBytes) return EmailPilotReservationOutcome.Refused;
         var value = new EmailPilotAttempt(request.Id, id, request.SubjectEnvelopeId, request.OperationId, request.Kind, request.Role,
             request.EncodedBytes, request.RequestSha256, Now);
         db.EmailPilotReservations.Add(new() { Id = value.Id, RunId = id, SubjectEnvelopeId = value.SubjectEnvelopeId, OperationId = value.OperationId,
@@ -106,6 +107,7 @@ public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOpt
             value.CreatedAt != row.CreatedAt || value.ExpiresAt != row.ExpiresAt || value.ExpiresAt != value.CreatedAt.AddMinutes(60) || value.CreatedAt > Now ||
             secret.DeleteAfter != value.CreatedAt.AddDays(7) || secret.DeleteAfter.Offset != TimeSpan.Zero ||
             value.Mailboxes is null || !value.Mailboxes.Valid() || configured && value.Mailboxes != options.Mailboxes || !EmailPilotCanonical.Hash(value.CapabilitySha256) ||
+            !EmailPilotLimits.Valid(value.EffectiveAllowance) || configured && value.EffectiveAllowance != options.Allowance ||
             !CryptographicOperations.FixedTimeEquals(EmailPilotCanonical.Hash(value), row.ManifestSha256) ||
             !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(value.CapabilitySha256), row.CapabilitySha256)) throw EmailPilotProtection.Invalid();
         if (live && value.ExpiresAt <= Now) return null;
@@ -139,7 +141,9 @@ public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOpt
             return value;
         }).ToList();
         var total = Budget(result);
-        if (total.ApplicationAttempts > 20 || total.SimulatorAttempts > 10 || total.TimestampAttempts > 4 || total.EncodedBytes > EmailPilotLimits.AggregateBytes)
+        var allowance=run.EffectiveAllowance;
+        if (total.ApplicationAttempts > allowance.ApplicationAttempts || total.SimulatorAttempts > allowance.SimulatorAttempts ||
+            total.TimestampAttempts > allowance.TimestampAttempts || total.EncodedBytes > allowance.EncodedBytes)
             throw EmailPilotProtection.Invalid();
         return result;
     }
@@ -156,7 +160,8 @@ public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOpt
     private static EmailPilotBudget Budget(IEnumerable<EmailPilotAttempt> rows) => new(rows.Count(x => x.Kind == EmailPilotAttemptKind.Application),
         rows.Count(x => x.Kind == EmailPilotAttemptKind.Simulator), rows.Count(x => x.Kind == EmailPilotAttemptKind.Timestamp), rows.Sum(x => (long)x.EncodedBytes));
     private static bool MatchesCapability(EmailPilotManifest run, byte[] hash) => CryptographicOperations.FixedTimeEquals(Convert.FromHexString(run.CapabilitySha256), hash);
-    private void EnsureLive(EmailPilotManifest run) { if (!Enabled || run.RunId != RunId || run.Mailboxes != options.Mailboxes || run.ExpiresAt <= Now) throw EmailPilotProtection.Invalid(); }
+    private void EnsureLive(EmailPilotManifest run) { if (!Enabled || run.RunId != RunId || run.Mailboxes != options.Mailboxes ||
+        run.EffectiveAllowance != options.Allowance || run.ExpiresAt <= Now) throw EmailPilotProtection.Invalid(); }
     private static async Task Open(QuillSignDbContext db, CancellationToken ct)
     {
         if (db.Database.CurrentTransaction is not null) throw new InvalidOperationException("Pilot ledger operations require an explicit isolated transaction.");
