@@ -6,7 +6,7 @@ Tasks are recorded here and in Jira before implementation. Private deployment na
 
 Owner scope confirmed on 2026-10-19: the reusable app must support self-hosting for real ordinary contracts. A successful demo/sandbox signing test does not complete this release gate. Production retention, deletion, legal holds, usable privileged operator controls and recovery acceptance are required release work; they are not deferred optional enhancements. This does not claim universal enforceability, regulated-use certification or qualified signatures.
 
-Sequence: finish the approved QUILS-139 sandbox validation, then QUILS-146, QUILS-147, QUILS-148, QUILS-149 and QUILS-150 in small dependent checked slices. Existing demo policy and the approved bounded sandbox window remain unchanged. New cloud resources, permissions, live services and actual record destruction require a concrete separately approved rollout. AI placement remains deferred. No implementation story below is complete merely because this backlog is merged.
+Owner-authorized source sequence (2026-10-19): proceed independently with QUILS-146, QUILS-151, QUILS-152, QUILS-147, QUILS-148 and QUILS-149 while the separately pinned QUILS-139 sandbox validation runs. QUILS-150 still requires both the sandbox evidence and production lifecycle implementation. Existing demo policy and the approved bounded sandbox window remain unchanged. New cloud resources, permissions, live services and actual record destruction require a concrete separately approved rollout. AI placement remains deferred. No implementation story below is complete merely because this backlog is merged.
 
 ## QUILS-145: Plan production self-hosted retention deletion and legal holds
 
@@ -18,23 +18,39 @@ Treat a successful restricted demo sandbox run as evidence for its tested config
 
 Acceptance: tracked plan and native Jira agree on the required production work, dependencies, limitations and release gates; distinguish configuration from missing implementation; preserve historical demo decisions; update ignored source-of-truth requirements with the owner decision. Validate documentation and privacy/secret checks; commit, push, create/attach and self-merge the small documentation PR after all exact-head checks pass. Move only this planning story to Done on merge; implementation stories remain open.
 
-## QUILS-146: Freeze versioned production record lifecycle policies
+## QUILS-146: Define versioned production retention policy contracts
 
-Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
+Status: In Progress. Assigned to ChatGPT Codex. Independent source-only prerequisite; production behavior remains unchanged.
 
-Dependencies: QUILS-139, QUILS-145.
+Dependencies: QUILS-145. Owner explicitly authorized independent source implementation while the QUILS-139 sandbox test is pending on 2026-10-19. Remove the sandbox story as a source prerequisite; QUILS-150 retains it as a production acceptance gate. Do not change the pinned sandbox deployment or its approved package.
 
-Implement a production retention policy contract independent of synthetic-demo enrollment. Depends on the approved production lifecycle plan. Define operator-configured finite completion-based retention and deliberately selected indefinite retention; separately handle abandoned/unverified drafts, expiry, decline, void and failed/incomplete completion so they neither disappear prematurely nor live forever accidentally. Define the authoritative archive responsibility, retention clock and policy version for each state. Missing or inconsistent real-use configuration must not silently select the demo policy or a deletion deadline.
+First small implementation slice of production retention: define immutable versioned policy/snapshot and state-clock decision contracts, explicit operator-owned finite completed retention or deliberately selected indefinite retention, finite abandoned-draft/expired/declined/voided rules and archive responsibility. Pending signing and incomplete completion produce no automatic deletion deadline until their authoritative lifecycle disposition exists. Missing/invalid policy must not select demo defaults. Persistence/audit integration remains required in QUILS-151, and disclosure/completion/access integration remains required in QUILS-152; none is dropped or declared complete by this slice.
 
-Freeze and audit each record policy with its origin, applicable policy version, start/deadline and source evidence at the correct lifecycle boundary. Configuration changes are prospective; retention extensions or legacy migration require explicit auditable disposition, and no change may shorten existing immutable protection or rewrite signed disclosure/audit/publication evidence. Resolve indefinite retention versus case-specific legal holds explicitly. Bind real-use disclosures, access expiry, completion publication, pending work and stored protection to the saved policy while preserving historical recipe compatibility.
+Capture immutable policy values independently of later mutable options; validate bounded complete configuration, exact canonical snapshots/digests, lifecycle/clock boundaries, unsupported/unknown state, corrupted snapshots and overflow. Distinguish a retention eligibility date from authority to delete or proof of physical erasure. Ordinary indefinite retention is not a case-specific legal hold. Trusted state/time provenance must be supplied by later persistence integration; a digest alone grants no access or destructive capability.
 
-Acceptance: table-driven state transitions, prospective config changes, legacy missing-policy handling, concurrency, deadline boundaries and corrupted-policy refusal pass; sender/signer/lookup views report actual access and retainable-copy expectations without leaking hold reasons. Existing demo and completed-packet regression cases remain valid. No guessed statutory duration or operator disclosure text. No new cloud settings, storage policies or resource grants without a separately reviewed deployment.
+Acceptance: meaningful pure configuration/canonicalization/state-table/clock/tamper/prospective-change tests, warning-free build, preserved existing behavior and permissive dependencies, small checked PR/secret scan/self-merge/native Done. Source-only contract with no active configuration binding, endpoints, database schema, retention change, deletion/hold command, cloud mutation, provider call or public email. The full production readiness gate remains open in the dependent stories.
+
+## QUILS-151: Persist and audit frozen production retention policies
+
+Status: To Do. Assigned to ChatGPT Codex. Required production implementation; depends on QUILS-146.
+
+Dependencies: QUILS-146.
+
+Implement the persistence part of the original QUILS-146 scope after its versioned policy contract merges. Freeze the correct non-demo record policy at creation/first enrollment, including explicit finite/indefinite settings, record origin and evidence-bound policy digest. Insert-only SQL/schema and append-only audit provenance must distinguish new enrollment from legacy/missing policy; no automatic backfill or reinterpretation of signed records. Capture terminal state/time anchors under the existing envelope transaction and recover uncertain commits idempotently. Settings changes apply prospectively; explicit extensions/migration preserve historical evidence. No demo enrollment changes, hosted migration/grant, live service or deletion. Test SQL provenance, concurrency, source/state bindings, tampering, rollback and restart/unknown commits. This work is a required production release prerequisite for legal holds and deletion, not optional deferred scope.
+
+## QUILS-152: Bind production disclosures completion and access to frozen retention
+
+Status: To Do. Assigned to ChatGPT Codex. Required production implementation; depends on QUILS-151.
+
+Dependencies: QUILS-151.
+
+Implement the integration part of the original QUILS-146 scope after the policy contract and persistence story merge. Bind real-use disclosure/Send snapshots, final publication protection/deadlines and sender/signer/lookup/final reads to the exact saved production policy and terminal anchor. Preserve legacy publication recipe verification and all demo behavior. Never read mutable current options to shorten or extend an enrolled record, conflate ordinary indefinite retention with a case hold, rewrite signed evidence, restore expired sessions or authorize deletion. Pending signing and incomplete completion must remain explicit unresolved states rather than accidental purge candidates. Show actual retention/access and archive responsibility without hold reasons; fail closed for absent/inconsistent enrollment and insufficient storage protection. Validate meaningful SQL and real synthetic desktop/mobile/keyboard flows including clock boundaries, configuration changes, old recipes and corrupted evidence. Follow the local SEO regression runbook for visible routes. No fabricated operator policies, hosted settings/grants, live email/TSA or cloud policy changes. This preserves the original QUILS-146 integration requirements as mandatory production work.
 
 ## QUILS-147: Preserve production records with authorized durable legal holds
 
 Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
 
-Dependencies: QUILS-146.
+Dependencies: QUILS-146, QUILS-151, QUILS-152.
 
 Implement durable case-scoped legal-hold commands and evidence on the production lifecycle policy foundation. Select and document an explicit operator authentication/authorization mechanism appropriate to the existing no-account participant model before implementing privileged endpoints. Ordinary sender/signer magic links must never grant hold placement, release or arbitrary archive access. Require attributable operator identity, purpose/reason and reference, exact record scope, command idempotency, protected transport, CSRF where applicable, and append-only placement/release evidence with restricted sensitive details.
 
