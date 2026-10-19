@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Completion;
 using QuillSign.Data;
 using QuillSign.Documents;
+using QuillSign.Email.Pilot;
 using QuillSign.Sealing;
 using QuillSign.Signing;
 
@@ -10,17 +11,17 @@ namespace QuillSign.Work;
 
 public sealed class CompletionPipeline(CompletionCandidates candidates,CompletionSealOutputs seals,CompletionPublication publication)
 {
-    internal async Task<PublishedCompletion?> RunAsync(Guid id,CancellationToken ct)
+    internal async Task<PublishedCompletion?> RunAsync(Guid id,CancellationToken ct,CompletionTimestampWork? timestampWork=null)
     {
         var completed=await publication.ReadAsync(id,ct); if(completed is not null)return completed;
-        if(await candidates.PrepareAsync(id,ct) is null || await seals.PrepareAsync(id,ct) is null)return null;
+        if(await candidates.PrepareAsync(id,ct) is null || await seals.PrepareAsync(id,ct,timestampWork) is null)return null;
         return await publication.PublishAsync(id,ct);
     }
 }
 
 // Completion providers/storage resolve only for an actual Sealing delivery, after scope checks.
 public sealed class CompletionWorkHandler(QuillSignDbContext db,SignerCheckpointState state,CompletionCommitScope scope,
-    Func<CompletionPipeline> pipeline,TimeProvider time) : IWorkHandler
+    Func<CompletionPipeline> pipeline,TimeProvider time,PilotTimestampBoundary? timestamps=null) : IWorkHandler
 {
     public WorkKind Kind=>WorkKind.Sealing;
     public async Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)
@@ -46,10 +47,15 @@ public sealed class CompletionWorkHandler(QuillSignDbContext db,SignerCheckpoint
                     await db.Signers.AnyAsync(x=>x.EnvelopeId==id && x.Status!=SignerStatus.Signed,ct))return new(WorkOutcome.Failed,"completion-source-unavailable");
                 await transaction.CommitAsync(ct);
             }
+            CompletionTimestampWork? timestampWork=null;
+            if(timestamps is not null)timestampWork=await timestamps.ReadCompletionAsync(lease,id,row.PayloadJson,ct);
+            else if(await db.EmailPilotEnrollments.AsNoTracking().AnyAsync(x=>x.SubjectEnvelopeId==id,ct))
+                return new(WorkOutcome.Failed,"pilot-completion-unavailable");
             var remaining=lease.Until-time.GetUtcNow()-TimeSpan.FromSeconds(1); if(remaining<=TimeSpan.Zero)throw new CompletionLeaseUnavailableException();
             using var deadline=new CancellationTokenSource(remaining,time); using var linked=CancellationTokenSource.CreateLinkedTokenSource(ct,deadline.Token);
-            return await pipeline().RunAsync(id,linked.Token) is null ? new(WorkOutcome.Failed,"completion-evidence-unavailable") : new(WorkOutcome.Completed);
+            return await pipeline().RunAsync(id,linked.Token,timestampWork) is null ? new(WorkOutcome.Failed,"completion-evidence-unavailable") : new(WorkOutcome.Completed);
         }
+        catch(PilotTimestampDeniedException) {return new(WorkOutcome.Failed,"pilot-completion-unavailable");}
         catch(CompletionLeaseUnavailableException) {return new(WorkOutcome.Retry,"completion-lease-unavailable");}
         catch(Exception e) when(e is IOException or Azure.RequestFailedException or HttpRequestException or SealUnavailableException or CompletionPublicationUnavailableException or InvalidOperationException or DocumentConflictException)
         {return new(WorkOutcome.Retry,"completion-dependency-unavailable");}
