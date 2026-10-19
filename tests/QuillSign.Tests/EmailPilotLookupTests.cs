@@ -228,7 +228,7 @@ public sealed class EmailPilotLookupTests(SqlDatabaseFixture fixture) : IClassFi
         async Task<string> Get(string path)
         {
             using var response=await client.GetAsync(path);Take(response);Assert.Equal(System.Net.HttpStatusCode.OK,response.StatusCode);
-            Assert.Contains("no-store",response.Headers.CacheControl!.ToString());Assert.Contains("noindex",string.Join(",",response.Headers.GetValues("X-Robots-Tag")));
+            Assert.Contains("no-store",response.Headers.CacheControl!.ToString());Assert.Contains("no-referrer",response.Headers.GetValues("Referrer-Policy"));
             return await response.Content.ReadAsStringAsync();
         }
         async Task<HttpResponseMessage> Post(string path,string page,Dictionary<string,string> values,bool csrf=true)

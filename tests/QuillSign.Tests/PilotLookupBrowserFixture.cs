@@ -25,7 +25,13 @@ internal sealed class PilotLookupBrowserFixture:IAsyncDisposable
         var f=new PilotLookupBrowserFixture{h=h};var port=int.TryParse(Environment.GetEnvironmentVariable("QUILLSIGN_PILOT_LOOKUP_BROWSER_PORT"),out var p)?p:(int?)null;
         var builder=WebApplication.CreateBuilder(new WebApplicationOptions{ApplicationName=typeof(DocumentLookup).Assembly.FullName,EnvironmentName="Development",ContentRootPath=AppContext.BaseDirectory,
             WebRootPath=port is null?null:Path.Combine(Repository(),"src/QuillSign/wwwroot")});
-        builder.Logging.ClearProviders();if(port is null)builder.WebHost.UseTestServer();else builder.WebHost.UseUrls("http://127.0.0.1:"+port);
+        builder.Logging.ClearProviders();if(port is null)builder.WebHost.UseTestServer();else
+        {
+            builder.WebHost.UseUrls("http://127.0.0.1:"+port);
+            var outputRoot=Path.Combine(AppContext.BaseDirectory,"wwwroot");
+            if(Directory.Exists(outputRoot))builder.Environment.WebRootFileProvider=new Microsoft.Extensions.FileProviders.CompositeFileProvider(
+                builder.Environment.WebRootFileProvider,new Microsoft.Extensions.FileProviders.PhysicalFileProvider(outputRoot));
+        }
         builder.Configuration["Demo:PurgeAfterDays"]="7";builder.Services.AddRazorPages();
         builder.Services.AddDbContext<QuillSignDbContext>(o=>o.UseSqlServer(h.Db.Database.GetConnectionString()));
         builder.Services.AddQuillSignEmail(builder.Configuration,builder.Environment);builder.Services.AddQuillSignWork(builder.Configuration,builder.Environment);
@@ -38,7 +44,7 @@ internal sealed class PilotLookupBrowserFixture:IAsyncDisposable
         builder.Services.AddScoped<CompletionEvidenceCollector>(sp=>h.T.Run.Collector(sp.GetRequiredService<QuillSignDbContext>()));
         builder.Services.AddScoped<CompletionPublication>(sp=>h.For(sp.GetRequiredService<QuillSignDbContext>()).Publication);
         builder.Services.AddScoped<EmailPilotLookupAccess>(sp=>h.For(sp.GetRequiredService<QuillSignDbContext>()).Access);
-        f.App=builder.Build();f.App.UseStaticFiles();f.App.UseRouting();f.App.UseDocumentLookupBrowser();f.App.UseRateLimiter();f.App.UseAuthentication();f.App.UseAuthorization();f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
+        f.App=builder.Build();f.App.Use((http,next)=>{SenderConfiguration.PrivateStatusHeaders(http);http.Response.Headers["Referrer-Policy"]="no-referrer";http.Response.Headers["X-Content-Type-Options"]="nosniff";return next();});f.App.UseStaticFiles();f.App.UseRouting();f.App.UseDocumentLookupBrowser();f.App.UseRateLimiter();f.App.UseAuthentication();f.App.UseAuthorization();f.App.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
         await f.App.StartAsync();return f;
     }
     internal async Task PauseForBrowser()
