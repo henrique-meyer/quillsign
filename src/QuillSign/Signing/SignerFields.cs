@@ -33,7 +33,7 @@ public sealed class SignerFields(QuillSignDbContext db,SignerAccess access,Signa
         var result = new SignerFieldSnapshot(publicId,context.Identity.DocumentHash,context.Identity.DisclosureHash,signer.FullName,
             signer.SignatureAdoptionId,fields.Select(x => Item(x,signer)).ToArray());
         if ((await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null) return null;
-        await transaction.CommitAsync(ct); return result;
+        await access.CommitAsync(transaction,ct); return result;
     }
 
     public async Task<SignerFieldResult> ChangeAsync(ClaimsPrincipal principal,string publicId,SignerFieldChange change,string? ip,string? ua,CancellationToken ct = default)
@@ -82,7 +82,7 @@ public sealed class SignerFields(QuillSignDbContext db,SignerAccess access,Signa
                 input = field.Type == FieldType.FullName ? "server_signer_record" : "explicit_owned_field_request" }),PartyType.Signer,signer.Id);
         if ((await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null) return new(SignerFieldOutcome.NotFound);
         var saved = await db.Fields.AsNoTracking().SingleAsync(x => x.Id == field.Id,ct);
-        await transaction.CommitAsync(ct); return new(SignerFieldOutcome.Applied,Item(saved,signer));
+        await access.CommitAsync(transaction,ct); return new(SignerFieldOutcome.Applied,Item(saved,signer));
     }
 
     private Task<Signer> Signer(VerifiedSigner identity,CancellationToken ct) => db.Signers.AsNoTracking().SingleAsync(x => x.Id == identity.SignerId && x.EnvelopeId == identity.EnvelopeId,ct);

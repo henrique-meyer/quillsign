@@ -22,7 +22,7 @@ internal sealed record SenderVoidScope(Envelope Envelope,SignerCurrentSource Sou
 
 // Metadata verification shared by the original sender action and trusted notification
 // work. Internal reads require the parent transaction; they grant no user authority.
-public sealed class SenderVoidState(QuillSignDbContext db,SignerCheckpointState checkpoints,TimeProvider time)
+public sealed class SenderVoidState(QuillSignDbContext db,SignerCheckpointState checkpoints,TimeProvider time,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     public async Task<SenderVoidPreview?> PreviewAsync(ClaimsPrincipal sender,string publicId,DateTimeOffset ticketExpiresAt,CancellationToken ct=default)
     {
@@ -31,7 +31,7 @@ public sealed class SenderVoidState(QuillSignDbContext db,SignerCheckpointState 
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);await using var tx=await db.Database.BeginTransactionAsync(ct);
         var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={identity.Value.Id}").AsNoTracking().SingleOrDefaultAsync(ct);
         if(e is null || e.PublicId!=publicId || e.SenderEmail!=identity.Value.Email || e.SenderVerifiedAt is null || e.Status==EnvelopeStatus.Draft)return null;
-        var deadline=await SenderPreparationRetention.ReadAsync(db,e,time,ct);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,e,time,ct,pilotBounds);
         if(!Enum.IsDefined(e.Status) || e.SentAt is null || e.SentAt>time.GetUtcNow())throw Invalid();
         _=await SenderSentStatus.ReadSentAsync(db,e,null,ct);SenderVoidRecord? action=null;
         if(e.Status==EnvelopeStatus.Voided)action=(await ReadLockedAsync(e.Id,ct)??throw Invalid()).Action;
@@ -55,7 +55,7 @@ public sealed class SenderVoidState(QuillSignDbContext db,SignerCheckpointState 
         var progress=signers.Select(x=>new SenderSignerProgress(x.Order,x.FullName,x.Email,x.Role,Progress(x),x.SignedAt)).ToArray();
         if(ticketExpiresAt<=time.GetUtcNow())return null;
         DocumentRetentionAccess.Check(deadline,time);
-        await tx.CommitAsync(ct);DocumentRetentionAccess.Check(deadline,time);if(ticketExpiresAt<=time.GetUtcNow())return null;
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);DocumentRetentionAccess.Check(deadline,time);if(ticketExpiresAt<=time.GetUtcNow())return null;
         return new(e.PublicId,e.Title!,e.Status,Convert.ToBase64String(e.RowVersion),e.SentAt.Value,
             live,progress,action);
     }

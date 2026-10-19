@@ -40,7 +40,7 @@ public sealed class ReviewModel(DraftReview review,SenderSendReadiness readiness
             try { return await sentStatus().GetAsync(User,publicId,ct:ct) is null ? NotFound() : Redirect("/draft/"+publicId+"/sent"); }
             catch(Exception e) when(StorageError(e)) { return StatusCode(503,"Saved request status could not be verified. Retry later."); }
         }
-        Draft=snapshot; Version=snapshot.Version; RetentionSha256=snapshot.RetentionSha256; Readiness=readiness.Read(User,snapshot);
+        Draft=snapshot; Version=snapshot.Version; RetentionSha256=snapshot.RetentionSha256; Readiness=await readiness.ReadAsync(User,snapshot,ct);
         ReminderSchedulingVersion=QuillSign.Work.SignerReminderEvidence.Version;ReminderSha256=Readiness.Reminders?.Sha256;Notice=notices.Take(HttpContext); return Page();
     }
     public async Task<IActionResult> OnPostSendAsync(string publicId,CancellationToken ct)
@@ -76,7 +76,7 @@ public sealed class ReviewModel(DraftReview review,SenderSendReadiness readiness
     {
         if(SenderConfiguration.WantsJson(HttpContext))return new JsonResult(new { message }) { StatusCode=status };
         ErrorMessage=message; ReloadRequired=reload; Response.StatusCode=status;
-        try { Draft=(await review.GetAsync(User,publicId,ct))!; if(Draft is not null)Readiness=readiness.Read(User,Draft); }
+        try { Draft=(await review.GetAsync(User,publicId,ct))!; if(Draft is not null)Readiness=await readiness.ReadAsync(User,Draft,ct); }
         catch(Exception e) when(StorageError(e)) { }
         return Page();
     }

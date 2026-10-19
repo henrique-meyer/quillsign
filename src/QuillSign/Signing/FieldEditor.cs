@@ -23,7 +23,7 @@ public sealed record FieldSave(string Version, string DocumentId, IReadOnlyList<
 public enum FieldEditorError { None, NotFound, PreviewRequired, Conflict, Invalid }
 public sealed record FieldSaveResult(FieldEditorError Error, string? Message = null, string? Version = null);
 
-public sealed class FieldEditor(QuillSignDbContext db, AuditWriter audit, FieldEditorOptions options, TimeProvider time)
+public sealed class FieldEditor(QuillSignDbContext db, AuditWriter audit, FieldEditorOptions options, TimeProvider time,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     public async Task<FieldEditorSnapshot?> GetAsync(ClaimsPrincipal sender, string publicId, CancellationToken ct = default)
     {
@@ -34,7 +34,7 @@ public sealed class FieldEditor(QuillSignDbContext db, AuditWriter audit, FieldE
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var envelope = await LockedAsync(identity.Value.Id, ct);
         if (!Owns(envelope, identity.Value.Email, publicId)) return null;
-        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope!,time,ct);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope!,time,ct,pilotBounds);
         if(!Confirmed(envelope!))return null;
         var signers = await db.Signers.AsNoTracking().Where(x => x.EnvelopeId == envelope!.Id).OrderBy(x => x.Order)
             .Select(x => new SignerListItem(x.Id, x.Order, x.FullName, x.Email, x.Role)).ToListAsync(ct);
@@ -44,7 +44,7 @@ public sealed class FieldEditor(QuillSignDbContext db, AuditWriter audit, FieldE
             JsonSerializer.Deserialize<List<PageGeometry>>(envelope.PageSizesJson!)!, signers,
             fields.Select(x => new FieldInput(x.Id, x.SignerId, x.Type.ToString(), x.Page, x.X, x.Y, x.Width, x.Height,
                 x.Required, x.Label, x.Value)).ToList());
-        DocumentRetentionAccess.Check(deadline,time);await transaction.CommitAsync(ct);
+        DocumentRetentionAccess.Check(deadline,time);await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
         return result;
     }
 
@@ -57,7 +57,7 @@ public sealed class FieldEditor(QuillSignDbContext db, AuditWriter audit, FieldE
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var envelope = await LockedAsync(identity.Value.Id, ct);
         if (!Owns(envelope, identity.Value.Email, publicId)) return new(FieldEditorError.NotFound);
-        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope!,time,ct);
+        var deadline=await SenderPreparationRetention.ReadAsync(db,envelope!,time,ct,pilotBounds);
         if (!Confirmed(envelope!)) return new(FieldEditorError.PreviewRequired, "Confirm the current PDF before placing fields.");
         if (save.DocumentId != envelope!.PdfBlob || !Matches(save.Version, envelope.RowVersion))
             return new(FieldEditorError.Conflict, "This draft changed in another tab. Your edits are still here; copy or export them before reloading.");
@@ -117,7 +117,7 @@ public sealed class FieldEditor(QuillSignDbContext db, AuditWriter audit, FieldE
         await audit.AppendAsync(envelope.Id, "fields_saved", identity.Value.Email, ip, userAgent, ct,
             JsonSerializer.Serialize(new { documentId = envelope.PdfBlob, fields = persisted }));
         DocumentRetentionAccess.Check(deadline,time);
-        await transaction.CommitAsync(ct);
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
         return new(FieldEditorError.None, Version: Convert.ToBase64String(envelope.RowVersion));
     }
 

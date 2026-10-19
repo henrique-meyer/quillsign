@@ -142,7 +142,7 @@ public static class VoidNotificationWorkConfiguration
         // Worker-only and scanner-safe hosts resolve SQL dependencies only on use.
         services.TryAddScoped<QuillSign.Sender.SenderVoidState>(sp=> {
             var db=sp.GetRequiredService<QuillSign.Data.QuillSignDbContext>();var clock=sp.GetRequiredService<TimeProvider>();
-            return new(db,new(db,clock),clock);
+            return new(db,new(db,clock),clock,sp.GetService<QuillSign.Email.Pilot.EmailPilotReadBounds>());
         });
         services.TryAddScoped<VoidNotificationProtection>();
         services.TryAddScoped<VoidNotificationJobs>(sp=>ActivatorUtilities.CreateInstance<VoidNotificationJobs>(sp));

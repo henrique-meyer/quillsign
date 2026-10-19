@@ -12,7 +12,7 @@ namespace QuillSign.Sender;
 // mutation below independently rechecks its authority under the envelope lock.
 public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContactCorrectionOptions options,
     EmailOptions email, WorkOptions work, SignerAccess access, InvitationLineage lineage,
-    InvitationSuccessorJobs jobs, AuditWriter audit, TimeProvider time)
+    InvitationSuccessorJobs jobs, AuditWriter audit, TimeProvider time,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     private bool Enabled => options.Enabled && email.Enabled && work.Enabled;
     private readonly SignerContactCorrectionPolicy policy = new(db, options, email, work, time);
@@ -38,7 +38,7 @@ public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContac
         else if (!await CanRetireAsync(scope.Invitations.Latest, ct)) blocked = SignerContactCorrectionOutcome.Busy;
         if (ticketExpiresAt <= time.GetUtcNow() || envelope!.ExpiresAt <= time.GetUtcNow()) return null;
         DocumentRetentionAccess.Check(scope.Retention, time);
-        await tx.CommitAsync(ct);
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);
         DocumentRetentionAccess.Check(scope.Retention, time);
         return Enabled && ticketExpiresAt > time.GetUtcNow() ? new(envelope.Title!, Review(scope, address), blocked) { RetentionDeadline = scope.Retention } : null;
     }
@@ -141,7 +141,7 @@ public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContac
             if (reviewUntil <= time.GetUtcNow() || dayEnd <= time.GetUtcNow()) return SignerContactCorrectionOutcome.Conflict;
             DocumentRetentionAccess.Check(scope.Retention, time);
             if (updated.ExpiresAt <= time.GetUtcNow()) return SignerContactCorrectionOutcome.Closed;
-            await tx.CommitAsync(ct);
+            await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);
         }
         await jobs.PublishAsync(queued, ct);
         return SignerContactCorrectionOutcome.Queued;
@@ -153,7 +153,7 @@ public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContac
             x.Status == EnvelopeStatus.Sent && (x.ExpiresAt == null || x.ExpiresAt > time.GetUtcNow()), ct);
     private async Task<Scope?> ScopeAsync(Envelope envelope, CancellationToken ct)
     {
-        var retention = await SenderPreparationRetention.ReadAsync(db, envelope, time, ct);
+        var retention = await SenderPreparationRetention.ReadAsync(db, envelope, time, ct,pilotBounds);
         var signer = await db.Signers.Where(x => x.EnvelopeId == envelope.Id && x.Status != SignerStatus.Signed).OrderBy(x => x.Order).FirstOrDefaultAsync(ct);
         if (signer is null || signer.Status == SignerStatus.Declined || await db.SignerFinishAcceptances.AnyAsync(x => x.EnvelopeId == envelope.Id && x.SignerId == signer.Id, ct)) return null;
         var context = await access.GetEligibleLockedAsync(envelope.Id, signer.Id, ct); if (context is null) return null;

@@ -5,6 +5,15 @@ namespace QuillSign.Email.Pilot;
 
 public static class EmailPilotConfiguration
 {
+    // Still source-only. Compose even after a pilot is disabled so persisted
+    // cohorts retain their denial; this never changes ordinary email options.
+    public static IServiceCollection AddEmailPilotReadScopeFoundation(this IServiceCollection services,IConfiguration configuration)
+    {
+        services.AddEmailPilotAdmissionFoundation(configuration);
+        services.AddScoped<EmailPilotReadBounds>(sp=>new(()=>sp.GetRequiredService<QuillSignDbContext>(),
+            ()=>sp.GetRequiredService<EmailPilotEnvelopeAccess>(),sp.GetRequiredService<TimeProvider>()));
+        return services;
+    }
     // Source-only composition: application/worker startup still does not call it.
     public static IServiceCollection AddEmailPilotWorkScopeFoundation(this IServiceCollection services,IConfiguration configuration)
     {

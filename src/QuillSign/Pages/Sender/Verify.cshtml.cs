@@ -29,8 +29,9 @@ public sealed class VerifyModel(Func<SenderWorkflow> workflow, SenderAvailabilit
             return Redirect("/");
         }
         var now = time.GetUtcNow();
+        var until=verified.AccessExpiresAt is {} end && end<now.AddHours(options.SessionHours) ? end : now.AddHours(options.SessionHours);
         await HttpContext.SignInAsync(EnvelopeStorageAuthorization.SenderScheme, SenderConfiguration.Principal(verified),
-            new AuthenticationProperties { IssuedUtc = now, ExpiresUtc = now.AddHours(options.SessionHours), IsPersistent = false, AllowRefresh = false });
+            new AuthenticationProperties { IssuedUtc = now, ExpiresUtc = until, IsPersistent = false, AllowRefresh = false });
         var draft = "/draft/" + verified.PublicId;
         if (SenderConfiguration.WantsJson(HttpContext)) return new JsonResult(new { location = draft });
         return Redirect(draft);
