@@ -1786,7 +1786,7 @@ Worker integration validation: the initial nine real SQL/captured-boundary dispa
 
 ## QUILS-136: Bound pilot browser sessions and final reads to the immutable run
 
-Status: In Progress. Assigned to ChatGPT Codex. Source-only dependent browser/read safeguard for QUILS-116.
+Status: Done after checked merge; native Jira Done verified. Assigned to ChatGPT Codex. Source-only dependent browser/read safeguard for QUILS-116.
 
 Bound pilot sender, signer, completion-reader and final-download authority to the authenticated persisted cohort and immutable run expiry, including early disable/config rotation; known cohorts never become ordinary sessions. Reuse QUILS-132 envelope access without exposing private mailbox/capability values. Preserve all ordinary authentication, consent/current-copy/evidence/retention/read-only contracts. New sender verification, signer sessions, completion links/sessions and download grants expire no later than the fixed run; never rewrite existing token history. Recheck persisted pilot scope at redemption/read/actions and after asynchronous file preparation where authority is consumed. Keep public intake unavailable, default hosts lazy and ordinary behavior unchanged when the optional pilot composition is absent. Include sender Review/Sent replay shortcuts so they cannot report success after scope denial. No private operator route or startup activation in this slice; those remain final orchestration. No cloud/SQL grant/config changes, live mail/TSA/conversion or purchase. Meaningful real SQL/protected-proof, expired/disabled/rotated/stale and after-I/O denial tests, ordinary regressions and private browser/auth boundaries as applicable, secrets and checked small PR/attach/selfmerge/native Done. Depends on QUILS-125/127/128/131/132; lookup-specific scope and null-envelope mappings are owned separately by QUILS-135.
 
@@ -1826,7 +1826,7 @@ Transport validation: 163 combined pilot/accounting/admission/worker-authority, 
 
 ## QUILS-135: Bind restricted pilot lookup to exact completed cohort
 
-Status: In Progress. Assigned to ChatGPT Codex. Design first; source only, dependent on QUILS-125/127/128/129/130/131/132 and QUILS-134 for its genuine completion fixture.
+Status: Done after checked merge; native Jira Done verified. Assigned to ChatGPT Codex. Design first; source only, dependent on QUILS-125/127/128/129/130/131/132 and QUILS-134 for its genuine completion fixture.
 
 Agree an exact authenticated request/work/token/session-to-run mapping and private UI/API boundaries before implementation. Preserve disabled public find intake and existing null-envelope lookup WorkItems, EmailOutbox, system token identity and OutgoingEmail. Admit at most one immutable lookup request per run only on an explicit authenticated operator POST, never automatically or from an arbitrary address/envelope argument. Persist protected immutable evidence binding one exact enrolled Completion-scenario subject, the manifest Sender role only and original request/source; never infer pilot authority from recipient address alone. Use a separate typed lookup mail authority/send path charged against the existing twenty-application-attempt budget through that bound completion subject, while keeping QUILS-130 strict for ordinary envelope mail. Require actual normal mailbox redemption and filter list/cursor/handoff/download to that retained enrolled completion, with original run/configuration/operator/retention/token/session/lease expiry fences and ambiguous recovery. Root owns private operator UI and sender/signer/completion sessions; coordinate and split small follow-ups if needed instead of exposing partial authority. Keep registration, public availability and all cloud/provider activity off. Validate meaningful SQL/protection/captured-mail exact-scope, unrelated-record, replay, expiry, counter and completion verification behavior, secret scan, checked PR/attach/selfmerge/native Done. No live mail/TSA/conversion, cloud/settings/credential changes or purchases.
 
@@ -1838,7 +1838,7 @@ Current schema/grant regression validation: all 23 persistence, disclosure-persi
 
 ## QUILS-139: Deploy and validate the approved restricted hosted signing pilot
 
-Status: To Do. Assigned to ChatGPT Codex. Dependent deployment/validation slice after checked QUILS-116 and prerequisites; already approved scope, public email remains disabled.
+Status: In Progress. Assigned to ChatGPT Codex. Dependent deployment/validation slice after checked QUILS-116 and prerequisites; already approved scope, public email remains disabled.
 
 Deploy the checked restricted signing pilot and run the already owner-approved bounded hosted validation after QUILS-116 and all its checked prerequisites merge. This is the deployment/operational evidence slice; do not duplicate source gates or request another approval within the agreed package.
 
