@@ -130,6 +130,9 @@ namespace QuillSign.Data.Migrations
                         .HasMaxLength(320)
                         .HasColumnType("nvarchar(320)");
 
+                    b.Property<Guid?>("EmailPilotLookupRequestId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid?>("EnvelopeId")
                         .HasColumnType("uniqueidentifier");
 
@@ -192,6 +195,8 @@ namespace QuillSign.Data.Migrations
                             t.HasCheckConstraint("CK_AuthToken_DocumentSha256", "[DocumentSha256] IS NULL OR DATALENGTH([DocumentSha256]) = 32");
 
                             t.HasCheckConstraint("CK_AuthToken_PartyType", "[PartyType] IS NULL OR [PartyType] IN ('Sender','Signer','Recipient','System')");
+
+                            t.HasCheckConstraint("CK_AuthToken_PilotLookup", "[EmailPilotLookupRequestId] IS NULL OR ([EmailPilotLookupRequestId]<>'00000000-0000-0000-0000-000000000000' AND [Purpose]='Lookup' AND [EnvelopeId] IS NULL AND [PartyType]='System' AND [PartyId] IS NULL AND [Email]='' AND [Ip] IS NULL AND [DocumentId] IS NULL AND [DocumentSha256] IS NULL AND [DisclosureSha256] IS NULL AND [CompletionPublicationId] IS NULL AND [CompletionRecipeSha256] IS NULL AND [CompletionPartySha256] IS NULL AND [SignerContactRevisionId] IS NULL)");
 
                             t.HasCheckConstraint("CK_AuthToken_Purpose", "[Purpose] IS NULL OR [Purpose] IN ('SenderVerify','SenderStatus','SignerAccess','Lookup','CompletionAccess')");
 
@@ -851,6 +856,126 @@ namespace QuillSign.Data.Migrations
                             t.HasCheckConstraint("CK_EmailPilotEnrollmentRecord_Scenario", "[Scenario] IS NULL OR [Scenario] IN ('Completion','Void','Decline')");
 
                             t.HasCheckConstraint("CK_EmailPilotEnrollment_Scope", "[SubjectEnvelopeId]<>'00000000-0000-0000-0000-000000000000' AND DATEPART(TZOFFSET,[EnrolledAt])=0");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotLookupRequestRecord", b =>
+                {
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ProtectedBinding")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("PublicationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("PublicationRecipeSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("RetentionSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("SubjectEnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("WorkSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.HasKey("RunId");
+
+                    b.ToTable("EmailPilotLookupRequests", t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailPilotLookupRequestRecord_PublicationRecipeSha256", "[PublicationRecipeSha256] IS NULL OR DATALENGTH([PublicationRecipeSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_EmailPilotLookupRequestRecord_RequestSha256", "[RequestSha256] IS NULL OR DATALENGTH([RequestSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_EmailPilotLookupRequestRecord_RetentionSha256", "[RetentionSha256] IS NULL OR DATALENGTH([RetentionSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_EmailPilotLookupRequestRecord_WorkSha256", "[WorkSha256] IS NULL OR DATALENGTH([WorkSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_PilotLookupRequest_Binding", "DATALENGTH([ProtectedBinding]) BETWEEN 2 AND 8192");
+
+                            t.HasCheckConstraint("CK_PilotLookupRequest_Ids", "[RunId]<>'00000000-0000-0000-0000-000000000000' AND [RequestId]<>'00000000-0000-0000-0000-000000000000' AND [SubjectEnvelopeId]<>'00000000-0000-0000-0000-000000000000' AND [PublicationId]<>'00000000-0000-0000-0000-000000000000'");
+
+                            t.HasCheckConstraint("CK_PilotLookupRequest_Interval", "DATEPART(TZOFFSET,[RequestedAt])=0 AND DATEPART(TZOFFSET,[ExpiresAt])=0 AND [ExpiresAt]>[RequestedAt] AND [ExpiresAt]<=DATEADD(minute,60,[RequestedAt])");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotLookupTokenRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("IssuedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("IssuedRevision")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("nvarchar(12)");
+
+                    b.Property<string>("ProtectedBinding")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("TokenSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId");
+
+                    b.HasIndex("RequestId", "Attempt")
+                        .IsUnique();
+
+                    b.ToTable("EmailPilotLookupTokens", t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailPilotLookupTokenRecord_TokenSha256", "[TokenSha256] IS NULL OR DATALENGTH([TokenSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_PilotLookupToken_Binding", "DATALENGTH([ProtectedBinding]) BETWEEN 2 AND 8192 AND LEN([IssuedRevision])=12");
+
+                            t.HasCheckConstraint("CK_PilotLookupToken_Ids", "[Id]<>'00000000-0000-0000-0000-000000000000' AND [RunId]<>'00000000-0000-0000-0000-000000000000' AND [RequestId]<>'00000000-0000-0000-0000-000000000000' AND [Attempt] BETWEEN 1 AND 10");
+
+                            t.HasCheckConstraint("CK_PilotLookupToken_Interval", "DATEPART(TZOFFSET,[IssuedAt])=0 AND DATEPART(TZOFFSET,[ExpiresAt])=0 AND [ExpiresAt]>[IssuedAt] AND [ExpiresAt]<=DATEADD(minute,60,[IssuedAt])");
                         });
                 });
 
@@ -2084,6 +2209,31 @@ namespace QuillSign.Data.Migrations
 
             modelBuilder.Entity("QuillSign.Data.EmailPilotEnrollmentRecord", b =>
                 {
+                    b.HasOne("QuillSign.Data.EmailPilotRunRecord", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotLookupRequestRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.EmailPilotRunRecord", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotLookupTokenRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.EmailPilotLookupRequestRecord", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .HasPrincipalKey("RequestId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
                     b.HasOne("QuillSign.Data.EmailPilotRunRecord", null)
                         .WithMany()
                         .HasForeignKey("RunId")

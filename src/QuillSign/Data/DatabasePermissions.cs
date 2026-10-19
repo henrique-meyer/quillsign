@@ -137,7 +137,12 @@ public static class DatabasePermissions
             DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotEnrollments] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotReservations] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotReservations] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotLookupRequests] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotLookupRequests] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotLookupTokens] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotLookupTokens] TO [app_runtime_role];
             DENY UPDATE ON OBJECT::[dbo].[AuthTokens] ([SignerContactRevisionId]) TO [app_runtime_role];
+            DENY UPDATE ON OBJECT::[dbo].[AuthTokens] ([EmailPilotLookupRequestId]) TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[CompletionCandidates] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[CompletionCandidates] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[CompletionSealOutputs] TO [app_runtime_role];
