@@ -34,9 +34,11 @@ public sealed class EmailPilotEnvelopeAccess(Func<QuillSignDbContext> database, 
         if(db.Database.CurrentTransaction is not null || db.ChangeTracker.HasChanges())
             throw new InvalidOperationException("Standalone pilot reads require a clean context without an existing transaction.");
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
-        await using var transaction=await db.Database.BeginTransactionAsync(ct);
-        var result=await ReadLockedAsync(new(){Id=envelopeId},ct);
-        await transaction.CommitAsync(ct);
+        EmailPilotEnvelopeCohort result;
+        await using(var transaction=await db.Database.BeginTransactionAsync(ct)) {
+            result=await ReadLockedAsync(new(){Id=envelopeId},ct);
+            await transaction.CommitAsync(ct);
+        }
         return result.Allowed && !ledger().EnvelopeCohortLive(result.Manifest!,admission,work) ? result.Denied() : result;
     }
     // The caller already owns an envelope transaction. Do not open an isolated

@@ -5,6 +5,8 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Email;
+using QuillSign.Email.Pilot;
+using QuillSign.Legal;
 using QuillSign.Signing;
 namespace QuillSign.Work;
 
@@ -22,15 +24,18 @@ public sealed class SignerInvitationProtection(IDataProtectionProvider provider)
         JsonSerializer.Deserialize<ProtectedWorkPayload>(value)?.Protected ?? throw new JsonException())) ?? throw new JsonException();
 }
 public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSignals> signals,WorkOptions work,EmailOptions email,
-    SignerInvitationProtection protection,TimeProvider time)
+    SignerInvitationProtection protection,TimeProvider time,EmailPilotEnvelopeAccess? pilot=null)
 {
     public async Task<Guid> PrepareAsync(Guid envelopeId,Guid signerId,string recipient,CancellationToken ct,Guid? invitationId=null)
     {
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("Preparing invitations requires a transaction.");
-        if (!work.Enabled || !email.Enabled) throw new EmailDisabledException();
+        if (!work.Enabled || !email.Enabled && pilot is null) throw new EmailDisabledException();
         var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==envelopeId,ct);
+        var cohort=pilot is null ? null : await pilot.RequireSendRosterLockedAsync(envelope,ct);
+        if(!email.Enabled && cohort?.Allowed!=true)throw new EmailDisabledException();
         var source=await new SignerCheckpointState(db,time).CurrentAsync(envelope,ct) ?? throw new InvalidDataException("Current invitation document is unavailable.");
         if(envelope.ErsdSha256 is not { Length:32 })throw new InvalidDataException("Current invitation disclosure is unavailable.");
+        if(cohort?.IsEnrolled==true)await DemandPilotSource(envelope,cohort,signerId,recipient,source,ct);
         var contact=SignerContactEpoch.Legacy;
         if(await InvitationLineage.RequiresVerifiedHistoryAsync(db,envelopeId,ct)) {
             var contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(envelope,ct);
@@ -42,7 +47,30 @@ public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSigna
                 ContactRevisionId:contact.RevisionId,ContactRevisionNumber:contact.Number)),AvailableAt = time.GetUtcNow() };
         if(invitationId is Guid id) { if(id==Guid.Empty)throw new ArgumentException("Invalid invitation ID."); row.Id=id; }
         db.EmailOutbox.Add(row); db.WorkItems.Add(new WorkItem { Id = row.Id,EnvelopeId = envelopeId,Kind = WorkKind.Email,AvailableAt = row.AvailableAt });
-        await db.SaveChangesAsync(ct); await signals().PutHintAsync(row.Id,row.AvailableAt,ct); return row.Id;
+        await db.SaveChangesAsync(ct); await signals().PutHintAsync(row.Id,row.AvailableAt,ct);
+        if(cohort is not null) {
+            var current=await pilot!.RequireSendRosterLockedAsync(envelope,ct);
+            if(current.IsEnrolled!=cohort.IsEnrolled || current.RunId!=cohort.RunId || current.RunExpiresAt!=cohort.RunExpiresAt ||
+                current.Scenario!=cohort.Scenario || current.IsEnrolled && !current.Allowed)throw new EmailDisabledException();
+            if(current.IsEnrolled)await DemandPilotSource(envelope,current,signerId,recipient,source,ct);
+        }
+        return row.Id;
+    }
+    private async Task DemandPilotSource(Envelope envelope,EmailPilotEnvelopeCohort cohort,Guid signerId,string recipient,SignerCurrentSource source,CancellationToken ct)
+    {
+        if(!cohort.Allowed || !cohort.EnvelopeExists || cohort.RunExpiresAt is not {} until || until<=time.GetUtcNow())throw new EmailDisabledException();
+        var parent=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==envelope.Id,ct);
+        var current=await new SignerCheckpointState(db,time).CurrentAsync(parent,ct);
+        var next=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==parent.Id && x.Status!=SignerStatus.Signed).OrderBy(x=>x.Order).FirstOrDefaultAsync(ct);
+        if(parent.Status!=EnvelopeStatus.Sent || parent.SentAt is null || parent.SentAt>time.GetUtcNow() || parent.ExpiresAt<=time.GetUtcNow() ||
+            parent.ErsdVersion is null || parent.Title is null || parent.ErsdText is null || parent.ErsdSha256 is not {Length:32} ||
+            !ElectronicRecordDisclosure.Verify(new(parent.ErsdVersion,parent.PublicId,parent.Title,parent.SenderEmail,parent.ErsdText,parent.ErsdSha256)) ||
+            envelope.ErsdSha256 is not {Length:32} || !parent.ErsdSha256.AsSpan().SequenceEqual(envelope.ErsdSha256) ||
+            current is null || current.ObjectId!=source.ObjectId || current.Version!=source.Version || current.FinishId!=source.FinishId ||
+            !current.Sha256.AsSpan().SequenceEqual(source.Sha256) || next is null || next.Id!=signerId || next.Email!=recipient ||
+            next.Status!=SignerStatus.Pending || next.Order!=source.Version+1 ||
+            await db.SignerFinishAcceptances.AnyAsync(x=>x.EnvelopeId==parent.Id && x.SignerId==signerId,ct) || cohort.RunExpiresAt<=time.GetUtcNow())
+            throw new EmailDisabledException();
     }
     public async Task PublishAsync(Guid id,CancellationToken ct)
     {
