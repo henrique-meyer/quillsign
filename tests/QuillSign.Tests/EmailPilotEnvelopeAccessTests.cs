@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Data.Common;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using QuillSign.Data;
@@ -89,6 +91,26 @@ public sealed class EmailPilotEnvelopeAccessTests(SqlDatabaseFixture fixture):IC
         await Assert.ThrowsAsync<InvalidOperationException>(()=>access.ReadAsync(parent.Id));
         Assert.Same(transaction,h.Db.Database.CurrentTransaction);
         Assert.True((await access.ReadLockedAsync(parent)).Allowed);
+    }
+
+    [Theory]
+    [InlineData("expiry")][InlineData("disable")][InlineData("public-email")]
+    public async Task Standalone_read_cannot_return_live_authority_when_commit_crosses_run_or_configuration_cutoff(string cutoff)
+    {
+        Action? after=null;
+        await using var source=fixture.Open();
+        await using var h=new EmailPilotAdmissionTests.Harness(new(new DbContextOptionsBuilder<QuillSignDbContext>()
+            .UseSqlServer(source.Database.GetConnectionString()).AddInterceptors(new AfterCommit(()=>after?.Invoke())).Options));
+        var parent=await Admit(h);var end=h.Clock.Now.AddMinutes(60);
+        after=()=>{if(cutoff=="expiry")h.Clock.Now=end;if(cutoff=="disable")h.Options.Enabled=false;if(cutoff=="public-email")h.Email.Enabled=true;};
+        var result=await Access(h).ReadAsync(parent.Id);
+        Assert.True(result.IsEnrolled);Assert.False(result.Allowed);Assert.Equal(end,result.RunExpiresAt);
+    }
+
+    private sealed class AfterCommit(Action callback):DbTransactionInterceptor
+    {
+        public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData eventData,CancellationToken ct=default)
+        { callback();return Task.CompletedTask; }
     }
 
     [Theory]
