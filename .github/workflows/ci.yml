@@ -12,6 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify bounded recipient bootstrap without AWS
+        shell: pwsh
+        run: ./tests/scripts/Test-SesTestRecipients.ps1
       - name: Compile Bicep
         run: |
           az bicep build --file infra/main.bicep --stdout > /dev/null

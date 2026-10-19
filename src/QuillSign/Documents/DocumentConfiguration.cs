@@ -21,6 +21,7 @@ public static class DocumentConfiguration
         services.AddSingleton<RtfPackageValidation>();
         services.AddSingleton(config.GetSection("OfficeConversion").Get<OfficeConversionOptions>()??new());
         services.AddScoped<StaticOfficeConverter>();
+        services.AddScoped<OfficeDocumentWorkflow>();
         services.AddScoped<DocxDocumentWorkflow>();
         services.AddScoped<TextPdfConverter>();
         services.AddScoped<TextDocumentWorkflow>();
