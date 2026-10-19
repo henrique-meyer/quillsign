@@ -26,6 +26,8 @@ public static class EmailPilotConfiguration
             sp.GetService<EmailOptions>() ?? new(),sp.GetService<Work.WorkOptions>() ?? new(),sp.GetService<Sender.SenderOptions>() ?? new(),
             ()=>sp.GetRequiredService<Sender.SenderAvailability>(),()=>sp.GetRequiredService<EmailPilotLedger>(),
             ()=>sp.GetRequiredService<Work.EmailOutboxWriter>(),()=>sp.GetRequiredService<Work.EmailPayloadProtection>(),sp.GetRequiredService<TimeProvider>()));
+        services.AddScoped<EmailPilotEnvelopeAccess>(sp=>new(()=>sp.GetRequiredService<QuillSignDbContext>(),()=>sp.GetRequiredService<EmailPilotLedger>(),
+            ()=>sp.GetRequiredService<Work.EmailPayloadProtection>(),admission,sp.GetService<Work.WorkOptions>()??new()));
         return services;
     }
 
