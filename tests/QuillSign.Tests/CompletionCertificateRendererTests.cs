@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using PdfSharp.Pdf.IO;
 using QuillSign.Completion;
+using QuillSign.Email;
 using QuillSign.Documents;
 using QuillSign.Sealing;
 using QuillSign.Signing;
@@ -79,8 +80,24 @@ public sealed class CompletionCertificateRendererTests
         var sealedCertificate=await seal.Engine.SealAsync(standalone.Bytes,standalone.Sha256);
         _=await new SealCms(seal.Options,seal.Timestamps).VerifyAsync(sealedCertificate.Bytes,seal.Seal,sealedCertificate.SealedAt,default);
         Assert.Equal(2,seal.Requests);
+        // Serialize both real production outputs, rather than estimating decoded
+        // attachment lengths. MIME base64/line wrapping must fit the unchanged bound.
+        var message=new OutgoingEmail("recipient@example.invalid","Synthetic completion - NO AGREEMENT",
+            "Synthetic test only. Both final copies are attached.","<p>Synthetic test only. Both final copies are attached.</p>",
+            Attachments:[new("executed.pdf",executed.Bytes),new("certificate.pdf",sealedCertificate.Bytes)]);
+        var prepared=await PreparedRawMime.PrepareAsync(message,"sender@example.invalid","Synthetic sender");
+        Assert.InRange(prepared.ByteCount,1,PreparedRawMime.MaximumBytes);
+        using var mime=await MimeKit.MimeMessage.LoadAsync(prepared.OpenRead());
+        var attachments=mime.Attachments.Cast<MimeKit.MimePart>().ToArray(); Assert.Equal(2,attachments.Length);
+        for(var i=0;i<attachments.Length;i++) {
+            Assert.NotNull(attachments[i].Content);
+            using var content=new MemoryStream(); await attachments[i].Content!.DecodeToAsync(content);
+            Assert.Equal(i==0 ? executed.Bytes : sealedCertificate.Bytes,content.ToArray());
+        }
         if(Environment.GetEnvironmentVariable("QUILLSIGN_COMPLETION_ARTIFACTS") is {Length:>0} path) {
             Directory.CreateDirectory(path); await File.WriteAllBytesAsync(Path.Combine(path,"source.pdf"),f.Source);
+            await File.WriteAllBytesAsync(Path.Combine(path,"unsigned-executed.pdf"),packet.Bytes);
+            await File.WriteAllBytesAsync(Path.Combine(path,"unsigned-certificate.pdf"),standalone.Bytes);
             await File.WriteAllBytesAsync(Path.Combine(path,"appendix.pdf"),packet.AppendixBytes); await File.WriteAllBytesAsync(Path.Combine(path,"executed.pdf"),executed.Bytes);
             await File.WriteAllBytesAsync(Path.Combine(path,"certificate.pdf"),sealedCertificate.Bytes);
         }
