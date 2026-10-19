@@ -27,6 +27,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     public DbSet<EmailPilotSecretRecord> EmailPilotSecrets => Set<EmailPilotSecretRecord>();
     public DbSet<EmailPilotEnrollmentRecord> EmailPilotEnrollments => Set<EmailPilotEnrollmentRecord>();
     public DbSet<EmailPilotReservationRecord> EmailPilotReservations => Set<EmailPilotReservationRecord>();
+    public DbSet<EmailPilotLookupRequestRecord> EmailPilotLookupRequests => Set<EmailPilotLookupRequestRecord>();
+    public DbSet<EmailPilotLookupTokenRecord> EmailPilotLookupTokens => Set<EmailPilotLookupTokenRecord>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<Suppression> Suppressions => Set<Suppression>();
 
@@ -230,6 +232,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
             }
         }
         EmailPilotModel.Configure(model);
+        EmailPilotLookupModel.Configure(model);
     }
 
     private void GuardAuditMutations()
@@ -238,10 +241,14 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         if (ChangeTracker.Entries<EmailPilotRunRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<EmailPilotSecretRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<EmailPilotEnrollmentRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
-            ChangeTracker.Entries<EmailPilotReservationRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            ChangeTracker.Entries<EmailPilotReservationRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<EmailPilotLookupRequestRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<EmailPilotLookupTokenRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Pilot run, enrollment and reservation evidence is immutable. Secret cleanup requires its privileged path.");
         if(ChangeTracker.Entries<AuthToken>().Any(x => x.State == EntityState.Modified && x.Property(t => t.SignerContactRevisionId).IsModified))
             throw new InvalidOperationException("Issued signer token contact epochs are immutable.");
+        if(ChangeTracker.Entries<AuthToken>().Any(x => x.State == EntityState.Modified && x.Property(t => t.EmailPilotLookupRequestId).IsModified))
+            throw new InvalidOperationException("Issued pilot lookup token markers are immutable.");
         if(ChangeTracker.Entries<SignerContactRevisionRecord>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<SignerContactSession>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Signer contact revisions and session bindings are immutable. Purge requires its privileged path.");

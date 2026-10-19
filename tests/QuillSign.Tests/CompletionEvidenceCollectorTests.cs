@@ -219,7 +219,7 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
         private SqlDatabaseFixture fixture=null!;
         public async Task<T> Use<S,T>(Func<S,Task<T>> action) where S:notnull {using var scope=H.App.Services.CreateScope(); return await action(scope.ServiceProvider.GetRequiredService<S>());}
         public async Task<Envelope> Refresh() {await using var db=fixture.Open(); return Envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==Envelope.Id);}
-        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DateTimeOffset? initialTime=null,string? mailbox=null,Func<Run,int,Task<bool>>? signerOverride=null,Action<IServiceCollection>? configure=null)
+        public static async Task<Run> Create(SqlDatabaseFixture fixture,bool demo=false,bool publishLast=true,bool senderAlsoSigns=false,bool finishLast=true,bool firstOnly=false,int? uploadRetentionDays=null,TimeSpan? afterUploadDelay=null,DateTimeOffset? initialTime=null,string? mailbox=null,Func<Run,int,Task<bool>>? signerOverride=null,Action<IServiceCollection>? configure=null,Func<Shared,string,Task<bool>>? senderRequest=null)
         {
             var run=new Run {fixture=fixture,H=await Shared.Create(fixture,browser:true,configure:configure)}; var email=mailbox??"completion-"+Guid.NewGuid().ToString("N")+"@example.invalid";
             if(initialTime is { } start) {
@@ -237,7 +237,9 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
                 };
             }
             run.H.App.Services.GetRequiredService<DemoRetentionOptions>().PurgeAfterDays=uploadRetentionDays;
-            _=await run.Use((SenderWorkflow s)=>s.RequestAsync(email,"127.0.0.1","Synthetic sender")); Assert.True(await run.H.Once());
+            if(senderRequest is null || !await senderRequest(run.H,email))
+                _=await run.Use((SenderWorkflow s)=>s.RequestAsync(email,"127.0.0.1","Synthetic sender"));
+            Assert.True(await run.H.Once());
             var sender=(await run.Use((SenderWorkflow s)=>s.VerifyAsync(Token(run.H),"127.0.0.1","Synthetic sender")))!; Assert.NotNull(sender);
             run.Sender=SenderConfiguration.Principal(sender); await using(var db=fixture.Open())run.Envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==sender.EnvelopeId);
             await using(var db=fixture.Open())await db.Envelopes.Where(x=>x.Id==run.Envelope.Id).ExecuteUpdateAsync(v=>v.SetProperty(x=>x.ExpiresAt,run.H.Clock.GetUtcNow().AddHours(1)).SetProperty(x=>x.IsDemo,demo));

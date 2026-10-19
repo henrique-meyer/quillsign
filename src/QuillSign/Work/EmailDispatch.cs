@@ -86,12 +86,16 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
     VerificationEmailTemplate template, IEmailSender sender, TimeProvider time,DeclinePayloadProtection? declines = null,
     DeclineEmailTemplate? declineTemplate = null,SignerInvitationDelivery? invitations = null,Func<CompletionNotificationDelivery>? completions=null,
     Func<VoidNotificationDelivery>? voids=null,Func<LookupLinkDelivery>? lookups=null,Func<InvitationResendDelivery>? resends=null,
-    Func<InvitationSuccessorDelivery>? successors=null,Email.Pilot.EmailPilotDispatch? pilot=null) : IWorkHandler
+    Func<InvitationSuccessorDelivery>? successors=null,Email.Pilot.EmailPilotDispatch? pilot=null,Email.Pilot.EmailPilotLookupAccess? pilotLookups=null) : IWorkHandler
 {
     public WorkKind Kind => WorkKind.Email;
 
     public async Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken cancellationToken)
     {
+        // Only the optional exact lookup mapping/marker may select this typed
+        // null-envelope path. The lookup handler independently verifies it.
+        if (pilotLookups is not null && await pilotLookups.IsKnownWorkAsync(lease.Id,cancellationToken))
+            return await (lookups?.Invoke()??throw new InvalidOperationException("Missing lookup delivery.")).ExecuteAsync(lease,cancellationToken);
         var pilotDecision=pilot is null ? null : await pilot.DecideAsync(lease,cancellationToken);
         if(pilotDecision?.Refusal is {} refusal)return refusal;
         if(pilotDecision is null && !options.Enabled)return new(WorkOutcome.Retry,"delivery-disabled");
