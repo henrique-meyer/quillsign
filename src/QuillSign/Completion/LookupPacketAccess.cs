@@ -28,11 +28,14 @@ public sealed class LookupPacketAccess(QuillSignDbContext db, DocumentLookup loo
     {
         if (!Guid.TryParseExact(publicId, "N", out var parsed) || parsed == Guid.Empty || parsed.ToString("N") != publicId) return null;
         var identity = await lookup.AuthenticateAsync(principal, receipt, ct); if (identity is null) return null;
+        var restriction = await lookup.RestrictionAsync(identity, ct); if (!restriction.Allowed) return null;
         var now = time.GetUtcNow();
-        var id = await db.Envelopes.AsNoTracking().Where(x => x.PublicId == publicId && x.Status == EnvelopeStatus.Completed &&
+        var query = db.Envelopes.AsNoTracking().Where(x => x.PublicId == publicId && x.Status == EnvelopeStatus.Completed &&
             x.CompletedAt <= identity.RedeemedAt && (x.PurgeAfter == null || x.PurgeAfter > now) && (x.SenderEmail == identity.Email ||
-            db.Signers.Any(s => s.EnvelopeId == x.Id && s.Email == identity.Email) || db.Recipients.Any(r => r.EnvelopeId == x.Id && r.Email == identity.Email)))
-            .Select(x => (Guid?)x.Id).SingleOrDefaultAsync(ct);
+            db.Signers.Any(s => s.EnvelopeId == x.Id && s.Email == identity.Email) || db.Recipients.Any(r => r.EnvelopeId == x.Id && r.Email == identity.Email)));
+        if (restriction.IsPilot) query = query.Where(x => x.Id == restriction.Request!.SubjectEnvelopeId);
+        else if (lookup.RequiresCohortExclusion) query = query.Where(x => !db.EmailPilotEnrollments.Any(p => p.SubjectEnvelopeId == x.Id));
+        var id = await query.Select(x => (Guid?)x.Id).SingleOrDefaultAsync(ct);
         if (id is null) return null;
         var prepared = await completion.PrepareAsync(id.Value, ct); if (prepared is null) return null;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -42,7 +45,7 @@ public sealed class LookupPacketAccess(QuillSignDbContext db, DocumentLookup loo
         var current = await lookup.AuthenticateLockedAsync(principal, receipt, ct);
         if (current != identity || prepared.Saved.PublicId != publicId || prepared.Saved.CompletedAt > identity.RedeemedAt) return null;
         var member = await Member(prepared.Saved, identity.Email, ct); if (member is null) return null;
-        var link = await completion.PrepareLockedAsync(prepared, member.Type, member.Id, ct); if (link is null) return null;
+        var link = await completion.PrepareBoundedLockedAsync(prepared, member.Type, member.Id, ct, restriction.IsPilot ? identity.ExpiresAt : null); if (link is null) return null;
         var reader = await completion.RedeemLockedAsync(prepared, link, identity.ExpiresAt, ct); if (reader is null) return null;
         await audit.AppendAsync(id.Value, "completion_lookup_opened", member.Email, null, null, ct,
             JsonSerializer.Serialize(new
