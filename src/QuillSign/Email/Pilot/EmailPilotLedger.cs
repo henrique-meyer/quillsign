@@ -94,9 +94,9 @@ public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOpt
         var run = await Manifest(db, id, false, ct); return run is null ? null : Budget(await Reservations(db, run, ct));
     }
 
-    private async Task<EmailPilotManifest?> Manifest(QuillSignDbContext db, Guid id, bool live, CancellationToken ct)
+    private async Task<EmailPilotManifest?> Manifest(QuillSignDbContext db, Guid id, bool live, CancellationToken ct, bool configured = true)
     {
-        if (id != RunId) throw EmailPilotProtection.Invalid();
+        if (id == Guid.Empty || configured && id != RunId) throw EmailPilotProtection.Invalid();
         var row = await db.EmailPilotRuns.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct);
         if (row is null) return null;
         var secret = await db.EmailPilotSecrets.AsNoTracking().SingleOrDefaultAsync(x => x.RunId == id, ct) ?? throw EmailPilotProtection.Invalid();
@@ -105,7 +105,7 @@ public sealed partial class EmailPilotLedger(EmailPilotOptions options, EmailOpt
         if (value is null || value.Version != EmailPilotLimits.Version || value.RunId != id || value.CreatedAt.Offset != TimeSpan.Zero || value.ExpiresAt.Offset != TimeSpan.Zero ||
             value.CreatedAt != row.CreatedAt || value.ExpiresAt != row.ExpiresAt || value.ExpiresAt != value.CreatedAt.AddMinutes(60) || value.CreatedAt > Now ||
             secret.DeleteAfter != value.CreatedAt.AddDays(7) || secret.DeleteAfter.Offset != TimeSpan.Zero ||
-            value.Mailboxes is null || !value.Mailboxes.Valid() || value.Mailboxes != options.Mailboxes || !EmailPilotCanonical.Hash(value.CapabilitySha256) ||
+            value.Mailboxes is null || !value.Mailboxes.Valid() || configured && value.Mailboxes != options.Mailboxes || !EmailPilotCanonical.Hash(value.CapabilitySha256) ||
             !CryptographicOperations.FixedTimeEquals(EmailPilotCanonical.Hash(value), row.ManifestSha256) ||
             !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(value.CapabilitySha256), row.CapabilitySha256)) throw EmailPilotProtection.Invalid();
         if (live && value.ExpiresAt <= Now) return null;
