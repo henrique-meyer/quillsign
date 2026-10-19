@@ -1,0 +1,15 @@
+# Restricted SES sandbox identity permissions
+
+The hosted sandbox pilot received a definite authorization refusal before sender verification. A read-only IAM simulation allows the configured sender domain and configuration set, but denies the four verified test mailbox identities. Recipient-identity authorization is the current hypothesis; simulation alone does not prove which resource SES rejected or that a future message will arrive.
+
+The optional sandbox parameters in `infra/aws/ses.cfn.yaml` prepare a narrow amendment to the existing send-only user's inline policy. All four parameters default empty, leaving its evaluated policy unchanged. Supplying all four adds one statement for those exact existing email identities in the same account and region. The template creates no email identities or credentials. Partial, duplicate and malformed mailbox inputs are rejected.
+
+The added statement permits only `ses:SendEmail` and `ses:SendRawEmail`. It preserves the configured exact `ses:FromAddress`, limits the recipients to those four addresses, and requires the recipient context to be present. It adds no wildcard resources, administrative actions, account access or authority to send from the test aliases. Fixed simulator targets continue using the original policy statement.
+
+Actual addresses, evaluated policy, account and resource identifiers, before-state, candidate simulations and rollout inputs stay in ignored operator evidence. `NoEcho` masks parameter display; the resulting IAM policy necessarily contains its resource identifiers and must be handled as private operational evidence.
+
+Before applying, verify the current dedicated account/user/policy and all four SES identities, compare the exact evaluated candidate with the reviewed template, and obtain owner approval of the permission amendment. Validate the CloudFormation change set contains only the existing sender user's inline-policy modification. Preserve every existing stack parameter and unrelated resource. Public email, private pilot and configuration-set sending remain disabled during preparation and rollout. No new purchase or recurring service is needed; IAM policy changes themselves add no usage charge.
+
+Rollback restores the captured original policy and blanks all four sandbox parameters. This removes only the additional statement. Never renew an expired pilot, replay failed work, refund consumed attempts or treat permission approval as an enlarged test allowance. Hosted verification and its original-plus-continuation accounting remain tracked under QUILS-139.
+
+References: [SES IAM policies](https://docs.aws.amazon.com/ses/latest/dg/control-user-access.html), [SES SendEmail](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html), [AWS service authorization reference data](https://servicereference.us-east-1.amazonaws.com/v1/ses/ses.json).

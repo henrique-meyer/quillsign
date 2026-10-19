@@ -1,5 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Dedicated SES identity, feedback destination, and send-only IAM user.
+Metadata:
+  AWSToolsMetrics:
+    AWSToolsVersion: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: [../../docs/ses-sandbox-permissions.md]
 Parameters:
   IdentityDomain:
     Type: String
@@ -15,6 +20,26 @@ Parameters:
     Type: String
   ProjectTagValue:
     Type: String
+  SandboxSenderAddress:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[a-z0-9.!#$%&''*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$'
+  SandboxFirstSignerAddress:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[a-z0-9.!#$%&''*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$'
+  SandboxSecondSignerAddress:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[a-z0-9.!#$%&''*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$'
+  SandboxRecipientAddress:
+    Type: String
+    Default: ''
+    NoEcho: true
+    AllowedPattern: '^$|^[a-z0-9.!#$%&''*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$'
   EnableFeedbackSubscription:
     Type: String
     Default: 'false'
@@ -26,6 +51,31 @@ Parameters:
     AllowedPattern: '^$|^https://[A-Za-z0-9.-]+(?::443)?/webhooks/ses$'
     Description: Private exact application origin plus the fixed signed-feedback path.
 Rules:
+  SandboxAddressesComplete:
+    Assertions:
+      - Assert: !Or
+          - !And
+            - !Equals [!Ref SandboxSenderAddress, '']
+            - !Equals [!Ref SandboxFirstSignerAddress, '']
+            - !Equals [!Ref SandboxSecondSignerAddress, '']
+            - !Equals [!Ref SandboxRecipientAddress, '']
+          - !And
+            - !Not [!Equals [!Ref SandboxSenderAddress, '']]
+            - !Not [!Equals [!Ref SandboxFirstSignerAddress, '']]
+            - !Not [!Equals [!Ref SandboxSecondSignerAddress, '']]
+            - !Not [!Equals [!Ref SandboxRecipientAddress, '']]
+        AssertDescription: Supply either all four existing verified test addresses or none.
+  SandboxAddressesDistinct:
+    RuleCondition: !Not [!Equals [!Ref SandboxSenderAddress, '']]
+    Assertions:
+      - Assert: !And
+          - !Not [!Equals [!Ref SandboxSenderAddress, !Ref SandboxFirstSignerAddress]]
+          - !Not [!Equals [!Ref SandboxSenderAddress, !Ref SandboxSecondSignerAddress]]
+          - !Not [!Equals [!Ref SandboxSenderAddress, !Ref SandboxRecipientAddress]]
+          - !Not [!Equals [!Ref SandboxFirstSignerAddress, !Ref SandboxSecondSignerAddress]]
+          - !Not [!Equals [!Ref SandboxFirstSignerAddress, !Ref SandboxRecipientAddress]]
+          - !Not [!Equals [!Ref SandboxSecondSignerAddress, !Ref SandboxRecipientAddress]]
+        AssertDescription: Test mailbox roles must be distinct.
   FeedbackEndpointRequired:
     Assertions:
       - Assert: !Or
@@ -33,6 +83,7 @@ Rules:
           - !Not [!Equals [!Ref FeedbackEndpoint, '']]
         AssertDescription: An enabled feedback subscription requires its approved HTTPS endpoint.
 Conditions:
+  SandboxRecipientsConfigured: !Not [!Equals [!Ref SandboxSenderAddress, '']]
   FeedbackSubscriptionEnabled: !Equals [!Ref EnableFeedbackSubscription, 'true']
 Resources:
   ConfigurationSet:
@@ -124,6 +175,8 @@ Resources:
           maxReceivesPerSecond: 1
   SenderUser:
     Type: AWS::IAM::User
+    # Sandbox identity permissions supplement the sender resource without
+    # permitting a different From address or email-management operations.
     Properties:
       UserName: !Ref SenderUserName
       Tags:
@@ -142,6 +195,27 @@ Resources:
                 Condition:
                   StringEquals:
                     ses:FromAddress: !Ref SenderAddress
+              - !If
+                - SandboxRecipientsConfigured
+                - Effect: Allow
+                  Action: [ses:SendEmail, ses:SendRawEmail]
+                  Resource:
+                    - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${SandboxSenderAddress}
+                    - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${SandboxFirstSignerAddress}
+                    - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${SandboxSecondSignerAddress}
+                    - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${SandboxRecipientAddress}
+                  Condition:
+                    StringEquals:
+                      ses:FromAddress: !Ref SenderAddress
+                    ForAllValues:StringEquals:
+                      ses:Recipients:
+                        - !Ref SandboxSenderAddress
+                        - !Ref SandboxFirstSignerAddress
+                        - !Ref SandboxSecondSignerAddress
+                        - !Ref SandboxRecipientAddress
+                    'Null':
+                      ses:Recipients: 'false'
+                - !Ref AWS::NoValue
 Outputs:
   DkimName1:
     Value: !GetAtt Identity.DkimDNSTokenName1
