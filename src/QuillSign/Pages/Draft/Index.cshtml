@@ -25,8 +25,15 @@
     @if (Model.Draft.PdfBlob is not null) { <p>Replacing it clears this preview's confirmation and any document fields.</p> }
     <form method="post" enctype="multipart/form-data" asp-page-handler="Upload" data-document-upload data-maximum-bytes="@Model.Limits.MaximumBytes" data-extensions="@Model.Extensions">
         <input type="hidden" asp-for="Version" id="UploadVersion" />
-        <label asp-for="Upload">Document file</label>
-        <input asp-for="Upload" type="file" accept="@Model.Extensions" required />
+        <div class="document-dropzone" data-upload-dropzone role="group" aria-labelledby="upload-choice-title" aria-describedby="upload-selection">
+            <p class="upload-choice-title" id="upload-choice-title" data-upload-instruction>Choose your document</p>
+            <button type="button" class="quiet-button" data-upload-browse hidden>Browse files</button>
+            <div data-upload-native>
+                <label asp-for="Upload">Document file</label>
+                <input asp-for="Upload" type="file" accept="@Model.Extensions" aria-describedby="upload-selection" required />
+            </div>
+            <p class="hint upload-selection" id="upload-selection" data-upload-selection role="status" aria-live="polite">Select one document, then upload it when you're ready.</p>
+        </div>
         <p class="validation" data-upload-error hidden tabindex="-1" role="alert"></p>
         <button type="submit">@(Model.Draft.PdfBlob is null ? "Upload document" : "Replace document")</button>
     </form>
