@@ -68,6 +68,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
         try
         {
             var before=await DraftAsync(sender,publicId,false,ct);if(before is null)return null;Version(before,expectedVersion);
+            DocumentRetentionAccess.Check(await DocumentRetentionAccess.ReadAsync(db,before,ct,pilotBounds),time);
             var retention=await new UploadRetention(db,retentionOptions ?? new(),time).ReadAsync(before,ct);UploadRetention.CheckDeadline(retention,time.GetUtcNow());return before;
         }
         finally {await db.Database.CloseConnectionAsync();}
@@ -140,6 +141,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
             var envelope = await DraftAsync(sender, publicId, true, ct);
             if (envelope is null) throw new DocumentConflictException();
             Version(envelope, expectedVersion);
+            DocumentRetentionAccess.Check(await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds),time);
             var retention=await new UploadRetention(db,retentionOptions ?? new(),time).PrepareLockedAsync(envelope,originalBlob.ObjectId,originalHash,normalizedBlob.ObjectId,normalizedHash,ct);
             var newlyEnrolled=retention is not null && db.Entry(retention).State==EntityState.Added;
             var previous = envelope.PdfBlob;
@@ -222,6 +224,7 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
                 throw new InvalidDataException("Stored document verification failed.");
             ct.ThrowIfCancellationRequested();
             DocumentRetentionAccess.Check(deadline,time);
+            if(pilotBounds is not null)await pilotBounds.ReadAsync(envelope,ct);
             file.Position = 0; return file;
         }
         catch { await file.DisposeAsync(); throw; }

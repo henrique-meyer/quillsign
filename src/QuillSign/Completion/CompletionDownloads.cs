@@ -54,7 +54,7 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         var again=await Authenticate(http,publicId,party,ct,reader); if(!SameActor(actor,again))return null;
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
         var deadline=await Recheck(saved,actor,http,publicId,ct);
-        var now=time.GetUtcNow(); var until=new[]{now.AddMinutes(2),actor.Until,saved.PurgeAfter??DateTimeOffset.MaxValue}.Min();
+        var now=time.GetUtcNow(); var until=new[]{now.AddMinutes(2),actor.Until,saved.PurgeAfter??DateTimeOffset.MaxValue,deadline??DateTimeOffset.MaxValue}.Min();
         if(until<=now)return null;
         var file=selected==FinalDocumentKind.Executed ? saved.Executed : saved.Certificate;
         var proof=new Proof(Version,actor.Audience,actor.EnvelopeId,publicId,actor.Party,actor.PartyId,actor.Session,actor.Acceptance,saved.Id,saved.Recipe,saved.Revision,
