@@ -24,22 +24,26 @@ Parameters:
     Type: String
     Default: ''
     NoEcho: true
-    AllowedPattern: '^$|^[a-z0-9.!#$%&''*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$'
+    MaxLength: 254
+    AllowedPattern: '^$|^[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$'
   SandboxFirstSignerAddress:
     Type: String
     Default: ''
     NoEcho: true
-    AllowedPattern: '^$|^[a-z0-9.!#$%&''*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$'
+    MaxLength: 254
+    AllowedPattern: '^$|^[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$'
   SandboxSecondSignerAddress:
     Type: String
     Default: ''
     NoEcho: true
-    AllowedPattern: '^$|^[a-z0-9.!#$%&''*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$'
+    MaxLength: 254
+    AllowedPattern: '^$|^[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$'
   SandboxRecipientAddress:
     Type: String
     Default: ''
     NoEcho: true
-    AllowedPattern: '^$|^[a-z0-9.!#$%&''*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}$'
+    MaxLength: 254
+    AllowedPattern: '^$|^[a-z0-9._+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+$'
   EnableFeedbackSubscription:
     Type: String
     Default: 'false'
