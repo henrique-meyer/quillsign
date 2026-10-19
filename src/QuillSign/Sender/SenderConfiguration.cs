@@ -71,6 +71,13 @@ public static class SenderConfiguration
             limiter.OnRejected = async (rejected,ct) =>
             {
                 var context=rejected.HttpContext;
+                if(context.Request.Path.StartsWithSegments("/operator")) {
+                    PrivateStatusHeaders(context);
+                    const string message="Too many operator requests. Wait and check saved status before repeating an action.";
+                    if(WantsJson(context))await context.Response.WriteAsJsonAsync(new{message},ct);
+                    else await context.Response.WriteAsync(message,ct);
+                    return;
+                }
                 if(IsContactCorrection(context.Request.Path)) {
                     PrivateStatusHeaders(context);
                     const string message="Too many contact correction actions. Wait and check saved request status before retrying; this response does not confirm a correction.";
@@ -139,6 +146,10 @@ public static class SenderConfiguration
                     (context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/review",StringComparison.Ordinal)==true && HttpMethods.IsPost(context.Request.Method)) ||
                     (context.Request.Path.StartsWithSegments("/sign") && context.Request.Path.Value?.EndsWith("/signature",StringComparison.Ordinal) == true && HttpMethods.IsPost(context.Request.Method));
                 var address = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if(context.Request.Path.StartsWithSegments("/operator"))
+                    return RateLimitPartition.GetFixedWindowLimiter((HttpMethods.IsPost(context.Request.Method)?"pilot-operator-action:":"pilot-operator-read:")+address,_=>new FixedWindowRateLimiterOptions {
+                        PermitLimit=HttpMethods.IsPost(context.Request.Method)?Math.Min(20,options.RequestsPerWindow):120,
+                        Window=TimeSpan.FromMinutes(HttpMethods.IsPost(context.Request.Method)?options.WindowMinutes:1),QueueLimit=0,AutoReplenishment=true });
                 if(IsContactCorrection(context.Request.Path))
                     return RateLimitPartition.GetFixedWindowLimiter((HttpMethods.IsPost(context.Request.Method) ? "sender-contact-correction-action:" : "sender-contact-correction-read:")+address,_=>new FixedWindowRateLimiterOptions {
                         PermitLimit=options.RequestsPerWindow,Window=TimeSpan.FromMinutes(options.WindowMinutes),QueueLimit=0,AutoReplenishment=true });
@@ -202,6 +213,7 @@ public static class SenderConfiguration
     // Called before authorization/CSRF/rate rejection as well as page handlers.
     public static void PrivateStatusHeaders(HttpContext context)
     {
+        if(context.Request.Path.StartsWithSegments("/operator")) {Email.Pilot.EmailPilotOperatorBrowser.PrivateHeaders(context);return;}
         if(!IsContactCorrection(context.Request.Path) && !IsResend(context.Request.Path) && !(context.Request.Path.StartsWithSegments("/draft") && context.Request.Path.Value?.EndsWith("/sent",StringComparison.Ordinal)==true))return;
         context.Response.Headers.CacheControl="no-store";context.Response.Headers["Referrer-Policy"]="no-referrer";
         context.Response.Headers["X-Robots-Tag"]="noindex, nofollow, noarchive";
