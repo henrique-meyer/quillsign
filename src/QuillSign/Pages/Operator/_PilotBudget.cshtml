@@ -1,0 +1,7 @@
+@model QuillSign.Email.Pilot.EmailPilotOperatorStatus
+<dl>
+    <dt>Application recipient submissions</dt><dd>@Model.Budget.ApplicationAttempts / @Model.Allowance.ApplicationAttempts</dd>
+    <dt>Simulator submissions</dt><dd>@Model.Budget.SimulatorAttempts / @Model.Allowance.SimulatorAttempts</dd>
+    <dt>Timestamp attempts</dt><dd>@Model.Budget.TimestampAttempts / @Model.Allowance.TimestampAttempts</dd>
+    <dt>Encoded mail bytes</dt><dd>@Model.Budget.EncodedBytes / @Model.Allowance.EncodedBytes</dd>
+</dl>

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using QuillSign.Data;
 
 namespace QuillSign.Email.Pilot;
@@ -10,10 +11,11 @@ public sealed class EmailPilotOptions
     public bool Enabled { get; set; }
     public string RunId { get; set; } = "";
     public EmailPilotMailboxes Mailboxes { get; set; } = new("", "", "", "");
+    public EmailPilotBudget Allowance { get; set; } = EmailPilotLimits.Maximum;
     public void Validate()
     {
         if (!Enabled) return;
-        if (!Guid.TryParseExact(RunId, "N", out var id) || id == Guid.Empty || Mailboxes is null || !Mailboxes.Valid())
+        if (!Guid.TryParseExact(RunId, "N", out var id) || id == Guid.Empty || Mailboxes is null || !Mailboxes.Valid() || !EmailPilotLimits.Valid(Allowance))
             throw new InvalidOperationException("Configure one explicit pilot run and four distinct normalized mailbox roles.");
     }
 }
@@ -37,10 +39,23 @@ public static class EmailPilotLimits
     public const int ApplicationAttempts = 20, SimulatorAttempts = 10, TimestampAttempts = 4;
     public const int MessageBytes = 1024 * 1024, AggregateBytes = 30 * MessageBytes;
     public const string Version = "operator-pilot-2026-10-18.1";
+    // Configuration binding may populate init-only record properties through reflection.
+    // Give every options/legacy profile its own value, never a shared mutable default.
+    public static EmailPilotBudget Maximum => new(ApplicationAttempts,SimulatorAttempts,TimestampAttempts,AggregateBytes);
+    internal static bool Valid(EmailPilotBudget? value) => value is not null &&
+        value.ApplicationAttempts is >=0 and <=ApplicationAttempts && value.SimulatorAttempts is >=0 and <=SimulatorAttempts &&
+        value.TimestampAttempts is >=0 and <=TimestampAttempts && value.EncodedBytes is >=0 and <=AggregateBytes;
 }
 
 public sealed record EmailPilotManifest(string Version, Guid RunId, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt,
-    string CapabilitySha256, EmailPilotMailboxes Mailboxes);
+    string CapabilitySha256, EmailPilotMailboxes Mailboxes)
+{
+    // Omitting null preserves the exact canonical bytes/hashes of legacy manifests.
+    // A legacy manifest has the original hard allowance, never a new lower profile.
+    [JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)]
+    public EmailPilotBudget? Allowance { get; init; }
+    internal EmailPilotBudget EffectiveAllowance => Allowance ?? EmailPilotLimits.Maximum;
+}
 public sealed record EmailPilotEnrollment(Guid RunId, Guid SubjectEnvelopeId, EmailPilotScenario Scenario, DateTimeOffset EnrolledAt,
     EmailPilotVerificationBinding? Verification = null);
 public sealed record EmailPilotVerificationBinding(Guid WorkId, string DraftSha256, string EmailPayloadSha256, string WorkPayloadSha256);
