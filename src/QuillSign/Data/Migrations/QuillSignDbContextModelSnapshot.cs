@@ -819,6 +819,162 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.EmailPilotEnrollmentRecord", b =>
+                {
+                    b.Property<Guid>("SubjectEnvelopeId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("EnrolledAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ProtectedBinding")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Scenario")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("SubjectEnvelopeId");
+
+                    b.HasIndex("RunId", "Scenario")
+                        .IsUnique();
+
+                    b.ToTable("EmailPilotEnrollments", t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailPilotEnrollmentRecord_Scenario", "[Scenario] IS NULL OR [Scenario] IN ('Completion','Void','Decline')");
+
+                            t.HasCheckConstraint("CK_EmailPilotEnrollment_Scope", "[SubjectEnvelopeId]<>'00000000-0000-0000-0000-000000000000' AND DATEPART(TZOFFSET,[EnrolledAt])=0");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotReservationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("EncodedBytes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ProtectedReceipt")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<byte[]>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<DateTimeOffset>("ReservedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("SubjectEnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId", "ReservedAt");
+
+                    b.HasIndex("RunId", "SubjectEnvelopeId");
+
+                    b.HasIndex("RunId", "Kind", "OperationId", "Role")
+                        .IsUnique();
+
+                    b.ToTable("EmailPilotReservations", t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailPilotReservationRecord_Kind", "[Kind] IS NULL OR [Kind] IN ('Application','Simulator','Timestamp')");
+
+                            t.HasCheckConstraint("CK_EmailPilotReservationRecord_RequestSha256", "[RequestSha256] IS NULL OR DATALENGTH([RequestSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_EmailPilotReservationRecord_Role", "[Role] IS NULL OR [Role] IN ('None','Sender','FirstSigner','SecondSigner','Recipient','Simulator')");
+
+                            t.HasCheckConstraint("CK_EmailPilotReservation_Bytes", "([Kind]='Timestamp' AND [EncodedBytes]=0 AND [Role]='None' AND [SubjectEnvelopeId] IS NOT NULL) OR ([Kind]='Application' AND [EncodedBytes] BETWEEN 1 AND 1048576 AND [Role] IN ('Sender','FirstSigner','SecondSigner','Recipient') AND [SubjectEnvelopeId] IS NOT NULL) OR ([Kind]='Simulator' AND [EncodedBytes] BETWEEN 1 AND 1048576 AND [Role]='Simulator' AND [SubjectEnvelopeId] IS NULL)");
+
+                            t.HasCheckConstraint("CK_EmailPilotReservation_Receipt", "DATALENGTH([ProtectedReceipt]) BETWEEN 2 AND 8192");
+
+                            t.HasCheckConstraint("CK_EmailPilotReservation_Scope", "[Id]<>'00000000-0000-0000-0000-000000000000' AND [OperationId]<>'00000000-0000-0000-0000-000000000000' AND DATEPART(TZOFFSET,[ReservedAt])=0");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotRunRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("CapabilitySha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("ManifestSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("EmailPilotRuns", t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailPilotRunRecord_CapabilitySha256", "[CapabilitySha256] IS NULL OR DATALENGTH([CapabilitySha256]) = 32");
+
+                            t.HasCheckConstraint("CK_EmailPilotRunRecord_ManifestSha256", "[ManifestSha256] IS NULL OR DATALENGTH([ManifestSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_EmailPilotRun_Interval", "[Id]<>'00000000-0000-0000-0000-000000000000' AND DATEPART(TZOFFSET,[CreatedAt])=0 AND DATEPART(TZOFFSET,[ExpiresAt])=0 AND [ExpiresAt]=DATEADD(minute,60,[CreatedAt])");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotSecretRecord", b =>
+                {
+                    b.Property<Guid>("RunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("DeleteAfter")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ProtectedManifest")
+                        .IsRequired()
+                        .HasMaxLength(16384)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("RunId");
+
+                    b.ToTable("EmailPilotSecrets", t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailPilotSecret_Deadline", "DATEPART(TZOFFSET,[DeleteAfter])=0 AND DATALENGTH([ProtectedManifest]) BETWEEN 2 AND 32768");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.Envelope", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1786,7 +1942,7 @@ namespace QuillSign.Data.Migrations
 
                     b.ToTable("WorkItems", t =>
                         {
-                            t.HasCheckConstraint("CK_WorkItem_Kind", "[Kind] IS NULL OR [Kind] IN ('Conversion','Ai','Rendering','Sealing','Email','Purge','Expiry')");
+                            t.HasCheckConstraint("CK_WorkItem_Kind", "[Kind] IS NULL OR [Kind] IN ('Conversion','Ai','Rendering','Sealing','Email','Purge','Expiry','Reminder')");
 
                             t.HasCheckConstraint("CK_WorkItem_PayloadJson", "[PayloadJson] IS NULL OR ISJSON([PayloadJson]) = 1");
 
@@ -1924,6 +2080,39 @@ namespace QuillSign.Data.Migrations
                         .WithMany()
                         .HasForeignKey("EnvelopeId")
                         .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotEnrollmentRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.EmailPilotRunRecord", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotReservationRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.EmailPilotRunRecord", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.EmailPilotEnrollmentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("RunId", "SubjectEnvelopeId")
+                        .HasPrincipalKey("RunId", "SubjectEnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotSecretRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.EmailPilotRunRecord", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("QuillSign.Data.Envelope", b =>

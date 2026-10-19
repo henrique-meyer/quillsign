@@ -25,6 +25,7 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
             if (policy is null || !policy.Enabled) return new(WorkOutcome.Retry, "successor-delivery-disabled");
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             var parent = await ParentAsync(p.EnvelopeId, ct);
+            await InvitationResendRules.LockAsync(db,ct);
             await OwnedAsync(lease, p, null, null, ct);
             var context = await PolicyAsync(parent, p, ct);
             var expires = parent.ExpiresAt;

@@ -15,24 +15,25 @@ namespace QuillSign.Sender;
 public sealed record SentDraft(Guid EnvelopeId,string PublicId,Guid InvitationWorkId,string DocumentHash,string DisclosureHash)
 {
     public SignerReminderPolicy? Reminders {get;init;}
+    public string? ReminderSchedulingVersion {get;init;}
 }
 
 // The public handler adds CSRF and deliberate sender confirmation; this service owns atomic freeze and replay.
 public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,DocumentOptions documents,
     SignerSetupOptions signerOptions,FieldEditorOptions fieldOptions,PreparationOptions preparation,SenderPdfRenderer renderer,
     ElectronicRecordDisclosure disclosures,SignerInvitationOutbox outbox,WorkOptions workOptions,EmailOptions emailOptions,
-    AuditWriter audit,TimeProvider time,ILogger<SendDraftWorkflow> logger,SigningExpiryJobs expiry,SignerReminderOptions? reminderOptions=null)
+    AuditWriter audit,TimeProvider time,ILogger<SendDraftWorkflow> logger,SigningExpiryJobs expiry,SignerReminderOptions? reminderOptions=null,SignerReminderJobs? reminderJobs=null)
 {
     public async Task<SentDraft?> SendAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,bool exclusionsAcknowledged,
         bool sendAcknowledged,string? statementVersion,string? ip,string? userAgent,CancellationToken ct = default,string? reviewedRetentionSha256=null,
-        string? reviewedReminderSha256=null)
+        string? reviewedReminderSha256=null,string? reviewedReminderSchedulingVersion=null)
     {
         var identity = Identity(sender,publicId); if (identity is null) return null;
         if (!exclusionsAcknowledged) throw new DocumentRejectedException("Confirm that this transaction is suitable for electronic signing.");
         if(!sendAcknowledged || statementVersion!=SenderSendStatement.Version)throw new DocumentRejectedException("Confirm the reviewed Send statement.");
         if (expectedVersion is not { Length: 8 }) throw new DocumentConflictException();
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
-        DocumentBlob? created = null; var commitStarted = false; SentDraft? result = null;Guid? expiryId=null;DateTimeOffset? expiryDue=null;
+        DocumentBlob? created = null; var commitStarted = false; SentDraft? result = null;Guid? expiryId=null;DateTimeOffset? expiryDue=null;IReadOnlyList<ScheduledSignerReminder> reminderSchedule=[];
         try
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -58,7 +59,8 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             }
             if(!envelope.RowVersion.AsSpan().SequenceEqual(expectedVersion))throw new DocumentConflictException();
             var reminders=(reminderOptions??new()).Freeze(envelope.IsDemo);
-            SignerReminderSendEvidence.DemandReview(reminders,reviewedReminderSha256);
+            SignerReminderSendEvidence.DemandReview(reminders,reviewedReminderSha256,reviewedReminderSchedulingVersion);
+            if(!reminders.Days.IsEmpty && reminderJobs is null)throw new InvalidOperationException("Configure durable reminder processing before enabling reminders.");
             var retention=await RetentionSigningDeadline.ReadAsync(db,envelope,ct);
             RetentionSigningDeadline.DemandReview(retention,reviewedRetentionSha256);
             RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
@@ -116,7 +118,7 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
                 expiryWorkId=envelope.ExpiresAt is null ? (Guid?)null : SigningExpiryJobs.WorkId(envelope.Id),signingDeadline=envelope.ExpiresAt?.ToUniversalTime(),
                 reviewedVersion=Convert.ToBase64String(expectedVersion),senderConfirmed=sendAcknowledged,
                 senderStatementVersion=SenderSendStatement.Version,senderStatement=SenderSendStatement.Text,senderStatementSha256=SenderSendStatement.Sha256,
-                reminderPolicy=reminders.CanonicalJson,reminderPolicySha256=reminders.Sha256 });
+                reminderPolicy=reminders.CanonicalJson,reminderPolicySha256=reminders.Sha256,reminderSchedulingVersion=SignerReminderEvidence.Version });
             if(retention.Policy is not null)
             {
                 var data=JsonSerializer.Deserialize<Dictionary<string,JsonElement>>(sentData)!;
@@ -125,7 +127,8 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             await audit.AppendAsync(envelope.Id,"sent",envelope.SenderEmail,ip,userAgent,ct,sentData);
             RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             expiryId=await expiry.PrepareAsync(envelope.Id,ct);expiryDue=envelope.ExpiresAt;
-            result = new(envelope.Id,envelope.PublicId,invitation,documentHash,disclosureHash){Reminders=reminders};
+            if(reminderJobs is not null)reminderSchedule=await reminderJobs.PrepareCurrentLockedAsync(envelope.Id,ct);
+            result = new(envelope.Id,envelope.PublicId,invitation,documentHash,disclosureHash){Reminders=reminders,ReminderSchedulingVersion=SignerReminderEvidence.Version};
             RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             if((reminderOptions??new()).Freeze(envelope.IsDemo).Sha256!=reminders.Sha256)throw new DocumentConflictException();
             commitStarted = true; await transaction.CommitAsync(ct);
@@ -143,6 +146,7 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             throw;
         }
         await outbox.PublishAsync(result!.InvitationWorkId,ct);
+        if(reminderJobs is not null)await reminderJobs.PublishAsync(reminderSchedule,ct);
         if(expiryId is Guid scheduled)await expiry.PublishAsync(scheduled,expiryDue!.Value,ct);return result;
     }
     private static bool Name(string value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 512 && !value.Any(char.IsControl);

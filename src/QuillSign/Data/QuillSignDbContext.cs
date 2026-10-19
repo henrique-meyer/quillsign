@@ -23,6 +23,10 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     public DbSet<LookupContactRetentionSnapshot> LookupContactRetentionSnapshots => Set<LookupContactRetentionSnapshot>();
     public DbSet<SignerContactRevisionRecord> SignerContactRevisions => Set<SignerContactRevisionRecord>();
     public DbSet<SignerContactSession> SignerContactSessions => Set<SignerContactSession>();
+    public DbSet<EmailPilotRunRecord> EmailPilotRuns => Set<EmailPilotRunRecord>();
+    public DbSet<EmailPilotSecretRecord> EmailPilotSecrets => Set<EmailPilotSecretRecord>();
+    public DbSet<EmailPilotEnrollmentRecord> EmailPilotEnrollments => Set<EmailPilotEnrollmentRecord>();
+    public DbSet<EmailPilotReservationRecord> EmailPilotReservations => Set<EmailPilotReservationRecord>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<Suppression> Suppressions => Set<Suppression>();
 
@@ -225,11 +229,17 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
                 }
             }
         }
+        EmailPilotModel.Configure(model);
     }
 
     private void GuardAuditMutations()
     {
         ChangeTracker.DetectChanges();
+        if (ChangeTracker.Entries<EmailPilotRunRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<EmailPilotSecretRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<EmailPilotEnrollmentRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<EmailPilotReservationRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Pilot run, enrollment and reservation evidence is immutable. Secret cleanup requires its privileged path.");
         if(ChangeTracker.Entries<AuthToken>().Any(x => x.State == EntityState.Modified && x.Property(t => t.SignerContactRevisionId).IsModified))
             throw new InvalidOperationException("Issued signer token contact epochs are immutable.");
         if(ChangeTracker.Entries<SignerContactRevisionRecord>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted) ||

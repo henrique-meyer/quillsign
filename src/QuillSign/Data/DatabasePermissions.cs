@@ -8,6 +8,26 @@ public static class DatabasePermissions
     public const string MigrationUser = "app_migrations";
     public const string WorkerUser = "app_worker";
 
+    // Explicit approved operator step; ordinary startup never grants cleanup.
+    public static async Task GrantEmailPilotRetentionAsync(SqlConnection connection)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            IF DATABASE_PRINCIPAL_ID(N'app_worker') IS NULL OR OBJECT_ID(N'dbo.RemoveExpiredEmailPilotSecrets',N'P') IS NULL
+                THROW 50001,'Provision the worker and pilot migration before granting cleanup.',1;
+            IF DATABASE_PRINCIPAL_ID(N'app_email_pilot_retention_role') IS NULL CREATE ROLE [app_email_pilot_retention_role] AUTHORIZATION [dbo];
+            IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name=N'app_email_pilot_retention_role' AND type='R'
+                AND owning_principal_id=DATABASE_PRINCIPAL_ID(N'dbo'))
+                THROW 50001,'The pilot cleanup role has unexpected ownership or type.',1;
+            IF EXISTS(SELECT 1 FROM sys.database_role_members WHERE role_principal_id=DATABASE_PRINCIPAL_ID(N'app_email_pilot_retention_role')
+                AND member_principal_id<>DATABASE_PRINCIPAL_ID(N'app_worker'))
+                THROW 50001,'The pilot cleanup role must contain only the worker.',1;
+            GRANT EXECUTE ON OBJECT::[dbo].[RemoveExpiredEmailPilotSecrets] TO [app_email_pilot_retention_role];
+            ALTER ROLE [app_email_pilot_retention_role] ADD MEMBER [app_worker];
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
     // A separate explicit operator action. Source installation never grants it.
     public static async Task GrantLookupRetentionAsync(SqlConnection connection)
     {
@@ -109,6 +129,14 @@ public static class DatabasePermissions
             DENY UPDATE, DELETE ON OBJECT::[dbo].[SignerContactRevisions] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[SignerContactSessions] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[SignerContactSessions] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotRuns] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotRuns] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotSecrets] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotSecrets] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotEnrollments] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotEnrollments] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotReservations] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotReservations] TO [app_runtime_role];
             DENY UPDATE ON OBJECT::[dbo].[AuthTokens] ([SignerContactRevisionId]) TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[CompletionCandidates] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[CompletionCandidates] TO [app_runtime_role];

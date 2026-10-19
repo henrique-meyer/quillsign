@@ -9,7 +9,7 @@ using QuillSign.Signing;
 namespace QuillSign.Work;
 
 public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpointState state,SignerCheckpointBlobs blobs,
-    SignerInvitationOutbox invitations,AuditWriter audit,TimeProvider time,CompletionJobs? completion=null) : IWorkHandler
+    SignerInvitationOutbox invitations,AuditWriter audit,TimeProvider time,CompletionJobs? completion=null,SignerReminderJobs? reminders=null) : IWorkHandler
 {
     public WorkKind Kind=>WorkKind.Rendering;
     public async Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)
@@ -39,7 +39,9 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
                 var evidence=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==envelopeId && x.Event=="signer_completed" && x.ActorId==signer.Id).ToArrayAsync(ct);
                 if(signer.Status!=SignerStatus.Signed || signer.SignedAt!=f.FinishedAt || !SignerCheckpointState.PublishedEvidence(evidence,f,signer))return new(WorkOutcome.Failed,"checkpoint-evidence-unavailable");
                 var recovered=completion is not null && !await db.Signers.AnyAsync(x=>x.EnvelopeId==envelopeId && x.Order>signer.Order,ct) ? await completion.PrepareAsync(envelopeId,ct) : null;
+                var recoveredReminders=reminders is null ? [] : await reminders.PrepareCurrentLockedAsync(envelopeId,ct);
                 await transaction.CommitAsync(ct); await transaction.DisposeAsync();
+                if(reminders is not null)await reminders.PublishAsync(recoveredReminders,ct);
                 if(recovered is Guid recoveredWork)await completion!.PublishAsync(recoveredWork,ct);
                 return new(WorkOutcome.Completed);
             }
@@ -60,10 +62,12 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
             if(signerChanged!=1 || envelopeChanged!=1)return new(WorkOutcome.Retry,"checkpoint-conflict");
             await audit.AppendAsync(envelopeId,"signer_completed",signer.Email,f.Ip,f.UserAgent,ct,SignerCheckpointState.PublishedJson(f),PartyType.Signer,signer.Id);
             if(inviteNext)await invitations.PrepareAsync(envelopeId,next!.Id,next.Email,ct,f.NextInvitationId);
+            var reminderSchedule=reminders is null ? [] : await reminders.PrepareCurrentLockedAsync(envelopeId,ct);
             var completionWork=next is null && completion is not null ? await completion.PrepareAsync(envelopeId,ct) : null;
             if(!Accepted(envelope,f) || inviteNext && envelope.ExpiresAt<=time.GetUtcNow() || !await Owns(lease,located.PayloadJson,ct))return new(WorkOutcome.Retry,"checkpoint-expired-during-publication");
             await transaction.CommitAsync(ct); await transaction.DisposeAsync();
             if(f.NextInvitationId is Guid invitation)await invitations.PublishAsync(invitation,ct);
+            if(reminders is not null)await reminders.PublishAsync(reminderSchedule,ct);
             if(completionWork is Guid finalization)await completion!.PublishAsync(finalization,ct);
             return new(WorkOutcome.Completed);
         }
