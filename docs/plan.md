@@ -2039,7 +2039,7 @@ Final QUILS-152 integration checkpoint: merged checked PR #155/main into the ret
 
 ### QUILS-154 — Signature capture tabs and signer-name confirmation
 
-Status: In Progress. Depends on completed QUILS-31.
+Status: Done. Merged PR #157 after all ten exact-head checks passed; native Jira Done. Depends on completed QUILS-31.
 
 - Implement the owner-approved accessible Type / Draw / Image picker for signatures and initials, with large capture/preview areas and deliberate preview/adoption controls. Phone/SMS handoff is deferred.
 - Prefill the existing trusted signer name for explicit adoption confirmation without silently changing frozen signer identity. Input/method changes invalidate relevant preview/confirmation; never adopt automatically.
@@ -2047,4 +2047,4 @@ Status: In Progress. Depends on completed QUILS-31.
 - Validate meaningful server/client regressions and actual local synthetic desktop/mobile/keyboard type/draw/image flows, including signature/initials, name confirmation, stale/errors and deliberate field application. Source/local tests only; no deployment, cloud changes or live email/TSA/conversion.
 - Validation: 110 focused .NET regressions and 29 Node cases pass. Real local synthetic browser checks passed keyboard tab navigation, prefilled/required name confirmation, edit/method invalidation, typed/drawn/PNG/JPEG preview and adoption, clear/retry, phone-layout resize without overflow, explicit signature/initials application and exact-review Finish. No phone handoff or hosted/provider changes.
 
-CI follow-up for QUILS-154: the full suite found three retention-access cases whose shared HTTP fixture omitted the new name confirmation. The fixture now confirms its own frozen signer name; all 16 retention-access cases pass with their original cutoff assertions unchanged. Application source and passing browser flows are unchanged. Fresh exact-head CI remains required.
+CI follow-up for QUILS-154: the full suite found three retention-access cases whose shared HTTP fixture omitted the new name confirmation. The fixture now confirms its own frozen signer name; all 16 retention-access cases pass with their original cutoff assertions unchanged. Application source and passing browser flows are unchanged. All ten fresh exact-head checks passed before merge. The owned local synthetic host/database were then stopped/disposed, with proof retained; shared SQL and Azurite remain untouched. No hosted rollout is included.
