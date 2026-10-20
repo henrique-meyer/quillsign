@@ -98,6 +98,7 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
                     !identities.Add((item.Address.Area, item.Address.Name, item.Address.VersionId, item.Address.Snapshot))) throw Invalid();
             }
             ProductionHoldObjectReferences.Demand(sql.RootElement, objects);
+            ProductionHoldInvitationReferences.Demand(sql.RootElement, objects, keys);
             return objects;
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
@@ -119,7 +120,11 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
             if (hash is not { Length: 64 } || !hash.All(char.IsAsciiHexDigitLower)) throw Invalid();
             evidence.Add(new(address, hash));
         }
-        using (var verified = ProductionHoldSqlInventory.OpenVerified(sql, keys)) ProductionHoldObjectReferences.Demand(verified.RootElement, evidence);
+        using (var verified = ProductionHoldSqlInventory.OpenVerified(sql, keys))
+        {
+            ProductionHoldObjectReferences.Demand(verified.RootElement, evidence);
+            ProductionHoldInvitationReferences.Demand(verified.RootElement, evidence, keys);
+        }
         // Detect observed late additions/replacements/deletions. This deliberately
         // does not claim to fence writes that happen after the second listing.
         var after = await Census(scope, limits, ct);

@@ -65,6 +65,8 @@ Windows checkout correction: canonicalize generated retention notice newlines be
 
 ## QUILS-147: Preserve production records with authorized durable legal holds
 
+Native provider prerequisites passed in the isolated QUILS-155 pilot; its delayed synthetic cleanup remains separate. Implemented protected historical initial/resend/successor invitation payload references: use existing typed DataProtection readers, bind exact record/signer/recipient/disclosure/source hash, require the historical normalized object, and verify both capture and manifest replay without renewing access or policy clocks. This covers only invitation work; other protected notifications and opaque audit references, complete lifecycle receipts, external witness/restore fencing and all mutation/release boundaries remain required. No production activation or complete preservation claim. All 209 focused local cases pass, including 31 new pure invitation-reference cases and an actual SQL capture/authenticated-manifest omission regression.
+
 Status: In Progress. Assigned to ChatGPT Codex. Draft PR #156. Required for production self-hosting readiness; no hosted activation claimed.
 
 Dependencies: QUILS-146, QUILS-151, QUILS-152 (merged and native Done).

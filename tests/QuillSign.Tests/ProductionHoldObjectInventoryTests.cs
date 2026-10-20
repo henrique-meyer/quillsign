@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
@@ -11,6 +12,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Lifecycle;
 using QuillSign.Storage;
+using QuillSign.Work;
 
 namespace QuillSign.Tests;
 
@@ -20,6 +22,39 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
     private readonly Clock clock = new();
     private static readonly byte[] Content = "Synthetic object bytes - NO AGREEMENT"u8.ToArray();
     private static string Hash => Convert.ToHexStringLower(SHA256.HashData(Content));
+
+    [Fact]
+    public async Task Protected_invitation_reference_is_required_during_capture_and_authenticated_manifest_replay()
+    {
+        var (id, request, original) = await Held(); var historical = Guid.NewGuid();
+        await using (var db = fixture.Open())
+        {
+            var envelope = await db.Envelopes.SingleAsync(x => x.Id == id); envelope.ErsdSha256 = SHA256.HashData(Content);
+            var signer = new Signer { EnvelopeId = id, FullName = "Synthetic signer", Email = "synthetic-signer@example.invalid", Order = 1 };
+            db.Add(signer);
+            db.Add(new EmailOutbox { EnvelopeId = id, To = signer.Email, Template = "signer-invitation", AvailableAt = clock.Now,
+                PayloadJson = new SignerInvitationProtection(keys).Protect(new(signer.Id, DocumentId: historical, DocumentSha256: Hash, DisclosureSha256: Hash)) });
+            await db.SaveChangesAsync();
+        }
+        var source = Source(id, original); source.Objects.Add(Address(id, "normalized", historical.ToString("N")));
+        var snapshot = await Capture(id, request, source);
+        Assert.Equal(2, ProductionHoldObjectInventory.OpenVerified(snapshot, keys, clock).Length);
+        await Assert.ThrowsAsync<InvalidDataException>(() => Capture(id, request, Source(id, original)));
+        // Even a correctly protected/hash-bound manifest cannot omit the old
+        // document that exists only inside the protected invitation payload.
+        var protector = keys.CreateProtector(ProductionHoldObjectInventory.Version, id.ToString("N"));
+        var raw = protector.Unprotect(snapshot.ProtectedManifest);
+        try
+        {
+            var manifest = JsonNode.Parse(raw)!.AsObject();
+            manifest["Objects"] = new JsonArray(manifest["Objects"]!.AsArray().Single(x => x!["Address"]!["Area"]!.GetValue<string>() == "originals")!.DeepClone());
+            var changed = JsonSerializer.SerializeToUtf8Bytes(manifest);
+            var omitted = snapshot with { Objects = 1, Bytes = Content.Length, ProtectedManifest = protector.Protect(changed),
+                ManifestSha256 = Convert.ToHexStringLower(SHA256.HashData(changed)) };
+            Assert.Throws<InvalidDataException>(() => ProductionHoldObjectInventory.OpenVerified(omitted, keys, clock));
+        }
+        finally { CryptographicOperations.ZeroMemory(raw); }
+    }
 
     [Fact]
     public async Task Actual_local_Azurite_private_census_reads_current_and_snapshot_bytes_without_collecting_another_record()
