@@ -275,6 +275,14 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
         using var services = h.App.Services.CreateScope();
         var identity = await services.ServiceProvider.GetRequiredService<SignerAccess>().RedeemAsync(raw, null, null);
         Assert.NotNull(identity);
+        var principal = SignerAccessConfiguration.Principal(identity);
+        var context = await services.ServiceProvider.GetRequiredService<SignerAccess>().GetContextAsync(principal, h.Envelope.PublicId);
+        Assert.NotNull(context);
+        var pdf = await services.ServiceProvider.GetRequiredService<SignerPdfAccess>().PrepareAsync(principal, context);
+        Assert.Equal(identity.DocumentHash, Convert.ToHexStringLower(SHA256.HashData(pdf)));
+        var receipt = services.ServiceProvider.GetRequiredService<SignerReceiptProtection>().Create(context);
+        Assert.Equal(ConsentResult.Accepted, await services.ServiceProvider.GetRequiredService<SignerConsent>().AcceptAsync(
+            principal, h.Envelope.PublicId, receipt, true, true, "download", null, null));
         Assert.NotNull(await services.ServiceProvider.GetRequiredService<SignerConsent>().DeclineAsync(
             SignerAccessConfiguration.Principal(identity), h.Envelope.PublicId, "Synthetic refusal", null, null));
         var protection = services.ServiceProvider.GetRequiredService<IDataProtectionProvider>();
@@ -283,10 +291,16 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
         var tokenBefore = await db.AuthTokens.AsNoTracking().SingleAsync(x => x.EnvelopeId == h.Envelope.Id && x.PartyId == identity.SignerId && x.Purpose == TokenPurpose.SignerAccess);
         var snapshot = await new ProductionHoldSqlInventory(db, protection, h.Clock).CaptureLockedAsync(h.Envelope.Id, request.Current.Revision, request.Current.FenceHash!);
         using var sql = ProductionHoldSqlInventory.OpenVerified(snapshot, protection);
-        var objects = new List<HoldObjectEvidence> { new(new("normalized", $"{h.Envelope.Id:N}/{identity.DocumentId:N}", "historical", "", "\"etag\"", 32), identity.DocumentHash) };
+        var objects = new List<HoldObjectEvidence> { new(new("normalized", $"{h.Envelope.Id:N}/{identity.DocumentId:N}", "historical", "", "\"etag\"", pdf.LongLength), identity.DocumentHash) };
         ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, objects, protection);
+        ProductionHoldConsentAuditReferences.Demand(sql.RootElement, objects);
+        // Reopen the actual authenticated SQL capture again; neither old token
+        // nor consent timestamps are renewed by this historical graph reader.
+        using (var replay = ProductionHoldSqlInventory.OpenVerified(snapshot, protection))
+            ProductionHoldConsentAuditReferences.Demand(replay.RootElement, objects);
         objects.Clear();
         Assert.Throws<InvalidDataException>(() => ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, objects, protection));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldConsentAuditReferences.Demand(sql.RootElement, objects));
         var tokenAfter = await db.AuthTokens.AsNoTracking().SingleAsync(x => x.Id == tokenBefore.Id);
         Assert.Equal(tokenBefore.ExpiresAt, tokenAfter.ExpiresAt); Assert.Equal(tokenBefore.UsedAt, tokenAfter.UsedAt);
     }

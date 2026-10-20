@@ -103,6 +103,7 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
             var fields = ProductionHoldPreparationAuditReferences.ReadVerified(sql.RootElement, documents);
             var adoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(sql.RootElement, objects);
             ProductionHoldFieldAuditReferences.Demand(sql.RootElement, objects, fields, adoptions);
+            ProductionHoldConsentAuditReferences.Demand(sql.RootElement, objects);
             ProductionHoldNotificationReferences.Demand(sql.RootElement, objects, keys);
             return objects;
         }
@@ -133,6 +134,7 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
             var fields = ProductionHoldPreparationAuditReferences.ReadVerified(verified.RootElement, documents);
             var adoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(verified.RootElement, evidence);
             ProductionHoldFieldAuditReferences.Demand(verified.RootElement, evidence, fields, adoptions);
+            ProductionHoldConsentAuditReferences.Demand(verified.RootElement, evidence);
             ProductionHoldNotificationReferences.Demand(verified.RootElement, evidence, keys);
         }
         // Detect observed late additions/replacements/deletions. This deliberately
