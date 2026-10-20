@@ -17,13 +17,13 @@ public sealed class ProductionHoldInvitationReferenceTests
     public void Historical_invitation_requires_original_document_even_after_its_access_deadline(string kind)
     {
         var model = new Frame(kind); using var sql = model.Sql();
-        ProductionHoldInvitationReferences.Demand(sql.RootElement, model.Objects, model.Keys);
+        ProductionHoldNotificationReferences.Demand(sql.RootElement, model.Objects, model.Keys);
         Assert.True(model.At.AddDays(1) < DateTimeOffset.UtcNow);
         Assert.NotEqual(model.Document, model.Envelope.SentPdfBlob);
-        Assert.Throws<InvalidDataException>(() => ProductionHoldInvitationReferences.Demand(sql.RootElement, [], model.Keys));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(sql.RootElement, [], model.Keys));
         // A newer current source cannot replace the historical exact path/hash.
         var newer = model.Objects[0] with { Address = model.Objects[0].Address with { Name = $"{model.Id:N}/{model.Envelope.SentPdfBlob}" } };
-        Assert.Throws<InvalidDataException>(() => ProductionHoldInvitationReferences.Demand(sql.RootElement, [newer], model.Keys));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(sql.RootElement, [newer], model.Keys));
     }
 
     [Theory]
@@ -53,16 +53,16 @@ public sealed class ProductionHoldInvitationReferenceTests
             case "sender": m.Envelope.SenderEmail = "different-sender@example.invalid"; break;
         }
         using var sql = m.Sql();
-        Assert.Throws<InvalidDataException>(() => ProductionHoldInvitationReferences.Demand(sql.RootElement, m.Objects, m.Keys));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(sql.RootElement, m.Objects, m.Keys));
     }
 
     [Fact]
     public void A_different_key_ring_or_template_purpose_does_not_authenticate_a_saved_invitation()
     {
         var m = new Frame("initial"); using var original = m.Sql();
-        Assert.Throws<InvalidDataException>(() => ProductionHoldInvitationReferences.Demand(original.RootElement, m.Objects, new EphemeralDataProtectionProvider()));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(original.RootElement, m.Objects, new EphemeralDataProtectionProvider()));
         m.Mail.Template = InvitationSuccessorProtection.Template; using var moved = m.Sql();
-        Assert.Throws<InvalidDataException>(() => ProductionHoldInvitationReferences.Demand(moved.RootElement, m.Objects, m.Keys));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(moved.RootElement, m.Objects, m.Keys));
     }
 
     [Theory]
@@ -83,7 +83,7 @@ public sealed class ProductionHoldInvitationReferenceTests
             m.Mail.PayloadJson = JsonSerializer.Serialize(new ProtectedWorkPayload(protector.Protect(changed)));
         }
         using var sql = m.Sql();
-        Assert.Throws<InvalidDataException>(() => ProductionHoldInvitationReferences.Demand(sql.RootElement, m.Objects, m.Keys));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(sql.RootElement, m.Objects, m.Keys));
     }
 
     [Theory]
@@ -91,9 +91,9 @@ public sealed class ProductionHoldInvitationReferenceTests
     public void Original_contact_epoch_remains_preservable_after_contact_correction_but_cannot_be_readdressed(string kind)
     {
         var m = new Frame(kind); m.CorrectContact(); using var sql = m.Sql();
-        ProductionHoldInvitationReferences.Demand(sql.RootElement, m.Objects, m.Keys);
+        ProductionHoldNotificationReferences.Demand(sql.RootElement, m.Objects, m.Keys);
         m.Mail.To = m.Signer.Email; using var readdressed = m.Sql();
-        Assert.Throws<InvalidDataException>(() => ProductionHoldInvitationReferences.Demand(readdressed.RootElement, m.Objects, m.Keys));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(readdressed.RootElement, m.Objects, m.Keys));
     }
 
     [Theory]
@@ -109,7 +109,7 @@ public sealed class ProductionHoldInvitationReferenceTests
             case "chain": m.Signer.Email = "unexplained-current@example.invalid"; break;
         }
         using var sql = m.Sql();
-        Assert.Throws<InvalidDataException>(() => ProductionHoldInvitationReferences.Demand(sql.RootElement, m.Objects, m.Keys));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(sql.RootElement, m.Objects, m.Keys));
     }
 
     private sealed class Frame

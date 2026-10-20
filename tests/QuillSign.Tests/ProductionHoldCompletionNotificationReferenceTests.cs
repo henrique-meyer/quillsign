@@ -205,7 +205,7 @@ public sealed class ProductionHoldCompletionNotificationReferenceTests
                 Email = Mail.To, CompletionPublicationId = Result.Id, CompletionRecipeSha256 = Result.RecipeSha256, CompletionPartySha256 = Convert.FromHexString(Payload.PartyHash),
                 TokenSha256 = SHA256.HashData("Synthetic token hash - NO AGREEMENT"u8), ExpiresAt = At.AddMinutes(5), UsedAt = At.AddMinutes(1) });
         }
-        internal void Demand(JsonDocument sql) => ProductionHoldCompletionNotificationReferences.Demand(sql.RootElement, Objects, Keys);
+        internal void Demand(JsonDocument sql) => ProductionHoldNotificationReferences.Demand(sql.RootElement, Objects, Keys);
         internal JsonDocument Sql() => JsonDocument.Parse(JsonSerializer.Serialize(new { RecordId = Envelope.Id, Tables = new object[] {
             new { Table = "Envelopes", Rows = new[] { Envelope } }, new { Table = "Signers", Rows = new[] { Signer } }, new { Table = "Recipients", Rows = new[] { Recipient } },
             new { Table = "CompletionPublicationIntents", Rows = new[] { Intent } }, new { Table = "CompletionPublicationResults", Rows = new[] { Result } },

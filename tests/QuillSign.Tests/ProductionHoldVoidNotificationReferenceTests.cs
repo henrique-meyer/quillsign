@@ -113,7 +113,7 @@ public sealed class ProductionHoldVoidNotificationReferenceTests
             raw = fault == "duplicate" ? raw[..^1] + "," + raw[1..] : raw[..^1] + ",\"HiddenObject\":\"synthetic\"}";
             f.Mail.PayloadJson = JsonSerializer.Serialize(new ProtectedWorkPayload(p.Protect(raw)));
         }
-        using var sql = f.Sql(); Assert.Throws<InvalidDataException>(() => ProductionHoldVoidNotificationReferences.Demand(sql.RootElement, f.Objects, keys));
+        using var sql = f.Sql(); Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(sql.RootElement, f.Objects, keys));
     }
 
     [Fact]
@@ -199,7 +199,7 @@ public sealed class ProductionHoldVoidNotificationReferenceTests
             audit.Hash = AuditHash.Compute(audit); Audits.Add(audit);
         }
         private void Object(Guid id, byte[] hash) => Objects.Add(new(new("normalized", $"{Envelope.Id:N}/{id:N}", "historical", "", "\"etag\"", 32), Hex(hash)));
-        internal void Demand(JsonDocument sql) => ProductionHoldVoidNotificationReferences.Demand(sql.RootElement, Objects, Keys);
+        internal void Demand(JsonDocument sql) => ProductionHoldNotificationReferences.Demand(sql.RootElement, Objects, Keys);
         internal JsonDocument Sql() => JsonDocument.Parse(JsonSerializer.Serialize(new { RecordId = Envelope.Id, Tables = new object[] {
             new { Table = "Envelopes", Rows = new[] { Envelope } }, new { Table = "EmailOutbox", Rows = new[] { Mail } }, new { Table = "Signers", Rows = Signers },
             new { Table = "Recipients", Rows = Recipients }, new { Table = "SignerFinishAcceptances", Rows = Finishes }, new { Table = "AuditEvents", Rows = Audits }

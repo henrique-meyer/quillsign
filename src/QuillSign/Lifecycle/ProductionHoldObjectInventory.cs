@@ -98,10 +98,8 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
                     !identities.Add((item.Address.Area, item.Address.Name, item.Address.VersionId, item.Address.Snapshot))) throw Invalid();
             }
             ProductionHoldObjectReferences.Demand(sql.RootElement, objects);
-            ProductionHoldInvitationReferences.Demand(sql.RootElement, objects, keys);
-            ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, objects, keys);
-            ProductionHoldCompletionNotificationReferences.Demand(sql.RootElement, objects, keys);
-            ProductionHoldVoidNotificationReferences.Demand(sql.RootElement, objects, keys);
+            ProductionHoldAuditChain.Demand(sql.RootElement);
+            ProductionHoldNotificationReferences.Demand(sql.RootElement, objects, keys);
             return objects;
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
@@ -126,10 +124,8 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
         using (var verified = ProductionHoldSqlInventory.OpenVerified(sql, keys))
         {
             ProductionHoldObjectReferences.Demand(verified.RootElement, evidence);
-            ProductionHoldInvitationReferences.Demand(verified.RootElement, evidence, keys);
-            ProductionHoldDecisionNotificationReferences.Demand(verified.RootElement, evidence, keys);
-            ProductionHoldCompletionNotificationReferences.Demand(verified.RootElement, evidence, keys);
-            ProductionHoldVoidNotificationReferences.Demand(verified.RootElement, evidence, keys);
+            ProductionHoldAuditChain.Demand(verified.RootElement);
+            ProductionHoldNotificationReferences.Demand(verified.RootElement, evidence, keys);
         }
         // Detect observed late additions/replacements/deletions. This deliberately
         // does not claim to fence writes that happen after the second listing.

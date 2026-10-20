@@ -26,6 +26,75 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
     private static readonly byte[] Content = "Synthetic object bytes - NO AGREEMENT"u8.ToArray();
     private static string Hash => Convert.ToHexStringLower(SHA256.HashData(Content));
 
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public async Task Full_tail_and_closed_owned_mail_registry_are_checked_in_capture_and_authenticated_replay(bool unknownMail)
+    {
+        var (id, request, original) = await Held();
+        await using (var db = fixture.Open())
+        {
+            await using var tx = await db.Database.BeginTransactionAsync();
+            await new AuditWriter(db, clock).AppendAsync(id, "draft_created", "synthetic-sender@example.invalid", null, null, default);
+            await tx.CommitAsync();
+        }
+        var snapshot = await Capture(id, request, Source(id, original));
+        Assert.Single(ProductionHoldObjectInventory.OpenVerified(snapshot, keys, clock));
+        using var saved = ProductionHoldSqlInventory.OpenVerified(snapshot.Sql, keys);
+        var root = JsonNode.Parse(saved.RootElement.GetRawText())!.AsObject();
+        var target = root["Tables"]!.AsArray().Single(x => x!["Table"]!.GetValue<string>() == (unknownMail ? "EmailOutbox" : "AuditEvents"))!;
+        if (unknownMail)
+        {
+            var mail = new EmailOutbox { EnvelopeId = id, To = "synthetic-sender@example.invalid", Template = "future-owned-template", AvailableAt = clock.Now };
+            target["Rows"]!.AsArray().Add(JsonSerializer.SerializeToNode(mail, new JsonSerializerOptions { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } }));
+            await using var db = fixture.Open(); db.Add(mail); await db.SaveChangesAsync();
+        }
+        else
+        {
+            var tail = target["Rows"]!.AsArray().Single(x => x!["Sequence"]!.GetValue<long>() == 2)!;
+            // A well-hashed but ambiguous operational tail must not be accepted
+            // just because the enrollment prefix remains fully authentic.
+            var row = tail.Deserialize<AuditEvent>(new JsonSerializerOptions { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } })!;
+            row.DataJson = "{\"x\":1,\"x\":2}"; row.Hash = AuditHash.Compute(row);
+            tail["DataJson"] = row.DataJson; tail["Hash"] = Convert.ToBase64String(row.Hash);
+            await using var db = fixture.Open();
+            await db.AuditEvents.Where(x => x.EnvelopeId == id && x.Sequence == 2).ExecuteUpdateAsync(s => s.SetProperty(x => x.DataJson, row.DataJson).SetProperty(x => x.Hash, row.Hash));
+        }
+        // Reprotect/recompute every envelope and table digest, proving the new
+        // semantic checks run during manifest replay, beyond DP/hash integrity.
+        var changed = Rebind(snapshot, root, keys);
+        using (var validEnvelope = ProductionHoldSqlInventory.OpenVerified(changed.Sql, keys)) Assert.Equal(id, validEnvelope.RootElement.GetProperty("RecordId").GetGuid());
+        Assert.Throws<InvalidDataException>(() => ProductionHoldObjectInventory.OpenVerified(changed, keys, clock));
+        await Assert.ThrowsAsync<InvalidDataException>(() => Capture(id, request, Source(id, original)));
+        // Neither failed attempt rewrites the original exact capture or mints
+        // access authority; this record never needed a participant token.
+        Assert.Single(ProductionHoldObjectInventory.OpenVerified(snapshot, keys, clock));
+        await using (var db = fixture.Open()) Assert.False(await db.AuthTokens.AnyAsync(x => x.EnvelopeId == id));
+    }
+
+    private static ProductionHoldObjectSnapshot Rebind(ProductionHoldObjectSnapshot snapshot, JsonObject root, IDataProtectionProvider keys)
+    {
+        static string Digest(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
+        foreach (var table in root["Tables"]!.AsArray())
+        {
+            table!["Count"] = (long)table["Rows"]!.AsArray().Count;
+            table["Sha256"] = Digest(JsonSerializer.SerializeToUtf8Bytes(table["Rows"]));
+        }
+        using var document = JsonDocument.Parse(root.ToJsonString()); var value = document.RootElement;
+        var state = JsonSerializer.SerializeToUtf8Bytes(new { Version = value.GetProperty("Version").GetString(),
+            RecordId = snapshot.RecordId, Revision = snapshot.Revision, FenceHash = snapshot.FenceHash,
+            PolicySha256 = value.GetProperty("PolicySha256").GetString(), Tables = value.GetProperty("Tables") });
+        root["StateSha256"] = Digest(state); var raw = JsonSerializer.SerializeToUtf8Bytes(root);
+        var sql = snapshot.Sql with { StateSha256 = Digest(state), PayloadSha256 = Digest(raw), PlaintextBytes = raw.Length,
+            ProtectedPayload = keys.CreateProtector(ProductionHoldSqlInventory.Version, snapshot.RecordId.ToString("N")).Protect(raw),
+            Tables = root["Tables"]!.AsArray().Select(x => new ProductionHoldSqlTable(x!["Table"]!.GetValue<string>(), x["Count"]!.GetValue<long>(), x["Sha256"]!.GetValue<string>())).ToArray() };
+        var protector = keys.CreateProtector(ProductionHoldObjectInventory.Version, snapshot.RecordId.ToString("N"));
+        var manifest = JsonNode.Parse(protector.Unprotect(snapshot.ProtectedManifest))!;
+        manifest["SqlStateSha256"] = sql.StateSha256; manifest["SqlPayloadSha256"] = sql.PayloadSha256;
+        var encoded = JsonSerializer.SerializeToUtf8Bytes(manifest);
+        return snapshot with { Sql = sql, SqlStateSha256 = sql.StateSha256, SqlPayloadSha256 = sql.PayloadSha256,
+            ManifestSha256 = Digest(encoded), ProtectedManifest = protector.Protect(encoded) };
+    }
+
     [Fact]
     public async Task Protected_invitation_reference_is_required_during_capture_and_authenticated_manifest_replay()
     {

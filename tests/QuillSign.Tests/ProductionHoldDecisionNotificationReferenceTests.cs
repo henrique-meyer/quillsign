@@ -79,7 +79,7 @@ public sealed class ProductionHoldDecisionNotificationReferenceTests
                 body = body[..^1] + (fault == "hidden" ? ",\"HiddenObject\":\"synthetic\"}" : "," + body[1..]);
                 f.Mail.PayloadJson = JsonSerializer.Serialize(new ProtectedWorkPayload(p.Protect(body))); break;
         }
-        using var sql = f.Sql(); Assert.Throws<InvalidDataException>(() => ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, f.Objects, keys));
+        using var sql = f.Sql(); Assert.Throws<InvalidDataException>(() => ProductionHoldNotificationReferences.Demand(sql.RootElement, f.Objects, keys));
     }
 
     [Fact]
@@ -176,7 +176,7 @@ public sealed class ProductionHoldDecisionNotificationReferenceTests
             Tokens.Add(new() { Id = Verification.TokenId, EnvelopeId = Envelope.Id, Email = Mail.To, Purpose = TokenPurpose.SenderVerify, PartyType = PartyType.Sender,
                 ExpiresAt = At.AddMinutes(15), UsedAt = At, TokenSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(Verification.Token)) });
         }
-        internal void Demand(JsonDocument sql) => ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, Objects, Keys);
+        internal void Demand(JsonDocument sql) => ProductionHoldNotificationReferences.Demand(sql.RootElement, Objects, Keys);
         internal JsonDocument Sql() => JsonDocument.Parse(JsonSerializer.Serialize(new { RecordId = Envelope.Id, Tables = new object[] {
             new { Table = "Envelopes", Rows = new[] { Envelope } }, new { Table = "Signers", Rows = new[] { Signer } },
             new { Table = "EmailOutbox", Rows = new[] { Mail } }, new { Table = "AuthTokens", Rows = Tokens }, new { Table = "AuditEvents", Rows = Audits }
