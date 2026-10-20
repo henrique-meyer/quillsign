@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using QuillSign.Data;
@@ -54,6 +55,9 @@ public sealed class ProductionHoldObjectReferencesTests
             var candidate = Add("normalized", "completion-candidates/"); var executed = Add("normalized", "completion-seals/executed/");
             var certificateSource = Add("normalized", "completion-seals/certificate-source/"); var certificate = Add("normalized", "completion-seals/certificate/");
             var finalExecuted = Add("final", "executed/"); var finalCertificate = Add("final", "certificate/");
+            var signerId = Guid.NewGuid();
+            var acceptedFields = JsonSerializer.Serialize(new[] { new DocumentField { EnvelopeId = id, SignerId = signerId,
+                Type = FieldType.Signature, Value = replaced.ToString("N"), ImageSha256 = hash } });
             FinalStoredDocument Stored(Guid key, FinalDocumentKind kind) => new(new(id, kind, key), length, hash, "synthetic-version", "\"synthetic-etag\"", FinalProtection.LegalHold, null, DateTimeOffset.UnixEpoch);
             var tables = new Dictionary<string, object[]>
             {
@@ -62,7 +66,9 @@ public sealed class ProductionHoldObjectReferencesTests
                 ["Signers"] = [new Signer { EnvelopeId = id, SignatureImageBlob = signature.ToString("N"), SignatureImageSha256 = hash, InitialsImageBlob = initials.ToString("N"), InitialsImageSha256 = hash }],
                 ["SignaturePreviews"] = [new SignaturePreview { EnvelopeId = id, DocumentId = sent, DocumentSha256 = hash, SignatureObjectId = replaced, SignatureSha256 = hash, InitialsObjectId = initials, InitialsSha256 = hash }],
                 ["SignerReviewCandidates"] = [new SignerReviewCandidate { EnvelopeId = id, SourceObjectId = sent, SourceSha256 = hash, PdfObjectId = review, PdfSha256 = hash, PdfLength = length }],
-                ["SignerFinishAcceptances"] = [new SignerFinishAcceptance { EnvelopeId = id, SourceObjectId = sent, SourceSha256 = hash, PdfObjectId = review, PdfSha256 = hash, PdfLength = length }],
+                ["SignerFinishAcceptances"] = [new SignerFinishAcceptance { EnvelopeId = id, SignerId = signerId, SourceObjectId = sent, SourceSha256 = hash,
+                    PdfObjectId = review, PdfSha256 = hash, PdfLength = length, FieldsJson = acceptedFields, FieldsSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(acceptedFields)) }],
+                ["SignerContactRevisions"] = [], ["CompletionPublicationIntents"] = [],
                 ["CompletionCandidates"] = [new CompletionCandidate { EnvelopeId = id, SourceObjectId = review, SourceSha256 = hash, PdfObjectId = candidate, PdfSha256 = hash, PdfLength = length }],
                 ["CompletionSealOutputs"] = [new CompletionSealOutput { EnvelopeId = id, Kind = CompletionSealKind.Executed, SourceObjectId = candidate, SourceSha256 = hash, SourceLength = length,
                     PdfObjectId = executed, PdfSha256 = hash, PdfLength = length }, new CompletionSealOutput { EnvelopeId = id, Kind = CompletionSealKind.Certificate, SourceObjectId = certificateSource,
