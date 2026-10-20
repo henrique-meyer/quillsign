@@ -51,7 +51,7 @@
 <div id="pdf-preview" class="pdf-preview" data-url="/sign/@data.Snapshot.PublicId?handler=Pdf" aria-label="Document with saved-entry overlays">
 <div class="pdf-page"><canvas aria-label="Document page"></canvas><div class="textLayer"></div><div id="signer-overlays"></div></div>
 </div>
-<p><a asp-page="/Sign/Index" asp-page-handler="Pdf" asp-route-publicId="@data.Snapshot.PublicId" asp-route-download="true">Download the unchanged document</a></p>
+<p><a asp-page="/Sign/Index" asp-page-handler="Pdf" asp-route-publicId="@data.Snapshot.PublicId" asp-route-download="true" pdf-file-action pdf-file-label="the unchanged document">Download the unchanged document</a></p>
 }
 </section>
 @section Scripts { <script type="module" src="~/js/signer-fields.mjs" asp-append-version="true"></script> }

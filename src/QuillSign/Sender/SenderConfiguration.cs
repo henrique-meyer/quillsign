@@ -20,6 +20,8 @@ public static class SenderConfiguration
             options.RequestsPerWindow is < 1 or > 1000 || options.WindowMinutes is < 1 or > 60)
             throw new InvalidOperationException("Invalid sender session or request limits.");
         services.AddSingleton(options);
+        services.AddSingleton(config.GetSection("Files").Get<Documents.PdfFilePresentationOptions>() ?? new());
+        services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(mvc=>mvc.Filters.Add<Documents.PdfFilePresentationFilter>());
         services.AddSingleton<SenderAvailability>();
         services.AddScoped<SenderWorkflow>();
         // Scanner-safe/custom hosts can register sender HTTP plumbing without SQL.
