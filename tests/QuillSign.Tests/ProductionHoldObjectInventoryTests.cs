@@ -1,0 +1,225 @@
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text.Json;
+using Azure;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.EntityFrameworkCore;
+using QuillSign.Data;
+using QuillSign.Documents;
+using QuillSign.Lifecycle;
+using QuillSign.Storage;
+
+namespace QuillSign.Tests;
+
+public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
+{
+    private readonly IDataProtectionProvider keys = new EphemeralDataProtectionProvider();
+    private readonly Clock clock = new();
+    private static readonly byte[] Content = "Synthetic object bytes - NO AGREEMENT"u8.ToArray();
+    private static string Hash => Convert.ToHexStringLower(SHA256.HashData(Content));
+
+    [Fact]
+    public async Task Actual_local_Azurite_private_census_reads_current_and_snapshot_bytes_without_collecting_another_record()
+    {
+        var service = new BlobServiceClient(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE"),
+            new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03));
+        Assert.True(service.Uri.IsLoopback || service.Uri.Host == "azurite", "Only the disposable local object service is allowed.");
+        var (id, request, original) = await Held(); var clients = new List<BlobClient>();
+        try
+        {
+            foreach (var area in ProductionHoldObjectScope.Areas)
+                await service.GetBlobContainerClient(area).CreateIfNotExistsAsync(PublicAccessType.None);
+            var own = service.GetBlobContainerClient("originals").GetBlobClient($"{id:N}/{original:N}"); clients.Add(own);
+            await own.UploadAsync(BinaryData.FromBytes(Content), new BlobUploadOptions { Conditions = new() { IfNoneMatch = ETag.All } });
+            await own.CreateSnapshotAsync();
+            var unrelated = service.GetBlobContainerClient("originals").GetBlobClient($"{Guid.NewGuid():N}/{Guid.NewGuid():N}"); clients.Add(unrelated);
+            await unrelated.UploadAsync(BinaryData.FromString("Unrelated synthetic record - NO AGREEMENT"));
+            await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
+            var result = await new ProductionHoldObjectInventory(db, keys, clock, new AzureProductionHoldObjectSource(service))
+                .CaptureLockedAsync(id, request.Current.Revision, request.Current.FenceHash!);
+            Assert.Equal(2, result.Objects); Assert.Equal(2 * Content.Length, result.Bytes);
+            var manifest = keys.CreateProtector(ProductionHoldObjectInventory.Version, id.ToString("N")).Unprotect(result.ProtectedManifest);
+            Assert.DoesNotContain(unrelated.Name, System.Text.Encoding.UTF8.GetString(manifest));
+            Assert.True((await unrelated.ExistsAsync()).Value); Assert.True((await own.ExistsAsync()).Value);
+        }
+        finally
+        {
+            // Only the exact disposable test objects created above; never a
+            // production adapter operation or shared container deletion.
+            foreach (var client in clients) await client.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots);
+        }
+    }
+
+    [Fact]
+    public async Task Exact_SQL_and_all_four_object_areas_versions_snapshots_and_replaced_assets_are_bound_in_private_output()
+    {
+        var (id, request, original) = await Held(); var source = Source(id, original);
+        source.Objects.Add(source.Objects[0] with { VersionId = "older-version", ETag = "\"old\"" });
+        source.Objects.Add(source.Objects[0] with { VersionId = "", Snapshot = "synthetic-snapshot" });
+        source.Objects.Add(Address(id, "normalized", "completion-seals/certificate/" + Guid.NewGuid().ToString("N")));
+        source.Objects.Add(Address(id, "previews", Guid.NewGuid().ToString("N")));
+        source.Objects.Add(Address(id, "final", "executed/" + Guid.NewGuid().ToString("N")));
+        var result = await Capture(id, request, source);
+        Assert.Equal(6, result.Objects); Assert.Equal(6 * Content.Length, result.Bytes); Assert.Equal(6, source.Hashes);
+        var plain = keys.CreateProtector(ProductionHoldObjectInventory.Version, id.ToString("N")).Unprotect(result.ProtectedManifest);
+        Assert.Equal(result.ManifestSha256, Convert.ToHexStringLower(SHA256.HashData(plain)));
+        using var json = JsonDocument.Parse(plain); Assert.Equal(id, json.RootElement.GetProperty("RecordId").GetGuid());
+        Assert.Equal(result.SqlStateSha256, json.RootElement.GetProperty("SqlStateSha256").GetString());
+        Assert.Equal(result.SqlPayloadSha256, json.RootElement.GetProperty("SqlPayloadSha256").GetString());
+        using (var sql = ProductionHoldSqlInventory.OpenVerified(result.Sql, keys))
+            Assert.Equal(result.SqlStateSha256, sql.RootElement.GetProperty("StateSha256").GetString());
+        Assert.Contains("older-version", System.Text.Encoding.UTF8.GetString(plain));
+        Assert.DoesNotContain("synthetic-sender", System.Text.Encoding.UTF8.GetString(plain));
+        Assert.Equal(8, source.Lists); // both complete censuses, including empty areas
+        await using var db = fixture.Open(); Assert.Single(await db.ProductionHoldRequests.Where(x => x.EnvelopeId == id).ToArrayAsync());
+        Assert.Single(await db.AuditEvents.Where(x => x.EnvelopeId == id).ToArrayAsync());
+    }
+
+    [Theory]
+    [InlineData("missing")][InlineData("hash")][InlineData("area")]
+    public async Task Missing_or_wrong_named_source_is_not_preservation(string fault)
+    {
+        var (id, request, original) = await Held(); var source = Source(id, original);
+        if (fault == "missing") source.Objects.Clear();
+        else if (fault == "hash") source.Hash = new string('0', 64);
+        else source.Objects[0] = source.Objects[0] with { Area = "normalized" };
+        await Assert.ThrowsAsync<InvalidDataException>(() => Capture(id, request, source));
+    }
+
+    [Fact]
+    public async Task Complete_bounded_pagination_captures_every_page_before_and_after_hashing()
+    {
+        var (id, request, original) = await Held(); var source = Source(id, original); source.Paginate = true;
+        for (var i = 0; i < 150; i++) source.Objects.Add(Address(id, "normalized", Guid.NewGuid().ToString("N")));
+        var result = await Capture(id, request, source);
+        Assert.Equal(151, result.Objects); Assert.Equal(151, source.Hashes); Assert.Equal(10, source.Lists);
+    }
+
+    [Theory]
+    [InlineData("added")][InlineData("changed")][InlineData("removed")][InlineData("SQL")]
+    public async Task Observed_late_object_or_business_SQL_change_rejects_the_manifest(string fault)
+    {
+        var (id, request, original) = await Held(); var source = Source(id, original);
+        await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
+        source.AfterHash = async () =>
+        {
+            switch (fault)
+            {
+                case "added": source.Objects.Add(Address(id, "normalized", Guid.NewGuid().ToString("N"))); break;
+                case "changed": source.Objects[0] = source.Objects[0] with { ETag = "\"new\"" }; break;
+                case "removed": source.Objects.Clear(); break;
+                default: await db.Envelopes.Where(x => x.Id == id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Message, "Changed after capture")); break;
+            }
+        };
+        await Assert.ThrowsAsync<DocumentConflictException>(() => new ProductionHoldObjectInventory(db, keys, clock, source)
+            .CaptureLockedAsync(id, request.Current.Revision, request.Current.FenceHash!));
+    }
+
+    [Theory]
+    [InlineData("count")][InlineData("object-bytes")][InlineData("total-bytes")][InlineData("duplicate")]
+    [InlineData("escape")][InlineData("traversal")][InlineData("both-selectors")][InlineData("wildcard")][InlineData("weak-etag")][InlineData("cursor-loop")]
+    public async Task Bounded_census_rejects_escaped_partial_or_repeating_inventory_before_reading_content(string fault)
+    {
+        var (id, request, original) = await Held(); var source = Source(id, original); ProductionHoldObjectLimits? limits = null;
+        switch (fault)
+        {
+            case "count": source.Objects.Add(Address(id, "originals", Guid.NewGuid().ToString("N"))); limits = new(MaximumObjects: 1); break;
+            case "object-bytes": limits = new(MaximumObjectBytes: Content.Length - 1); break;
+            case "total-bytes": limits = new(MaximumTotalBytes: Content.Length - 1); break;
+            case "duplicate": source.Objects.Add(source.Objects[0]); break;
+            case "escape": source.Objects[0] = source.Objects[0] with { Name = $"{Guid.NewGuid():N}/{original:N}" }; break;
+            case "traversal": source.Objects[0] = source.Objects[0] with { Name = $"{id:N}/../outside" }; break;
+            case "both-selectors": source.Objects[0] = source.Objects[0] with { Snapshot = "synthetic-snapshot" }; break;
+            case "wildcard": source.Objects[0] = source.Objects[0] with { ETag = "*" }; break;
+            case "weak-etag": source.Objects[0] = source.Objects[0] with { ETag = "W/\"weak\"" }; break;
+            default: source.Loop = true; break;
+        }
+        await Assert.ThrowsAsync<InvalidDataException>(() => Capture(id, request, source, limits)); Assert.Equal(0, source.Hashes);
+    }
+
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public async Task Expiry_or_cancellation_after_storage_read_cannot_publish_a_manifest(bool cancel)
+    {
+        var (id, request, original) = await Held(); var source = Source(id, original); using var cts = new CancellationTokenSource();
+        source.AfterHash = () => { if (cancel) cts.Cancel(); else clock.Now = clock.Now.AddMinutes(10); return Task.CompletedTask; };
+        var error = await Record.ExceptionAsync(() => Capture(id, request, source, ct: cts.Token));
+        Assert.True(cancel ? error is OperationCanceledException : error is UnauthorizedAccessException, error?.ToString());
+    }
+
+    [Theory]
+    [InlineData("ciphertext")][InlineData("record")][InlineData("fence")][InlineData("state")][InlineData("tables")][InlineData("payload")]
+    public async Task SQL_snapshot_reader_authenticates_bytes_and_all_bound_external_summary_fields(string fault)
+    {
+        var (id, request, _) = await Held(); await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
+        var snapshot = await new ProductionHoldSqlInventory(db, keys, clock).CaptureLockedAsync(id, request.Current.Revision, request.Current.FenceHash!);
+        using (var verified = ProductionHoldSqlInventory.OpenVerified(snapshot, keys)) Assert.Equal(id, verified.RootElement.GetProperty("RecordId").GetGuid());
+        var altered = fault switch
+        {
+            "ciphertext" => snapshot with { ProtectedPayload = [1, 2, 3] },
+            "record" => snapshot with { RecordId = Guid.NewGuid() },
+            "fence" => snapshot with { FenceHash = new string('0', 64) },
+            "state" => snapshot with { StateSha256 = new string('0', 64) },
+            "tables" => snapshot with { Tables = [] },
+            _ => snapshot with { PayloadSha256 = new string('0', 64) }
+        };
+        var error = Record.Exception(() => ProductionHoldSqlInventory.OpenVerified(altered, keys).Dispose());
+        Assert.True(error is CryptographicException or InvalidDataException, error?.ToString());
+    }
+
+    private async Task<(Guid, ProductionHoldRequestReceipt, Guid)> Held()
+    {
+        var original = Guid.NewGuid(); var envelope = new Envelope { SenderEmail = "synthetic-sender@example.invalid", CreatedAt = clock.Now };
+        await using var db = fixture.Open();
+        await using (var creation = await db.Database.BeginTransactionAsync())
+        {
+            db.Add(envelope); await new ProductionRetentionLedger(db, new(db, clock), clock).PrepareNewLockedAsync(envelope, ProductionRetentionLedgerTests.Policy());
+            await creation.CommitAsync();
+        }
+        envelope.OriginalBlob = original.ToString("N"); envelope.OriginalSha256 = SHA256.HashData(Content); await db.SaveChangesAsync();
+        var command = new ProductionHoldCommand(Guid.NewGuid(), envelope.Id, Guid.NewGuid(), 0, ProductionHoldOperation.Place, "Synthetic preservation", "Synthetic reason", "synthetic-reference");
+        const string issuer = "https://operator.synthetic.invalid"; const string subject = "synthetic-operator";
+        var operators = new ProductionOperatorPolicy(true, [new(issuer, subject, new HashSet<ProductionOperatorPermission> { command.Permission })]);
+        var ticket = new AuthenticationTicket(new(new ClaimsIdentity([new("iss", issuer, ClaimValueTypes.String, issuer), new("sub", subject, ClaimValueTypes.String, issuer)], ProductionOperatorAuthority.OidcScheme)),
+            new AuthenticationProperties { IssuedUtc = clock.Now, ExpiresUtc = clock.Now.AddMinutes(5) }, ProductionOperatorAuthority.CookieScheme);
+        var authority = ProductionOperatorAuthority.FromValidatedTicket(ticket, operators, command.Permission, clock);
+        await using var tx = await db.Database.BeginTransactionAsync();
+        var request = await new ProductionHoldRequests(db, keys, clock).PrepareLockedAsync(authority, operators, command); await tx.CommitAsync();
+        return (envelope.Id, request, original);
+    }
+    private async Task<ProductionHoldObjectSnapshot> Capture(Guid id, ProductionHoldRequestReceipt request, Fake source,
+        ProductionHoldObjectLimits? limits = null, CancellationToken ct = default)
+    {
+        await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
+        return await new ProductionHoldObjectInventory(db, keys, clock, source).CaptureLockedAsync(id, request.Current.Revision, request.Current.FenceHash!, limits, ct);
+    }
+    private static HoldObjectAddress Address(Guid id, string area, string name) => new(area, $"{id:N}/{name}", "synthetic-version", "", "\"synthetic-etag\"", Content.Length);
+    private static Fake Source(Guid id, Guid original) => new() { Objects = [Address(id, "originals", original.ToString("N"))] };
+    private sealed class Fake : IProductionHoldObjectSource
+    {
+        internal List<HoldObjectAddress> Objects = []; internal string Hash = ProductionHoldObjectInventoryTests.Hash;
+        internal int Lists, Hashes; internal bool Loop, Paginate; internal Func<Task>? AfterHash;
+        public Task<HoldObjectPage> ListAsync(ProductionHoldObjectScope scope, string area, string? continuation, int maximum, CancellationToken ct)
+        {
+            Lists++;
+            var selected = Objects.Where(x => x.Area == area || area == "originals" && x.Name.Contains("/../")).ToArray();
+            if (Paginate)
+            {
+                var start = continuation is null ? 0 : int.Parse(continuation, System.Globalization.CultureInfo.InvariantCulture);
+                var page = selected.Skip(start).Take(maximum).ToArray(); var next = start + page.Length;
+                return Task.FromResult(new HoldObjectPage(page, next < selected.Length ? next.ToString(System.Globalization.CultureInfo.InvariantCulture) : null));
+            }
+            return Task.FromResult(new HoldObjectPage(selected, Loop ? "same-cursor" : null));
+        }
+        public async Task<string> HashAsync(ProductionHoldObjectScope scope, HoldObjectAddress address, CancellationToken ct)
+        { Hashes++; if (AfterHash is not null) await AfterHash(); return Hash; }
+    }
+    private sealed class Clock : TimeProvider
+    {
+        internal DateTimeOffset Now = new(2030, 1, 1, 12, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+}

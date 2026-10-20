@@ -35,6 +35,35 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
         typeof(EmailPilotRunRecord), typeof(EmailPilotSecretRecord), typeof(EmailPilotEnrollmentRecord), typeof(EmailPilotReservationRecord),
         typeof(EmailPilotLookupRequestRecord), typeof(EmailPilotLookupTokenRecord)];
 
+    // Private consumers must authenticate persisted bytes rather than trusting the
+    // separately stored summary/hash or accepting a caller-supplied table list.
+    internal static JsonDocument OpenVerified(ProductionHoldSqlSnapshot snapshot, IDataProtectionProvider keys)
+    {
+        if (snapshot.RecordId == Guid.Empty || snapshot.ProtectedPayload is not { Length: > 0 and <= 17 * 1024 * 1024 } ||
+            snapshot.PlaintextBytes is < 1 or > 16 * 1024 * 1024) throw Invalid();
+        var plain = keys.CreateProtector(Version, snapshot.RecordId.ToString("N")).Unprotect(snapshot.ProtectedPayload);
+        JsonDocument? document = null;
+        try
+        {
+            if (plain.LongLength != snapshot.PlaintextBytes || Convert.ToHexStringLower(SHA256.HashData(plain)) != snapshot.PayloadSha256) throw Invalid();
+            using var input = new MemoryStream(plain, false);
+            document = JsonDocument.Parse(input); var root = document.RootElement;
+            if (root.GetProperty("Version").GetString() != Version || root.GetProperty("RecordId").GetGuid() != snapshot.RecordId ||
+                root.GetProperty("Revision").GetInt64() != snapshot.Revision || root.GetProperty("FenceHash").GetString() != snapshot.FenceHash ||
+                root.GetProperty("CapturedAt").GetDateTimeOffset() != snapshot.CapturedAt || root.GetProperty("StateSha256").GetString() != snapshot.StateSha256) throw Invalid();
+            var tables = root.GetProperty("Tables");
+            if (tables.GetArrayLength() != snapshot.Tables.Count || !tables.EnumerateArray().Select(x => new ProductionHoldSqlTable(
+                x.GetProperty("Table").GetString()!, x.GetProperty("Count").GetInt64(), x.GetProperty("Sha256").GetString()!)).SequenceEqual(snapshot.Tables)) throw Invalid();
+            var state = SerializeBounded(new { Version, RecordId = snapshot.RecordId, Revision = snapshot.Revision, FenceHash = snapshot.FenceHash,
+                PolicySha256 = root.GetProperty("PolicySha256").GetString(), Tables = tables }, 16 * 1024 * 1024);
+            try { if (Convert.ToHexStringLower(SHA256.HashData(state)) != snapshot.StateSha256) throw Invalid(); }
+            finally { CryptographicOperations.ZeroMemory(state); }
+            return document;
+        }
+        catch { document?.Dispose(); throw; }
+        finally { CryptographicOperations.ZeroMemory(plain); }
+    }
+
     internal async Task<ProductionHoldSqlSnapshot> CaptureLockedAsync(Guid id, long revision, string fenceHash,
         ProductionHoldSqlLimits? limits = null, CancellationToken ct = default)
     {
