@@ -22,8 +22,8 @@ public sealed class CompletionPublicationTests(SqlDatabaseFixture fixture) : ICl
     [Fact]
     public async Task Production_terminal_source_requires_actual_verified_publication_not_a_completed_status_alone()
     {
-        await using var run=await Run.Create(fixture,demo:false);_=await run.Prepare();var store=new FinalStore(run.Signing.H.Clock);
-        await using var db=fixture.Open();var published=(await Service(run,db,store).PublishAsync(run.Signing.Envelope.Id))!;
+        await using var run=await Run.Create(fixture,demo:false);_=await run.Prepare();var store=new FinalStore(run.Signing.H.Clock) {Locked=true};
+        await using var db=fixture.Open();var published=(await Service(run,db,store,new() {CompletedDays=7}).PublishAsync(run.Signing.Envelope.Id))!;
         await using var tx=await db.Database.BeginTransactionAsync();var e=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==published.EnvelopeId);
         var chain=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==e.Id).OrderBy(x=>x.Sequence).ToArrayAsync();
         var source=await QuillSign.Lifecycle.ProductionRetentionTerminalSource.ReadAsync(db,e,chain,run.Signing.H.Clock,default);
