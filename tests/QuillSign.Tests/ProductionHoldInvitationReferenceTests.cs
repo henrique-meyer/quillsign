@@ -66,6 +66,27 @@ public sealed class ProductionHoldInvitationReferenceTests
     }
 
     [Theory]
+    [InlineData("initial", "hidden-field")][InlineData("resend", "hidden-field")][InlineData("successor", "hidden-field")]
+    [InlineData("initial", "wrapper")][InlineData("resend", "wrapper")][InlineData("successor", "wrapper")]
+    [InlineData("initial", "noncanonical")][InlineData("resend", "noncanonical")][InlineData("successor", "noncanonical")]
+    public void Authenticated_unknown_or_noncanonical_payloads_cannot_hide_uncovered_object_references(string kind, string fault)
+    {
+        var m = new Frame(kind);
+        if (fault == "wrapper") m.Mail.PayloadJson = m.Mail.PayloadJson[..^1] + ",\"UncoveredObject\":\"synthetic\"}";
+        else
+        {
+            var purpose = kind switch { "initial" => "QuillSign.SignerInvitationPayload.v1", "resend" => "QuillSign.InvitationResend.Payload.v1", _ => "QuillSign.InvitationSuccessor.Payload.v1" };
+            var protector = m.Keys.CreateProtector(purpose);
+            var wrapped = JsonSerializer.Deserialize<ProtectedWorkPayload>(m.Mail.PayloadJson)!;
+            var raw = protector.Unprotect(wrapped.Protected);
+            var changed = fault == "hidden-field" ? raw[..^1] + ",\"UncoveredObjectId\":\"" + Guid.NewGuid() + "\"}" : " " + raw;
+            m.Mail.PayloadJson = JsonSerializer.Serialize(new ProtectedWorkPayload(protector.Protect(changed)));
+        }
+        using var sql = m.Sql();
+        Assert.Throws<InvalidDataException>(() => ProductionHoldInvitationReferences.Demand(sql.RootElement, m.Objects, m.Keys));
+    }
+
+    [Theory]
     [InlineData("initial")][InlineData("successor")]
     public void Original_contact_epoch_remains_preservable_after_contact_correction_but_cannot_be_readdressed(string kind)
     {

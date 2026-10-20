@@ -16,6 +16,8 @@ internal static class ProductionHoldInvitationReferences
 {
     private static readonly JsonSerializerOptions Rows = new() { Converters = { new JsonStringEnumConverter() } };
     private static readonly JsonSerializerOptions History = new(JsonSerializerDefaults.Web) { MaxDepth = 4 };
+    private static readonly JsonSerializerOptions Wrapper = new() { MaxDepth = 2, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+    private static readonly JsonSerializerOptions Camel = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, MaxDepth = 8 };
 
     internal static void Demand(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys)
     {
@@ -77,11 +79,23 @@ internal static class ProductionHoldInvitationReferences
             var row = encoded.Deserialize<EmailOutbox>(Rows) ?? throw Invalid();
             if (row.Id == Guid.Empty || row.EnvelopeId != id || row.AttachmentsJson != "[]" ||
                 !Enum.IsDefined(row.Status) || row.Attempts < 0 || EmailAddress.Normalize(row.To) != row.To) throw Invalid();
+            var wrapped = JsonSerializer.Deserialize<ProtectedWorkPayload>(payload, Wrapper) ?? throw Invalid();
+            if (wrapped.Protected is not { Length: > 0 } || JsonSerializer.Serialize(wrapped) != payload) throw Invalid();
+            void Canonical(object value, string purpose, JsonSerializerOptions? options = null)
+            {
+                var plain = keys.CreateProtector(purpose).Unprotect(wrapped.Protected);
+                // Existing dispatch readers may ignore unknown JSON members. A
+                // preservation reader must reject a future hidden object field,
+                // not silently declare its references covered by today's shape.
+                if (plain.Length > 12000 || Encoding.UTF8.GetByteCount(plain) > 12000 ||
+                    plain != JsonSerializer.Serialize(value, value.GetType(), options)) throw Invalid();
+            }
             Guid signer; Guid document; string? hash; string? disclosureHash;
             switch (row.Template)
             {
                 case "signer-invitation":
                     var initial = new SignerInvitationProtection(keys).Read(payload);
+                    Canonical(initial, "QuillSign.SignerInvitationPayload.v1");
                     if (initial.LastTokenId == Guid.Empty || initial.ContactRevisionNumber is < 0 or > SignerContactHistory.MaximumCorrections ||
                         (initial.ContactRevisionNumber == 0) != (initial.ContactRevisionId == Guid.Empty) ||
                         !epochs.TryGetValue((initial.SignerId, initial.ContactRevisionId, initial.ContactRevisionNumber), out var initialAddress) ||
@@ -89,12 +103,16 @@ internal static class ProductionHoldInvitationReferences
                     (signer, document, hash, disclosureHash) = (initial.SignerId, initial.DocumentId, initial.DocumentSha256, initial.DisclosureSha256);
                     break;
                 case InvitationResendProtection.Template:
-                    var resend = new InvitationResendProtection(keys).Read(row).Request;
+                    var resendMail = new InvitationResendProtection(keys).Read(row);
+                    Canonical(resendMail, "QuillSign.InvitationResend.Payload.v1", Camel);
+                    var resend = resendMail.Request;
                     if (resend.SenderEmail != envelope.GetProperty("SenderEmail").GetString()) throw Invalid();
                     (signer, document, hash, disclosureHash) = (resend.SignerId, resend.DocumentId, resend.DocumentSha256, resend.DisclosureSha256);
                     break;
                 default:
-                    var successor = new InvitationSuccessorProtection(keys).Read(row).Scope;
+                    var successorMail = new InvitationSuccessorProtection(keys).Read(row);
+                    Canonical(successorMail, "QuillSign.InvitationSuccessor.Payload.v1", Camel);
+                    var successor = successorMail.Scope;
                     if (successor.SenderEmail != envelope.GetProperty("SenderEmail").GetString() ||
                         !epochs.TryGetValue((successor.SignerId, successor.Contact.RevisionId, successor.Contact.Number), out var successorAddress) ||
                         successorAddress != row.To) throw Invalid();
