@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 
 namespace QuillSign.Lifecycle;
 
-// Source-only configuration contract. Nothing binds or enables these options yet.
+// All intervals and operator text are explicit; new records freeze a canonical copy.
 public sealed class ProductionRetentionPolicyOptions
 {
     public string Version { get; set; } = "";

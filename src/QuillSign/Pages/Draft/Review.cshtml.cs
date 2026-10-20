@@ -26,6 +26,7 @@ public sealed class ReviewModel(DraftReview review,SenderSendReadiness readiness
     [BindProperty] public bool SendAcknowledged { get; set; }
     [BindProperty] public string? StatementVersion { get; set; }
     [BindProperty] public string? RetentionSha256 {get;set;}
+    [BindProperty] public string? DisclosureSha256 {get;set;}
     [BindProperty] public string? ReminderSha256 {get;set;}
     [BindProperty] public string? ReminderSchedulingVersion {get;set;}
     private void Private() { Response.Headers.CacheControl="no-store"; Response.Headers["Referrer-Policy"]="no-referrer"; }
@@ -41,6 +42,7 @@ public sealed class ReviewModel(DraftReview review,SenderSendReadiness readiness
             catch(Exception e) when(StorageError(e)) { return StatusCode(503,"Saved request status could not be verified. Retry later."); }
         }
         Draft=snapshot; Version=snapshot.Version; RetentionSha256=snapshot.RetentionSha256; Readiness=await readiness.ReadAsync(User,snapshot,ct);
+        DisclosureSha256=Readiness.Disclosure is null ? null : Convert.ToHexStringLower(Readiness.Disclosure.Sha256);
         ReminderSchedulingVersion=QuillSign.Work.SignerReminderEvidence.Version;ReminderSha256=Readiness.Reminders?.Sha256;Notice=notices.Take(HttpContext); return Page();
     }
     public async Task<IActionResult> OnPostSendAsync(string publicId,CancellationToken ct)
@@ -55,7 +57,7 @@ public sealed class ReviewModel(DraftReview review,SenderSendReadiness readiness
             // This also recovers a committed Send when its original response was lost.
             var existing=await sentStatus().GetAsync(User,publicId,version,ct);
             if(existing is not null && !readiness.CanDispatch)return Success(publicId);
-            var result=await send().SendAsync(User,publicId,version,true,SendAcknowledged,StatementVersion,HttpContext.Connection.RemoteIpAddress?.ToString(),Request.Headers.UserAgent.ToString(),ct,RetentionSha256,ReminderSha256,ReminderSchedulingVersion);
+            var result=await send().SendAsync(User,publicId,version,true,SendAcknowledged,StatementVersion,HttpContext.Connection.RemoteIpAddress?.ToString(),Request.Headers.UserAgent.ToString(),ct,RetentionSha256,ReminderSha256,ReminderSchedulingVersion,DisclosureSha256);
             return result is null ? NotFound() : Success(publicId);
         }
         catch(DocumentConflictException) { return await Failure(publicId,409,"This review changed. Reload and check the current draft before sending again.",true,ct); }

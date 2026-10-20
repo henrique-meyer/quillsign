@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Storage;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Completion;
 
@@ -45,6 +46,7 @@ internal static class CompletionDownloadState
             result.CompletedAt<intent.PreparedAt || result.CompletedAt>time.GetUtcNow() || result.CompletedAt!=e.CompletedAt ||
             !Same(result.RecipeSha256,CompletionPublication.Recipe(result)) || !Same(intent.RecipeSha256,CompletionPublication.Recipe(intent)) ||
             !Same(result.IntentRecipeSha256,intent.RecipeSha256))throw Invalid();
+        if(!ProductionCompletionRetentionBinding.Matches(intent,await ProductionRecordRetentionAccess.EnrollmentAsync(db,e,time,ct)))throw Invalid();
         var context=new PublishedCompletionSource(intent.BeforeEnvelopeJson,result.AfterEnvelopeSha256,result.AuditSequence);
         var before=context.Project(e);
         if(before.Id!=id || before.PublicId!=e.PublicId || before.Status!=EnvelopeStatus.Sent || before.RowVersion.Length!=8)throw Invalid();

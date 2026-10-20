@@ -68,6 +68,7 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         await audit.AppendAsync(id,"voided",email,ip,ua,ct,JsonSerializer.Serialize(SenderVoidState.Bind(envelope,source,version,reason,at)),PartyType.Sender);
         envelope.Status=EnvelopeStatus.Voided;
         var result=await Recorded(envelope,version,reason,ct)??throw Invalid();
+        await QuillSign.Lifecycle.ProductionRecordRetentionAccess.AnchorLockedIfEnrolledAsync(db,id,time,ct);
         var producer=notifications?.Invoke();
         var jobs=producer is null ? [] : await producer.PrepareLockedAsync(id,ct);
         if(until<=time.GetUtcNow())return new(SenderVoidOutcome.InvalidContext);

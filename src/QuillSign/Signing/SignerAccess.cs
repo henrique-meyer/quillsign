@@ -165,7 +165,7 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
     private async Task<SignerReadContext?> RetainedAsync(SignerReadContext context,Envelope envelope,bool newSession,CancellationToken ct)
     {
         DateTimeOffset? deadline;
-        try {deadline=await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds);}
+        try {deadline=await DocumentRetentionAccess.ReadAsync(db,envelope,time,ct,pilotBounds);}
         catch(InvalidDataException) {throw new SignerRetentionEvidenceException();}
         context=context with {RetentionDeadline=deadline};
         if(!IsLive(context))return null;

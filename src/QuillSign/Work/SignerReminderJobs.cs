@@ -90,7 +90,7 @@ public sealed class SignerReminderJobs(QuillSignDbContext db,SignerAccess access
                 var history=await lineage.ReadLockedAsync(parent,epoch.SignerId,contacts,ct)??throw Invalid();
                 if(!await lineage.SettledLockedAsync(history.Latest,ct))return new(WorkOutcome.Retry,"reminder-predecessor-unsettled");
                 if(await db.Suppressions.AnyAsync(x=>x.Email==epoch.Recipient,ct))return new(WorkOutcome.Completed,"reminder-recipient-suppressed");
-                var end=SignerReminderEvidence.DayEnd(now);var retention=await DocumentRetentionAccess.ReadAsync(db,parent,ct);
+                var end=SignerReminderEvidence.DayEnd(now);var retention=await DocumentRetentionAccess.ReadAsync(db,parent,time,ct);
                 // Keep every actual-day cap reservation until that day ends.
                 if(retention<end)return new(WorkOutcome.Completed,"reminder-retention-too-short");
                 if(parent.ExpiresAt is {} expires && expires<end)end=expires;
@@ -127,7 +127,7 @@ public sealed class SignerReminderJobs(QuillSignDbContext db,SignerAccess access
             scope.SignerId!=epoch.SignerId || scope.Contact!=epoch.Contact || scope.Recipient!=epoch.Recipient || scope.SenderEmail!=epoch.SenderEmail ||
             scope.DocumentId!=epoch.DocumentId || scope.DocumentSha256!=epoch.DocumentSha256 || scope.DisclosureSha256!=epoch.DisclosureSha256 ||
             a.PolicySha256!=epoch.PolicySha256 || await db.Suppressions.AnyAsync(x=>x.Email==scope.Recipient,ct))return false;
-        var retention=await DocumentRetentionAccess.ReadAsync(db,parent,ct);
+        var retention=await DocumentRetentionAccess.ReadAsync(db,parent,time,ct);
         if(retention<SignerReminderEvidence.DayEnd(a.AdmittedAt))return false;DocumentRetentionAccess.Check(retention,time);
         var contacts=await new SignerContactState(db,time).ReadHistoryLockedAsync(parent,ct);
         var history=await lineage.ReadLockedAsync(parent,epoch.SignerId,contacts,ct)??throw Invalid();
@@ -160,7 +160,7 @@ public sealed class SignerReminderJobs(QuillSignDbContext db,SignerAccess access
         // been reviewed, so a later generation cannot inherit its clock/consent.
         if(root.Contact!=party.Epoch || root.Recipient!=party.Email || history.Latest.Contact!=party.Epoch || history.Latest.Recipient!=party.Email)return null;
         if(root.DocumentId!=context.Identity.DocumentId || root.DocumentSha256!=context.Identity.DocumentHash || root.DisclosureSha256!=context.Identity.DisclosureHash)throw Invalid();
-        var retention=await DocumentRetentionAccess.ReadAsync(db,parent,ct);DocumentRetentionAccess.Check(retention,time);
+        var retention=await DocumentRetentionAccess.ReadAsync(db,parent,time,ct);DocumentRetentionAccess.Check(retention,time);
         var epoch=new ReminderEpoch(SignerReminderEvidence.Version,parent.Id,party.Id,root.Id,party.Epoch,party.Email,parent.SenderEmail,root.DocumentId,
             root.DocumentSha256,root.DisclosureSha256,policy.CanonicalJson,policy.Sha256,root.AdmittedAt,parent.ExpiresAt?.ToUniversalTime(),retention?.ToUniversalTime());
         SignerReminderEvidence.Validate(epoch);return epoch;

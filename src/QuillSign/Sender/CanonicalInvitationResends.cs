@@ -42,7 +42,7 @@ public sealed class CanonicalInvitationResends(QuillSignDbContext db,InvitationR
         if(!await lineage.SettledLockedAsync(history.Latest,ct))return InvitationResendOutcome.Busy;
         if(await db.Suppressions.AnyAsync(x=>x.Email==party.Email,ct))return InvitationResendOutcome.Suppressed;
         var now=time.GetUtcNow();var counterUntil=InvitationResendProtection.DayEnd(now);
-        var retention=await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds);
+        var retention=await DocumentRetentionAccess.ReadAsync(db,envelope,time,ct,pilotBounds);
         if(retention<counterUntil)return InvitationResendOutcome.Unavailable;
         DocumentRetentionAccess.Check(retention,time);
         var deadline=envelope.ExpiresAt is { } expires && expires<counterUntil ? expires : counterUntil;
@@ -79,7 +79,7 @@ public sealed class CanonicalInvitationResends(QuillSignDbContext db,InvitationR
             current.Value.History.Latest.Id!=scope.Id || current.Value.Context.Identity.DocumentId!=scope.DocumentId ||
             current.Value.Context.Identity.DocumentHash!=scope.DocumentSha256 || current.Value.Context.Identity.DisclosureHash!=scope.DisclosureSha256 ||
             await db.Suppressions.AnyAsync(x=>x.Email==scope.Recipient,ct))return false;
-        var retention=await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds);
+        var retention=await DocumentRetentionAccess.ReadAsync(db,envelope,time,ct,pilotBounds);
         if(retention<a.Request.CounterUntil)return false;DocumentRetentionAccess.Check(retention,time);
         return await new InvitationResendReservations(db,legacy,protection,options,time).WithinAsync(a.Request,true,ct);
     }

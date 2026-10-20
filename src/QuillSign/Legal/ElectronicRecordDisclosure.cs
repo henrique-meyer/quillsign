@@ -2,6 +2,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using QuillSign.Email;
+using QuillSign.Data;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Legal;
 
@@ -35,6 +37,8 @@ public sealed partial class ElectronicRecordDisclosure(ElectronicRecordOptions o
     });
 
     public DisclosureSnapshot Build(string? publicId, string? title, string? senderContact)=>Build(publicId,title,senderContact,null);
+    internal DisclosureSnapshot BuildProduction(Envelope envelope,string title,VerifiedProductionRetention retention)
+        =>ProductionRetentionDisclosure.Build(envelope,title,retention,options);
 
     internal DisclosureSnapshot Build(string? publicId,string? title,string? senderContact,DemoDisclosureContext? demo)
     {

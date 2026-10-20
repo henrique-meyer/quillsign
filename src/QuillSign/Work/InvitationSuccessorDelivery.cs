@@ -29,7 +29,7 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
             await OwnedAsync(lease, p, null, null, ct);
             var context = await PolicyAsync(parent, p, ct);
             var expires = parent.ExpiresAt;
-            var retention = await DocumentRetentionAccess.ReadAsync(db, parent, ct);
+            var retention = await DocumentRetentionAccess.ReadAsync(db, parent, time, ct);
             if (retention is { } end && (expires is null || end < expires)) expires = end;
             var invitation = tokens.Create(p.EnvelopeId, p.SignerId, p.Recipient, expires, p.DocumentId,
                 context.DocumentSha256, context.Disclosure.Sha256, p.Contact.Number == 0 ? null : p.Contact.RevisionId);
@@ -91,7 +91,7 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
         if (context.Identity.Email != p.Recipient || context.Identity.DocumentId != p.DocumentId || context.Identity.DocumentHash != p.DocumentSha256 ||
             context.Identity.DisclosureHash != p.DisclosureSha256 || await db.Suppressions.AnyAsync(x => x.Email == p.Recipient, ct) ||
             !await jobs.Policy(p.Reason)!.ValidateLockedAsync(parent, p, ct)) throw Invalid();
-        var retention = await DocumentRetentionAccess.ReadAsync(db, parent, ct);
+        var retention = await DocumentRetentionAccess.ReadAsync(db, parent, time, ct);
         if (retention < new DateTimeOffset(p.AdmittedAt.UtcDateTime.Date, TimeSpan.Zero).AddDays(1)) throw Invalid();
         DocumentRetentionAccess.Check(retention, time);
         return context;

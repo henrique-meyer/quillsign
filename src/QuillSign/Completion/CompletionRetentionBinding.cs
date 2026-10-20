@@ -23,6 +23,7 @@ internal static class CompletionRetentionBinding
     {
         try
         {
+            if(ProductionCompletionRetentionBinding.Read(intent) is not null)return null;
             using var document=JsonDocument.Parse(intent.StageBindingsJson,new JsonDocumentOptions {MaxDepth=12});var root=document.RootElement;
             var version=root.TryGetProperty(nameof(Binding.RetentionVersion),out var v);var policy=root.TryGetProperty(nameof(Binding.UploadRetention),out var p);
             if(!version && !policy)return null;
@@ -42,6 +43,7 @@ internal static class CompletionRetentionBinding
     // This structural parser grants no capability and reads no current private policy.
     internal static string StagesJson(CompletionPublicationIntent intent)
     {
+        if(ProductionCompletionRetentionBinding.Read(intent) is {} production)return production.Stages.GetRawText();
         if(FixedUntil(intent) is null)return intent.StageBindingsJson;
         using var document=JsonDocument.Parse(intent.StageBindingsJson,new JsonDocumentOptions {MaxDepth=12});
         return document.RootElement.GetProperty(nameof(Binding.Stages)).GetRawText();

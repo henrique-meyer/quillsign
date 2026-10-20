@@ -98,6 +98,7 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
             await audit.AppendAsync(context.Identity.EnvelopeId,"declined",context.Identity.Email,ip,ua,ct,
                 JsonSerializer.Serialize(new { reason,notificationId = notification,documentSha256 = context.Identity.DocumentHash,
                     disclosureSha256 = context.Identity.DisclosureHash }),PartyType.Signer,context.Identity.SignerId);
+            await QuillSign.Lifecycle.ProductionRecordRetentionAccess.AnchorLockedIfEnrolledAsync(db,context.Identity.EnvelopeId,time,ct);
             if(!access.IsLive(context))return null;
             await access.CommitAsync(transaction,ct);
         }

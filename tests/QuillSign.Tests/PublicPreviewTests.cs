@@ -51,8 +51,9 @@ public sealed class PublicPreviewTests
         Assert.Null(PublicPreview.For(context, Config()));
     }
 
-    [Fact]
-    public async Task Real_public_Razor_pages_share_the_exact_supplied_PNG_without_private_backends()
+    [Theory]
+    [InlineData("Demo")][InlineData("Production")]
+    public async Task Real_public_Razor_pages_share_the_exact_supplied_PNG_without_private_backends(string mode)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions {
             ApplicationName = typeof(QuillSign.Pages.IndexModel).Assembly.FullName,
@@ -71,6 +72,7 @@ public sealed class PublicPreviewTests
         builder.Services.AddScoped<Func<DocumentLookupRequests>>(_ => () => throw new InvalidOperationException("Private backend resolved."));
         builder.Services.AddScoped<Func<BrowserNotices>>(sp => () => sp.GetRequiredService<BrowserNotices>());
         builder.Services.AddSingleton(new LookupContactRetentionOptions());
+        builder.Services.AddSingleton(new QuillSign.Lifecycle.RecordLifecycleOptions {Mode=mode});
         await using var app = builder.Build();
         app.UseStaticFiles(new StaticFileOptions { FileProvider = new PhysicalFileProvider(Path.Combine(AppContext.BaseDirectory, "wwwroot")) });
         app.UseRouting(); app.UseRateLimiter(); app.UseAuthentication(); app.UseAuthorization(); app.MapRazorPages();
@@ -80,6 +82,8 @@ public sealed class PublicPreviewTests
         foreach (var path in new[] { "/", "/verify", "/find/request" }) {
             using var response = await client.GetAsync(path); Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var html = await response.Content.ReadAsStringAsync();
+            if(mode=="Demo")Assert.Contains("Demo instance",html);
+            else {Assert.DoesNotContain("Demo instance",html);Assert.Contains("Retention and access follow this operator",html);}
             var title = WebUtility.HtmlDecode(Assert.Single(Regex.Matches(html, "<title>(.*?)</title>").Select(x => x.Groups[1].Value)));
             Assert.True(titles.Add(title)); var description = Meta(html, "description"); Assert.True(descriptions.Add(description));
             Assert.Equal(title, Meta(html, "og:title")); Assert.Equal(title, Meta(html, "twitter:title"));

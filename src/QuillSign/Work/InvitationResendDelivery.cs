@@ -30,7 +30,7 @@ public sealed class InvitationResendDelivery(QuillSignDbContext db, InvitationRe
             var current = await OwnedAsync(lease, p, null, ct);
             var context = await PolicyAsync(parent, p, ct);
             var expires = parent.ExpiresAt;
-            var retention = await DocumentRetentionAccess.ReadAsync(db, parent, ct);
+            var retention = await DocumentRetentionAccess.ReadAsync(db, parent, time, ct);
             if (retention is { } end && (expires is null || end < expires)) expires = end;
             var invitation = tokens.Create(p.EnvelopeId, p.SignerId, p.Email, expires, p.DocumentId, context.DocumentSha256, context.Disclosure.Sha256);
             outgoing = await template.RenderAsync(context, parent.Message, invitation.RawToken, invitation.Record.ExpiresAt, ct);
@@ -73,7 +73,7 @@ public sealed class InvitationResendDelivery(QuillSignDbContext db, InvitationRe
         if (!Enabled || p.RequestedAt > time.GetUtcNow() || p.Deadline <= time.GetUtcNow() || parent.Status != EnvelopeStatus.Sent ||
             parent.SenderEmail != p.SenderEmail || Convert.ToBase64String(parent.RowVersion) != p.ReviewedVersion || parent.ExpiresAt <= time.GetUtcNow()) throw Invalid();
         _ = await SenderSentStatus.ReadSentAsync(db, parent, null, ct);
-        var retention = await DocumentRetentionAccess.ReadAsync(db, parent, ct);
+        var retention = await DocumentRetentionAccess.ReadAsync(db, parent, time, ct);
         if (retention < p.CounterUntil || retention <= time.GetUtcNow()) throw Invalid();
         var context = await access.GetEligibleLockedAsync(p.EnvelopeId, p.SignerId, ct) ?? throw Invalid();
         if (context.Identity.Email != p.Email || context.Identity.DocumentId != p.DocumentId || context.Identity.DocumentHash != p.DocumentSha256 ||

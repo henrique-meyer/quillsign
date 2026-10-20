@@ -152,7 +152,7 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
             if (owned.Kind!=WorkKind.Email || owned.EnvelopeId!=parent.Id || owned.Attempts!=lease.Attempt ||
                 owned.Status != WorkStatus.Leased || owned.LeaseOwner != lease.Owner || owned.LeaseExpiresAt!=lease.Until || owned.LeaseExpiresAt <= at)
                 throw new InvalidOperationException("Work lease is no longer owned.");
-            try{retentionDeadline=await DocumentRetentionAccess.ReadAsync(db,parent,cancellationToken);}
+            try{retentionDeadline=await DocumentRetentionAccess.ReadAsync(db,parent,time,cancellationToken);}
             catch(InvalidDataException){return new(WorkOutcome.Retry,"email-retention-unavailable");}
             if(retentionDeadline<=time.GetUtcNow())return new(WorkOutcome.Failed,"email-retention-expired");
             var changed = await db.EmailOutbox.Where(x => x.Id == lease.Id && x.Status == EmailStatus.Queued && x.SubmissionStartedAt == null)

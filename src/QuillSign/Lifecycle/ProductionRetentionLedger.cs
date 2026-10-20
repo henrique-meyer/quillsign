@@ -12,7 +12,7 @@ internal sealed record VerifiedProductionRetention(ProductionRetentionSnapshot S
 internal sealed record VerifiedProductionTerminal(EnvelopeStatus Status, DateTimeOffset OriginalAt, DateTimeOffset ClockAt,
     long SourceAuditSequence, string SourceAuditHash);
 
-// Unregistered internal metadata backend. Callers own the transaction/commit and ordinary
+// Internal metadata backend. Callers own the transaction/commit and ordinary
 // participant authorization. This service issues no storage, hold, access or purge authority.
 internal sealed class ProductionRetentionLedger(QuillSignDbContext db, AuditWriter audit, TimeProvider time)
 {
@@ -75,7 +75,8 @@ internal sealed class ProductionRetentionLedger(QuillSignDbContext db, AuditWrit
             row.OriginalCreatedAt != envelope.CreatedAt || envelope.CreatedAt.Offset != TimeSpan.Zero ||
             row.EnrolledAt.Offset != TimeSpan.Zero || row.EnrolledAt < envelope.CreatedAt || row.EnrolledAt > time.GetUtcNow() ||
             !Same(row.OriginSha256, Origin(envelope)) || row.AuditSequence != 1) throw Invalid();
-        var chain = await ChainAsync(id, ct);
+        if (await db.AuditEvents.Where(x => x.EnvelopeId == id && x.Event == EnrollmentEvent).Take(2).CountAsync(ct) != 1) throw Invalid();
+        var chain = await ChainAsync(id, ct, 1);
         var events = chain.Where(x => x.Event == EnrollmentEvent).ToArray();
         if (events.Length != 1 || events[0].Sequence != row.AuditSequence || !Same(events[0].Hash, row.AuditHash) ||
             !SystemEvent(events[0]) || events[0].At < row.EnrolledAt || events[0].DataJson != EnrollmentJson(row)) throw Invalid();
@@ -87,9 +88,10 @@ internal sealed class ProductionRetentionLedger(QuillSignDbContext db, AuditWrit
         RequireTransaction();
         var enrolled = (await ReadLockedAsync(id, ct)).Enrollment ?? throw Invalid();
         var envelope = await LockAsync(id, ct) ?? throw Invalid();
-        var chain = await ChainAsync(id, ct);
-        var source = await ProductionRetentionTerminalSource.ReadAsync(db, envelope, chain, time, ct) ?? throw Invalid();
         var existing = await db.ProductionRetentionTerminals.AsNoTracking().SingleOrDefaultAsync(x => x.EnvelopeId == id, ct);
+        var chain = await ChainAsync(id, ct, existing?.AuditSequence);
+        var source = await ProductionRetentionTerminalSource.ReadAsync(db, envelope, chain, time, ct) ?? throw Invalid();
+        await VerifyTerminalUniquenessAsync(id, existing is null ? 0 : 1, ct);
         if (existing is not null) return VerifyTerminal(existing, enrolled, envelope, source, chain);
         if (chain.Length >= 512 || chain.Any(x => x.Event == TerminalEvent)) throw Invalid();
         var row = new ProductionRetentionTerminalRecord
@@ -112,8 +114,13 @@ internal sealed class ProductionRetentionLedger(QuillSignDbContext db, AuditWrit
         var enrolled = (await ReadLockedAsync(id, ct)).Enrollment ?? throw Invalid();
         var envelope = await LockAsync(id, ct) ?? throw Invalid();
         var row = await db.ProductionRetentionTerminals.AsNoTracking().SingleOrDefaultAsync(x => x.EnvelopeId == id, ct);
-        var chain = await ChainAsync(id, ct);
-        if (row is null) { if (chain.Any(x => x.Event == TerminalEvent)) throw Invalid(); return null; }
+        if (row is null)
+        {
+            if (await db.AuditEvents.AnyAsync(x => x.EnvelopeId == id && x.Event == TerminalEvent, ct)) throw Invalid();
+            return null;
+        }
+        await VerifyTerminalUniquenessAsync(id, 1, ct);
+        var chain = await ChainAsync(id, ct, row.AuditSequence);
         var source = await ProductionRetentionTerminalSource.ReadAsync(db, envelope, chain, time, ct) ?? throw Invalid();
         return VerifyTerminal(row, enrolled, envelope, source, chain);
     }
@@ -157,12 +164,27 @@ internal sealed class ProductionRetentionLedger(QuillSignDbContext db, AuditWrit
 
     private async Task<Envelope?> LockAsync(Guid id, CancellationToken ct) => await db.Envelopes
         .FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct);
-    private async Task<AuditEvent[]> ChainAsync(Guid id, CancellationToken ct)
+    private async Task VerifyTerminalUniquenessAsync(Guid id, int anchors, CancellationToken ct)
     {
-        var size = await db.Database.SqlQuery<long>($"SELECT COALESCE(SUM(CONVERT(bigint,DATALENGTH([DataJson]))),0) AS [Value] FROM [AuditEvents] WHERE [EnvelopeId]={id}").SingleAsync(ct);
+        // Only historical provenance is materialized. Still reject a second terminal or
+        // anchor anywhere in the later operational tail instead of silently truncating it.
+        if (await db.AuditEvents.Where(x => x.EnvelopeId == id && x.Event == TerminalEvent).Take(2).CountAsync(ct) != anchors ||
+            await db.AuditEvents.Where(x => x.EnvelopeId == id &&
+                (x.Event == "completed" || x.Event == "voided" || x.Event == "declined" || x.Event == "expired")).Take(2).CountAsync(ct) != 1)
+            throw Invalid();
+    }
+
+    private async Task<AuditEvent[]> ChainAsync(Guid id, CancellationToken ct, long? through = null)
+    {
+        if (through is < 1 or > 512) throw Invalid();
+        var size = through is { } last
+            ? await db.Database.SqlQuery<long>($"SELECT COALESCE(SUM(CONVERT(bigint,DATALENGTH([DataJson]))),0) AS [Value] FROM [AuditEvents] WHERE [EnvelopeId]={id} AND [Sequence]<={last}").SingleAsync(ct)
+            : await db.Database.SqlQuery<long>($"SELECT COALESCE(SUM(CONVERT(bigint,DATALENGTH([DataJson]))),0) AS [Value] FROM [AuditEvents] WHERE [EnvelopeId]={id}").SingleAsync(ct);
         if (size > 16 * 1024 * 1024) throw Invalid();
-        var rows = await db.AuditEvents.AsNoTracking().Where(x => x.EnvelopeId == id).OrderBy(x => x.Sequence).Take(513).ToArrayAsync(ct);
-        if (rows.Length is < 1 or > 512) throw Invalid();
+        var query = db.AuditEvents.AsNoTracking().Where(x => x.EnvelopeId == id);
+        if (through is { } end) query = query.Where(x => x.Sequence <= end);
+        var rows = await query.OrderBy(x => x.Sequence).Take(513).ToArrayAsync(ct);
+        if (rows.Length is < 1 or > 512 || through is { } expected && rows.Length != expected) throw Invalid();
         byte[]? previous = null; DateTimeOffset? at = null;
         foreach (var row in rows)
         {

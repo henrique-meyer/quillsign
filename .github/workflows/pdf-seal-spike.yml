@@ -8,6 +8,8 @@ on:
       - 'docs/pdf-seal-feasibility.md'
       - 'src/QuillSign/Sealing/**'
       - 'src/QuillSign/Completion/**'
+      - 'src/QuillSign/Legal/ProductionRetentionDisclosure.cs'
+      - 'tests/QuillSign.Tests/ProductionRetentionAdmissionTests.cs'
       - 'tests/QuillSign.Tests/CompletionCertificateRendererTests.cs'
       - 'docs/completion-certificates.md'
       - 'assets/logo-mark.png'
@@ -25,6 +27,8 @@ on:
       - 'docs/pdf-seal-feasibility.md'
       - 'src/QuillSign/Sealing/**'
       - 'src/QuillSign/Completion/**'
+      - 'src/QuillSign/Legal/ProductionRetentionDisclosure.cs'
+      - 'tests/QuillSign.Tests/ProductionRetentionAdmissionTests.cs'
       - 'tests/QuillSign.Tests/CompletionCertificateRendererTests.cs'
       - 'docs/completion-certificates.md'
       - 'assets/logo-mark.png'
@@ -61,6 +65,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Exercise Windows checkout line endings in production disclosure source
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $source = 'src/QuillSign/Legal/ProductionRetentionDisclosure.cs'
+          $text = [IO.File]::ReadAllText($source).Replace("`r`n", "`n").Replace("`r", "`n")
+          [IO.File]::WriteAllText($source, $text.Replace("`n", "`r`n"))
       - name: Verify production seals independently with generated local certificates
         shell: pwsh
         run: ./scripts/dev/Test-PlatformPdfSeal.ps1
@@ -68,3 +79,5 @@ jobs:
         run: dotnet test tests/QuillSign.Tests/QuillSign.Tests.csproj -c Release --no-build --filter "FullyQualifiedName~SealCertificateProviderTests|FullyQualifiedName~KeyVaultSealProviderTests"
       - name: Verify completion certificates and preserved source pages
         run: dotnet test tests/QuillSign.Tests/QuillSign.Tests.csproj -c Release --no-build --filter "FullyQualifiedName~CompletionCertificateRendererTests"
+      - name: Verify canonical production disclosures without SQL or live services
+        run: dotnet test tests/QuillSign.Tests/QuillSign.Tests.csproj -c Release --no-build --filter "FullyQualifiedName~ProductionRetentionAdmissionContractTests"
