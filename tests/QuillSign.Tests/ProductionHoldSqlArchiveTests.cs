@@ -22,6 +22,211 @@ public sealed class ProductionHoldSqlArchiveTests(SqlDatabaseFixture fixture) : 
 {
     private static readonly byte[] Raw = "Synthetic source object - NO AGREEMENT"u8.ToArray();
     [Fact]
+    public async Task Durable_controls_preserve_exact_plan_and_verify_each_provider_item_without_a_snapshot_publication_cycle()
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var control = new ProductionHoldControls(run.Db, run.Keys, run.Time);
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        var saved = await control.SavePlanLockedAsync(plan);
+        Assert.Equal(plan.Payload, saved.Payload);
+        var body = ProductionHoldBundlePlan.OpenVerified(saved, run.Keys, run.Time);
+        foreach (var item in body.Items)
+        {
+            IProductionHoldArchivePayload cap = item.Kind == "sql"
+                ? await ProductionHoldSqlArchiveCapability.AuthorizeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, body.Snapshot.Sql)
+                : await ProductionHoldBundleArchiveCapability.AuthorizeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, body.Snapshot, item.Source);
+            using var handler = new Handler(run, "lost-ack", cap); var writer = new AzureProductionHoldArchiveWriter(Service(handler));
+            var eventId = Guid.NewGuid();
+            var receipt = await control.PreserveItemLockedAsync(plan.RecordId, plan.PlanId, item.Path, eventId, writer);
+            Assert.Equal(item.Sha256, receipt.Stored.Sha256); Assert.Equal(item.Length, receipt.Stored.Length);
+            Assert.Equal(receipt, await control.PreserveItemLockedAsync(plan.RecordId, plan.PlanId, item.Path, eventId, writer));
+            Assert.Equal(1, handler.Commits);
+            await Assert.ThrowsAsync<DocumentConflictException>(() => control.PreserveItemLockedAsync(plan.RecordId, plan.PlanId, item.Path, Guid.NewGuid(), writer));
+        }
+        var state = await control.ReadLockedAsync(plan.RecordId); Assert.Equal(4, state.Prefix.Sequence); Assert.Equal(3, state.Items.Count);
+        var after = await new ProductionHoldSqlInventory(run.Db, run.Keys, run.Time).CaptureLockedAsync(plan.RecordId, inventory.Revision, inventory.FenceHash);
+        Assert.Equal(inventory.SqlStateSha256, after.StateSha256); Assert.NotEqual(inventory.SqlPayloadSha256, after.PayloadSha256);
+        Assert.Equal(state.Prefix, after.Control); Assert.DoesNotContain(after.Tables, x => x.Table == "ProductionHoldControls");
+        await new ProductionHoldControls(run.Db, run.Keys, run.Time).DemandExtendsLockedAsync(plan.RecordId, inventory.Sql.Control!);
+        var repeated = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, plan.PlanId, inventory);
+        Assert.Equal(saved.Payload, (await control.SavePlanLockedAsync(repeated)).Payload);
+        Assert.Equal(4, (await control.ReadLockedAsync(plan.RecordId)).Prefix.Sequence);
+        await run.Commit();
+        await using var check = fixture.Open(); await using var tx = await check.Database.BeginTransactionAsync();
+        var restarted = await new ProductionHoldControls(check, run.Keys, run.Time).ReadLockedAsync(plan.RecordId);
+        Assert.Equal(state.Prefix, restarted.Prefix); Assert.Equal(saved.Payload, restarted.Plans[plan.PlanId].Payload); Assert.Equal(3, restarted.Items.Count);
+    }
+
+    [Theory]
+    [InlineData("tail")][InlineData("prefix")][InlineData("whole")][InlineData("cipher")][InlineData("payload")][InlineData("metadata")]
+    public async Task Captured_control_prefix_and_authenticated_rows_reject_rollback_or_recomputed_unkeyed_tampering(string fault)
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var control = new ProductionHoldControls(run.Db, run.Keys, run.Time);
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        await control.SavePlanLockedAsync(plan);
+        var secondCapture = await new ProductionHoldObjectInventory(run.Db, run.Keys, run.Time, new InventorySource(new("originals", $"{plan.RecordId:N}/{Guid.NewGuid():N}", Handler.Version, "", "\"source-etag\"", Raw.Length)))
+            .CaptureLockedAsync(plan.RecordId, inventory.Revision, inventory.FenceHash);
+        var second = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, Guid.NewGuid(), secondCapture);
+        await control.SavePlanLockedAsync(second);
+        var captured = (await control.ReadLockedAsync(plan.RecordId)).Prefix;
+        if (fault is "tail" or "prefix" or "whole")
+        {
+            var sequence = fault == "prefix" ? 1L : 2L;
+            if (fault == "whole") await run.Db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM [ProductionHoldControls] WHERE [EnvelopeId]={plan.RecordId}");
+            else await run.Db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM [ProductionHoldControls] WHERE [EnvelopeId]={plan.RecordId} AND [Sequence]={sequence}");
+        }
+        else
+        {
+            var row = await run.Db.ProductionHoldControls.AsNoTracking().SingleAsync(x => x.EventId == second.PlanId);
+            if (fault == "cipher") row.ProtectedEvidence = row.ProtectedEvidence[..^1] + (row.ProtectedEvidence[^1] == 'A' ? 'B' : 'A');
+            else if (fault == "metadata") row.PlanSha256 = new string('0', 64);
+            else { row.PlanPayload![0] ^= 1; row.PayloadSha256 = Convert.ToHexStringLower(SHA256.HashData(row.PlanPayload)); }
+            row.Hash = (byte[])typeof(ProductionHoldControls).GetMethod("Hash", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, [row])!;
+            await run.Db.Database.ExecuteSqlInterpolatedAsync($"UPDATE [ProductionHoldControls] SET [ProtectedEvidence]={row.ProtectedEvidence},[PlanPayload]={row.PlanPayload},[PayloadSha256]={row.PayloadSha256},[PlanSha256]={row.PlanSha256},[Hash]={row.Hash} WHERE [EventId]={row.EventId}");
+        }
+        await Assert.ThrowsAsync<InvalidDataException>(() => control.DemandExtendsLockedAsync(plan.RecordId, captured));
+    }
+
+    [Fact]
+    public async Task Control_plan_rollback_and_lost_commit_recovery_preserve_original_bytes_and_clock()
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        await new ProductionHoldControls(run.Db, run.Keys, run.Time).SavePlanLockedAsync(plan); await run.Rollback();
+        await using var source = fixture.Open();
+        Assert.False(await source.ProductionHoldControls.AnyAsync(x => x.EnvelopeId == plan.RecordId));
+        var faults = new ControlLostCommit();
+        await using (var db = new QuillSignDbContext(new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer(source.Database.GetConnectionString()).AddInterceptors(faults).Options))
+        {
+            await using var tx = await db.Database.BeginTransactionAsync();
+            await new ProductionHoldControls(db, run.Keys, run.Time).SavePlanLockedAsync(plan);
+            await Assert.ThrowsAsync<IOException>(() => tx.CommitAsync());
+        }
+        run.Time.Now = run.Time.Now.AddMinutes(11);
+        await using var recover = fixture.Open(); await using var recovery = await recover.Database.BeginTransactionAsync();
+        var saved = await new ProductionHoldControls(recover, run.Keys, run.Time).SavePlanLockedAsync(plan);
+        Assert.Equal(plan.Payload, saved.Payload); Assert.Single(await recover.ProductionHoldControls.Where(x => x.EnvelopeId == plan.RecordId).ToArrayAsync());
+        Assert.Equal(run.Time.Now.AddMinutes(-11), (await recover.ProductionHoldControls.SingleAsync(x => x.EventId == plan.PlanId)).At);
+    }
+
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public async Task Concurrent_same_or_independent_plans_use_one_parent_chain_and_exact_replay(bool independent)
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var first = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        var second = independent ? await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory) : first;
+        await run.Rollback();
+        async Task<ProductionHoldProtectedPlan> Save(ProductionHoldProtectedPlan plan)
+        {
+            await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
+            var result = await new ProductionHoldControls(db, run.Keys, run.Time).SavePlanLockedAsync(plan); await tx.CommitAsync(); return result;
+        }
+        var result = await Task.WhenAll(Save(first), Save(second));
+        await using var check = fixture.Open(); await using var read = await check.Database.BeginTransactionAsync();
+        var state = await new ProductionHoldControls(check, run.Keys, run.Time).ReadLockedAsync(first.RecordId);
+        Assert.Equal(independent ? 2 : 1, state.Prefix.Sequence);
+        if (!independent) Assert.Equal(result[0].Payload, result[1].Payload);
+    }
+
+    [Fact]
+    public async Task Controls_reject_missing_transactions_and_tracked_evidence_changes()
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        await new ProductionHoldControls(run.Db, run.Keys, run.Time).SavePlanLockedAsync(plan);
+        var row = run.Db.ProductionHoldControls.Local.Single(x => x.EventId == plan.PlanId); row.ProtectedEvidence += "changed";
+        await Assert.ThrowsAsync<InvalidOperationException>(() => run.Db.SaveChangesAsync()); run.Db.Entry(row).State = EntityState.Unchanged;
+        run.Db.Remove(row); await Assert.ThrowsAsync<InvalidOperationException>(() => run.Db.SaveChangesAsync()); run.Db.Entry(row).State = EntityState.Unchanged;
+        await run.Rollback();
+        await using var check = fixture.Open();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new ProductionHoldControls(check, run.Keys, run.Time).ReadLockedAsync(plan.RecordId));
+    }
+
+    [Fact]
+    public async Task Saving_plan_owns_ciphertext_before_SQL_and_returns_a_copy_of_the_persisted_bytes()
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        var exact = plan.Payload.ToArray(); var control = new ProductionHoldControls(run.Db, run.Keys, run.Time);
+        var saving = control.SavePlanLockedAsync(plan); plan.Payload[0] ^= 1;
+        var saved = await saving; Assert.Equal(exact, saved.Payload); saved.Payload[0] ^= 1;
+        Assert.Equal(exact, (await control.ReadLockedAsync(plan.RecordId)).Plans[plan.PlanId].Payload);
+    }
+
+    private sealed class ControlLostCommit : Microsoft.EntityFrameworkCore.Diagnostics.DbTransactionInterceptor
+    {
+        public override Task TransactionCommittedAsync(System.Data.Common.DbTransaction transaction,
+            Microsoft.EntityFrameworkCore.Diagnostics.TransactionEndEventData eventData, CancellationToken ct = default) => throw new IOException("Synthetic lost control commit acknowledgement");
+    }
+
+    [Theory]
+    [InlineData("denied")][InlineData("unheld")][InlineData("bad-bytes")][InlineData("hold-removed")][InlineData("expire-commit")]
+    public async Task Provider_refusal_corruption_removed_protection_and_expiry_never_publish_an_item_receipt(string fault)
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        var control = new ProductionHoldControls(run.Db, run.Keys, run.Time); await control.SavePlanLockedAsync(plan);
+        var body = ProductionHoldBundlePlan.OpenVerified(plan, run.Keys, run.Time); var item = Assert.Single(body.Items, x => x.Kind == "sql");
+        var cap = await ProductionHoldSqlArchiveCapability.AuthorizeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, body.Snapshot.Sql);
+        using var handler = new Handler(run, fault, cap);
+        var error = await Record.ExceptionAsync(() => control.PreserveItemLockedAsync(plan.RecordId, plan.PlanId, item.Path, Guid.NewGuid(), new(Service(handler))));
+        Assert.True(error is InvalidDataException or Azure.RequestFailedException or UnauthorizedAccessException, error?.ToString());
+        var state = await control.ReadLockedAsync(plan.RecordId); Assert.Empty(state.Items); Assert.Equal(1, state.Prefix.Sequence);
+        Assert.DoesNotContain(handler.Requests, x => x.Method == HttpMethod.Delete || x.Comp is "legalhold" or "immutabilitypolicy");
+    }
+
+    [Fact]
+    public async Task Receipt_lost_SQL_commit_recovery_rechecks_same_provider_version_without_reupload_or_clock_reset()
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        await new ProductionHoldControls(run.Db, run.Keys, run.Time).SavePlanLockedAsync(plan); await run.Commit();
+        var body = ProductionHoldBundlePlan.OpenVerified(plan, run.Keys, run.Time); var item = Assert.Single(body.Items, x => x.Kind == "sql");
+        // Use the exact frozen SQL ciphertext, rather than the earlier admission capture.
+        await using var source = fixture.Open();
+        await using var db = new QuillSignDbContext(new DbContextOptionsBuilder<QuillSignDbContext>()
+            .UseSqlServer(source.Database.GetConnectionString()).AddInterceptors(new ControlLostCommit()).Options);
+        await using var tx = await db.Database.BeginTransactionAsync();
+        var cap = await ProductionHoldSqlArchiveCapability.AuthorizeLockedAsync(db, run.Keys, run.Time, plan.HoldId, body.Snapshot.Sql);
+        using var provider = new Handler(run, "lost-ack", cap); var writer = new AzureProductionHoldArchiveWriter(Service(provider)); var eventId = Guid.NewGuid();
+        var recorded = await new ProductionHoldControls(db, run.Keys, run.Time).PreserveItemLockedAsync(plan.RecordId, plan.PlanId, item.Path, eventId, writer);
+        await Assert.ThrowsAsync<IOException>(() => tx.CommitAsync()); run.Time.Now = run.Time.Now.AddMinutes(11);
+        await using var recover = fixture.Open(); await using var recovery = await recover.Database.BeginTransactionAsync();
+        var replayed = await new ProductionHoldControls(recover, run.Keys, run.Time).PreserveItemLockedAsync(plan.RecordId, plan.PlanId, item.Path, eventId, writer);
+        Assert.Equal(recorded, replayed); Assert.Equal(1, provider.Commits);
+        Assert.Equal(run.Time.Now.AddMinutes(-11), (await recover.ProductionHoldControls.SingleAsync(x => x.EventId == eventId)).At);
+        Assert.Equal(2, (await new ProductionHoldControls(recover, run.Keys, run.Time).ReadLockedAsync(plan.RecordId)).Prefix.Sequence);
+    }
+
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public async Task Changed_business_or_pending_release_keeps_historical_control_readable_but_forbids_provider_work(bool release)
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        var control = new ProductionHoldControls(run.Db, run.Keys, run.Time); await control.SavePlanLockedAsync(plan);
+        if (release)
+        {
+            const string issuer = "https://operator.synthetic.invalid"; const string subject = "synthetic-operator";
+            var policy = new ProductionOperatorPolicy(true, [new(issuer, subject, new HashSet<ProductionOperatorPermission> { ProductionOperatorPermission.ReleaseHold })]);
+            var ticket = new AuthenticationTicket(new(new ClaimsIdentity([new("iss", issuer, ClaimValueTypes.String, issuer), new("sub", subject, ClaimValueTypes.String, issuer)], ProductionOperatorAuthority.OidcScheme)),
+                new AuthenticationProperties { IssuedUtc = run.Time.Now, ExpiresUtc = run.Time.Now.AddMinutes(5) }, ProductionOperatorAuthority.CookieScheme);
+            var authority = ProductionOperatorAuthority.FromValidatedTicket(ticket, policy, ProductionOperatorPermission.ReleaseHold, run.Time);
+            var command = new ProductionHoldCommand(Guid.NewGuid(), plan.RecordId, plan.HoldId, inventory.Revision, ProductionHoldOperation.Release,
+                "Synthetic release", "Synthetic private reason", "synthetic-reference");
+            Assert.True((await new ProductionHoldRequests(run.Db, run.Keys, run.Time).PrepareLockedAsync(authority, policy, command)).Current.BlocksDeletion);
+        }
+        else await run.Db.Envelopes.Where(x => x.Id == plan.RecordId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Message, "New business evidence"));
+        Assert.Equal(plan.Payload, (await control.ReadLockedAsync(plan.RecordId)).Plans[plan.PlanId].Payload);
+        using var handler = new Handler(run, "normal"); var writer = new AzureProductionHoldArchiveWriter(Service(handler));
+        var item = ProductionHoldBundlePlan.OpenVerified(plan, run.Keys, run.Time).Items[0];
+        await Assert.ThrowsAsync<DocumentConflictException>(() => control.PreserveItemLockedAsync(plan.RecordId, plan.PlanId, item.Path, Guid.NewGuid(), writer));
+        await Assert.ThrowsAsync<DocumentConflictException>(() => control.SavePlanLockedAsync(plan));
+        Assert.Empty(handler.Requests); Assert.Equal(1, (await control.ReadLockedAsync(plan.RecordId)).Prefix.Sequence);
+    }
+    [Fact]
     public async Task Frozen_bundle_plan_owns_exact_restart_payload_and_uses_the_same_archive_addresses()
     {
         await using var run = await Run.Create(fixture); var (inventory, source) = await Inventory(run, "version");
@@ -284,6 +489,8 @@ public sealed class ProductionHoldSqlArchiveTests(SqlDatabaseFixture fixture) : 
         internal readonly IDataProtectionProvider Keys = new EphemeralDataProtectionProvider(); internal readonly Clock Time = new();
         internal QuillSignDbContext Db = null!; private IDbContextTransaction transaction = null!;
         internal ProductionHoldSqlSnapshot Sql = null!; internal ProductionHoldSqlArchiveCapability Capability = null!;
+        internal Task Commit() => transaction.CommitAsync();
+        internal Task Rollback() => transaction.RollbackAsync();
         internal static async Task<Run> Create(SqlDatabaseFixture fixture)
         {
             var run = new Run { Db = fixture.Open() };

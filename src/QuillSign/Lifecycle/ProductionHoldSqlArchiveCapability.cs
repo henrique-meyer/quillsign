@@ -36,6 +36,7 @@ internal sealed class ProductionHoldSqlArchiveCapability : IProductionHoldArchiv
     {
         ct.ThrowIfCancellationRequested();
         using var verified = ProductionHoldSqlInventory.OpenVerified(sql, keys);
+        await new ProductionHoldControls(db, keys, time).DemandExtendsLockedAsync(sql.RecordId, sql.Control!, ct);
         var now = time.GetUtcNow();
         if (now.Offset != TimeSpan.Zero || sql.CapturedAt.Offset != TimeSpan.Zero || sql.CapturedAt > now || now > DateTimeOffset.MaxValue.AddMinutes(-10))
             throw new InvalidDataException("The private SQL archive clock could not be verified.");

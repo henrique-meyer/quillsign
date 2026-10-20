@@ -10,8 +10,8 @@ internal sealed record ProductionHoldProtectedPlan(Guid RecordId, Guid HoldId, G
 internal sealed record ProductionHoldFrozenPlan(string Version, Guid PlanId, Guid HoldId, Guid PlaceCommandId,
     ProductionHoldObjectSnapshot Snapshot, ProductionHoldArchivePlanItem[] Items);
 
-// Codec for the forthcoming private durable control journal. A protected plan is
-// not a persisted receipt, provider preservation proof or an effective hold.
+// Exact protected plan codec for the private durable control journal. A plan
+// alone is not provider preservation proof or an effective hold.
 internal static class ProductionHoldBundlePlan
 {
     internal const string Version = "production-hold-bundle-plan-v1";

@@ -73,10 +73,11 @@ public sealed class ProductionHoldObjectTransportTests
         var fence = new string('a', 64); var policy = new string('b', 64); object[] tables = [];
         var state = JsonSerializer.SerializeToUtf8Bytes(new { Version = version, RecordId = id, Revision = 1L, FenceHash = fence, PolicySha256 = policy, Tables = tables });
         var stateHash = Convert.ToHexStringLower(SHA256.HashData(state));
+        var control = new ProductionHoldControlPrefix(0, null);
         var plain = JsonSerializer.SerializeToUtf8Bytes(new { Version = version, RecordId = id, Revision = 1L, FenceHash = fence, PolicySha256 = policy,
-            CapturedAt = clock.Now, StateSha256 = stateHash, Tables = tables });
+            CapturedAt = clock.Now, StateSha256 = stateHash, Tables = tables, Control = control });
         var sql = new ProductionHoldSqlSnapshot(id, 1, fence, clock.Now, stateHash, Convert.ToHexStringLower(SHA256.HashData(plain)), plain.Length,
-            keys.CreateProtector(version, id.ToString("N")).Protect(plain), []);
+            keys.CreateProtector(version, id.ToString("N")).Protect(plain), [], control);
         return ProductionHoldObjectScope.FromVerified(sql, keys, clock);
     }
     internal sealed class Clock : TimeProvider

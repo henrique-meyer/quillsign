@@ -10,6 +10,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     public DbSet<ProductionRetentionPolicyRecord> ProductionRetentionPolicies => Set<ProductionRetentionPolicyRecord>();
     public DbSet<ProductionRetentionTerminalRecord> ProductionRetentionTerminals => Set<ProductionRetentionTerminalRecord>();
     public DbSet<ProductionHoldRequestRecord> ProductionHoldRequests => Set<ProductionHoldRequestRecord>();
+    public DbSet<ProductionHoldControlRecord> ProductionHoldControls => Set<ProductionHoldControlRecord>();
     public DbSet<Signer> Signers => Set<Signer>();
     public DbSet<SignaturePreview> SignaturePreviews => Set<SignaturePreview>();
     public DbSet<SignerReviewCandidate> SignerReviewCandidates => Set<SignerReviewCandidate>();
@@ -226,7 +227,10 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
                 }
                 if (property.ClrType == typeof(decimal) || property.ClrType == typeof(decimal?))
                     builder.HasPrecision(10, 8);
-                if (property.ClrType == typeof(byte[]) && name != "RowVersion")
+                // Frozen control plans contain bounded ciphertext, not a digest.
+                // Their dedicated model supplies the payload bounds below.
+                if (property.ClrType == typeof(byte[]) && name != "RowVersion" &&
+                    !(type.ClrType == typeof(ProductionHoldControlRecord) && name == nameof(ProductionHoldControlRecord.PlanPayload)))
                 {
                     var length = name == "BaselineSignerVersion" ? 8 : 32;
                     builder.HasMaxLength(length);
@@ -238,6 +242,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         EmailPilotLookupModel.Configure(model);
         ProductionRetentionModel.Configure(model);
         ProductionHoldRequestModel.Configure(model);
+        ProductionHoldControlModel.Configure(model);
     }
 
     private void GuardAuditMutations()
@@ -262,6 +267,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
             throw new InvalidOperationException("Signer contact revisions and session bindings are immutable. Purge requires its privileged path.");
         if(ChangeTracker.Entries<ProductionHoldRequestRecord>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Private production hold requests are append-only.");
+        if(ChangeTracker.Entries<ProductionHoldControlRecord>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Private production hold control evidence is append-only.");
         if(ChangeTracker.Entries<LookupContactRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Lookup contact retention snapshots are immutable. Cleanup requires its privileged path.");
         if(ChangeTracker.Entries<DocumentRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))

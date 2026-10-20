@@ -15,13 +15,14 @@ internal sealed record ProductionHoldSqlLimits(int MaximumRows = 4096, long Maxi
     long MaximumJsonBytes = 16 * 1024 * 1024);
 internal sealed record ProductionHoldSqlTable(string Table, long Rows, string Sha256);
 internal sealed record ProductionHoldSqlSnapshot(Guid RecordId, long Revision, string FenceHash, DateTimeOffset CapturedAt,
-    string StateSha256, string PayloadSha256, long PlaintextBytes, byte[] ProtectedPayload, IReadOnlyList<ProductionHoldSqlTable> Tables);
+    string StateSha256, string PayloadSha256, long PlaintextBytes, byte[] ProtectedPayload, IReadOnlyList<ProductionHoldSqlTable> Tables,
+    ProductionHoldControlPrefix? Control = null);
 
 // Private worker building block, unregistered. This captures SQL evidence only;
 // it is not proof of referenced blob completeness or provider preservation.
 internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataProtectionProvider keys, TimeProvider time)
 {
-    internal const string Version = "production-hold-sql-inventory-v1";
+    internal const string Version = "production-hold-sql-inventory-v2";
     private sealed record TableData(string Table, string[] Columns, long Count, string Sha256, JsonElement Rows);
     private static readonly JsonSerializerOptions Json = new() { Converters = { new JsonStringEnumConverter() } };
     private static readonly HashSet<Type> PilotTypes = [typeof(EmailPilotRunRecord), typeof(EmailPilotSecretRecord),
@@ -31,7 +32,7 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
         typeof(SignerReviewCandidate), typeof(SignerFinishAcceptance), typeof(CompletionCandidate), typeof(CompletionSealOutput),
         typeof(CompletionPublicationIntent), typeof(CompletionPublicationResult), typeof(DocumentRetentionSnapshot),
         typeof(LookupContactRetentionSnapshot), typeof(SignerContactRevisionRecord), typeof(SignerContactSession),
-        typeof(ProductionRetentionPolicyRecord), typeof(ProductionRetentionTerminalRecord), typeof(ProductionHoldRequestRecord),
+        typeof(ProductionRetentionPolicyRecord), typeof(ProductionRetentionTerminalRecord), typeof(ProductionHoldRequestRecord), typeof(ProductionHoldControlRecord),
         typeof(EmailPilotRunRecord), typeof(EmailPilotSecretRecord), typeof(EmailPilotEnrollmentRecord), typeof(EmailPilotReservationRecord),
         typeof(EmailPilotLookupRequestRecord), typeof(EmailPilotLookupTokenRecord)];
 
@@ -40,7 +41,8 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
     internal static JsonDocument OpenVerified(ProductionHoldSqlSnapshot snapshot, IDataProtectionProvider keys)
     {
         if (snapshot.RecordId == Guid.Empty || snapshot.ProtectedPayload is not { Length: > 0 and <= 17 * 1024 * 1024 } ||
-            snapshot.PlaintextBytes is < 1 or > 16 * 1024 * 1024) throw Invalid();
+            snapshot.PlaintextBytes is < 1 or > 16 * 1024 * 1024 || snapshot.Control is null) throw Invalid();
+        ProductionHoldControls.ValidatePrefix(snapshot.Control);
         var plain = keys.CreateProtector(Version, snapshot.RecordId.ToString("N")).Unprotect(snapshot.ProtectedPayload);
         JsonDocument? document = null;
         try
@@ -50,7 +52,8 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
             document = JsonDocument.Parse(input); var root = document.RootElement;
             if (root.GetProperty("Version").GetString() != Version || root.GetProperty("RecordId").GetGuid() != snapshot.RecordId ||
                 root.GetProperty("Revision").GetInt64() != snapshot.Revision || root.GetProperty("FenceHash").GetString() != snapshot.FenceHash ||
-                root.GetProperty("CapturedAt").GetDateTimeOffset() != snapshot.CapturedAt || root.GetProperty("StateSha256").GetString() != snapshot.StateSha256) throw Invalid();
+                root.GetProperty("CapturedAt").GetDateTimeOffset() != snapshot.CapturedAt || root.GetProperty("StateSha256").GetString() != snapshot.StateSha256 ||
+                root.GetProperty("Control").Deserialize<ProductionHoldControlPrefix>() != snapshot.Control) throw Invalid();
             var tables = root.GetProperty("Tables");
             if (tables.GetArrayLength() != snapshot.Tables.Count || !tables.EnumerateArray().Select(x => new ProductionHoldSqlTable(
                 x.GetProperty("Table").GetString()!, x.GetProperty("Count").GetInt64(), x.GetProperty("Sha256").GetString()!)).SequenceEqual(snapshot.Tables)) throw Invalid();
@@ -76,6 +79,10 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
         if (!KnownTypes.SetEquals(entities.Select(x => x.ClrType))) throw Invalid();
         var holds = await new ProductionHoldRequests(db, keys, time).ReadLockedAsync(id, ct);
         if (!holds.BlocksDeletion || holds.Revision != revision || holds.FenceHash != fenceHash) throw new DocumentConflictException();
+        // Control progress has its own authenticated prefix, outside the business
+        // fingerprint. Including subsequent receipt publication in that fingerprint
+        // would invalidate the very capture the receipt must preserve.
+        var control = (await new ProductionHoldControls(db, keys, time).ReadLockedAsync(id, ct)).Prefix;
         var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == id, ct);
         // Verifies enrollment, original source and terminal provenance without granting
         // a participant session or checking/renewing its separate access deadline.
@@ -88,7 +95,7 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
         foreach (var entity in entities.OrderBy(x => x.GetTableName(), StringComparer.Ordinal))
         {
             ct.ThrowIfCancellationRequested();
-            if (PilotTypes.Contains(entity.ClrType) || entity.ClrType == typeof(Suppression)) continue;
+            if (PilotTypes.Contains(entity.ClrType) || entity.ClrType == typeof(Suppression) || entity.ClrType == typeof(ProductionHoldControlRecord)) continue;
             var table = entity.GetTableName() ?? throw Invalid(); var schema = entity.GetSchema() ?? "dbo";
             var tableId = Identifier(schema) + "." + Identifier(table);
             var store = StoreObjectIdentifier.Table(table, entity.GetSchema());
@@ -140,13 +147,13 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
         var stateHash = Convert.ToHexStringLower(SHA256.HashData(state)); CryptographicOperations.ZeroMemory(state);
         var at = time.GetUtcNow();
         var plain = SerializeBounded(new { Version, RecordId = id, Revision = revision, FenceHash = fenceHash, PolicySha256 = policy,
-            CapturedAt = at, StateSha256 = stateHash, Tables = data }, limits.MaximumJsonBytes);
+            CapturedAt = at, StateSha256 = stateHash, Tables = data, Control = control }, limits.MaximumJsonBytes);
         try
         {
             var payloadHash = Convert.ToHexStringLower(SHA256.HashData(plain));
             var protectedPayload = keys.CreateProtector(Version, id.ToString("N")).Protect(plain);
             return new(id, revision, fenceHash, at, stateHash, payloadHash, plain.LongLength, protectedPayload,
-                data.Select(x => new ProductionHoldSqlTable(x.Table, x.Count, x.Sha256)).ToArray());
+                data.Select(x => new ProductionHoldSqlTable(x.Table, x.Count, x.Sha256)).ToArray(), control);
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
