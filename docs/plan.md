@@ -1934,6 +1934,8 @@ Current schema/grant regression validation: all 23 persistence, disclosure-persi
 
 ## QUILS-139: Deploy and validate the approved restricted hosted signing pilot
 
+Owner pause for repository maintenance (2026-10-20): PR #145 closed unmerged; pushed branch and all incomplete hosted acceptance scope are preserved. Hosted gates remain off; no test-window renewal or queued-email dispatch is authorized by this pause.
+
 Status: In Progress. Assigned to ChatGPT Codex. Dependent deployment/validation slice after checked QUILS-116 and prerequisites; already approved scope, public email remains disabled.
 
 Deploy the checked restricted signing pilot and run the already owner-approved bounded hosted validation after QUILS-116 and all its checked prerequisites merge. This is the deployment/operational evidence slice; do not duplicate source gates or request another approval within the agreed package.
