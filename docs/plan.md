@@ -34,7 +34,7 @@ Validation: all 37 focused production-policy cases pass with a warning-free Rele
 
 ## QUILS-151: Persist and audit frozen production retention policies
 
-Status: In Progress. Assigned to ChatGPT Codex. Required production implementation; merged QUILS-146 prerequisite verified.
+Status: Done after PR #153 passed all ten exact-head checks and merged; native Jira Done verified in the same pass. Required production implementation; the backend remains unregistered pending QUILS-152.
 
 Dependencies: QUILS-146.
 
@@ -42,17 +42,19 @@ Implement the persistence part of the original QUILS-146 scope after its version
 
 Creation enrollment is an explicit internal operation in the new envelope's caller-owned transaction; ordinary reads never enroll legacy records. Preserve the exact original creation timestamp and normalize the policy clock once to UTC seconds. Persist the canonical immutable policy plus enrollment audit binding atomically, and verify the existing saved evidence after uncertain commits without consulting current options. Terminal anchors bind one verified authoritative transition event and its exact original timestamp under the common envelope lock; expiry uses its effective deadline rather than delayed worker execution, and completion requires the actual publication evidence. Missing or inconsistent provenance grants no lifecycle or deletion authority. Keep the backend unregistered until QUILS-152 integrates it.
 
-Validation in progress: the warning-free Release build and all 44 local contract/guard regressions pass, including seven new transaction, immutability and exact-duration cases. Migration generation and pending-model verification pass without connecting to a database. SQL enrollment, provenance, permissions, concurrency, rollback, lost-acknowledgement and actual terminal-transition cases are prepared and remain a required CI gate; no local SQL success or hosted activation is claimed. The genuine completion-source fixture verifies publication metadata separately; full enrolled admission-through-publication integration remains required in QUILS-152.
+Validation: the warning-free Release build and all 44 local contract/guard regressions pass. Both full SQL integration CI runs pass after correcting the schema-count/append-only permission expectations and using an explicit production retention/protection fixture. Enrollment, provenance, runtime permissions, concurrency, rollback, lost acknowledgements and genuine terminal transitions are covered. All ten exact-head checks passed before merge. No local SQL success or hosted activation is claimed. Full enrolled admission-through-publication integration remains required in QUILS-152.
 
 ## QUILS-152: Bind production disclosures completion and access to frozen retention
 
-Status: To Do. Assigned to ChatGPT Codex. Required production implementation; depends on QUILS-151.
+Status: In Progress. Assigned to ChatGPT Codex. Required production implementation; merged QUILS-151 prerequisite verified.
 
 Dependencies: QUILS-151.
 
 Implement the integration part of the original QUILS-146 scope after the policy contract and persistence story merge. Bind real-use disclosure/Send snapshots, final publication protection/deadlines and sender/signer/lookup/final reads to the exact saved production policy and terminal anchor. Preserve legacy publication recipe verification and all demo behavior. Never read mutable current options to shorten or extend an enrolled record, conflate ordinary indefinite retention with a case hold, rewrite signed evidence, restore expired sessions or authorize deletion. Pending signing and incomplete completion must remain explicit unresolved states rather than accidental purge candidates. Show actual retention/access and archive responsibility without hold reasons; fail closed for absent/inconsistent enrollment and insufficient storage protection. Validate meaningful SQL and real synthetic desktop/mobile/keyboard flows including clock boundaries, configuration changes, old recipes and corrupted evidence. Follow the local SEO regression runbook for visible routes. No fabricated operator policies, hosted settings/grants, live email/TSA or cloud policy changes. This preserves the original QUILS-146 integration requirements as mandatory production work.
 
 Replace ordinary admission's current fixed demo selection with explicit deployment-mode configuration. New production records require a complete production policy and truthful operator disclosures before admission and freeze their selected mode and policy at creation. Preserve historical demo records and restricted-pilot rules; changing the completed-retention setting alone must never silently convert existing records or make an installation production ready.
+
+Implementation checkpoint: internal creation preflight/transaction, frozen-policy disclosure text, production publication binding and retention-access metadata helpers are prepared. All 97 focused pure production-policy/admission/binding and existing disclosure regressions pass with a warning-free build. Four new SQL admission/access cases await CI; local SQL remains unavailable. The new admission/access helpers and deployment options remain unregistered. Normal admission is still the existing demo path. Wiring ordinary admission, sender review/Send, authenticated publication and terminal anchors, every participant/worker read, configuration/examples and real browser verification remains required before this story or its draft PR can be completed. Production is not enabled by this checkpoint.
 
 ## QUILS-147: Preserve production records with authorized durable legal holds
 
