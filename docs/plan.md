@@ -46,7 +46,7 @@ Validation: the warning-free Release build and all 44 local contract/guard regre
 
 ## QUILS-152: Bind production disclosures completion and access to frozen retention
 
-Status: In Progress. Assigned to ChatGPT Codex. Required production implementation; merged QUILS-151 prerequisite verified.
+Status: Done after PR #154 merged with all twelve reported exact-head checks passing, including Windows/Linux seals and both SQL runs; native Jira Done verified in the same pass. Hosted activation and later lifecycle stories remain separate.
 
 Dependencies: QUILS-151.
 
@@ -65,7 +65,7 @@ Windows checkout correction: canonicalize generated retention notice newlines be
 
 ## QUILS-147: Preserve production records with authorized durable legal holds
 
-Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
+Status: In Progress. Assigned to ChatGPT Codex. QUILS-146/151/152 merged and native Done. Required for production self-hosting readiness; no hosted activation claimed.
 
 Dependencies: QUILS-146, QUILS-151, QUILS-152.
 
@@ -74,6 +74,10 @@ Implement durable case-scoped legal-hold commands and evidence on the production
 Preserve the complete defined evidence bundle under an active hold: original/normalized/current/final PDFs, signatures and referenced assets, disclosure snapshots, audit/acceptance/publication evidence and necessary contact/history data. Coordinate authoritative hold state with database cleanup, worker leases, object versions, storage recovery markers and provider-level protection. Fence hold placement/release against concurrent purge decisions and individual destructive operations; a hold cannot be reported effective for already deleted evidence. Reconcile uncertain commits, protection failures and partial deletion without silently clearing a hold or claiming preservation that did not occur.
 
 Release is a separate explicit privileged, reviewed and audited command. Multiple active holds require release of every relevant hold before deletion eligibility. Releasing a hold must not shorten locked storage retention, restore expired participant sessions or grant new public access; reevaluate the original retention policy without resetting its clock. Failure or inconsistent hold/protection state blocks deletion and is visible to operators. Acceptance includes unauthorized/replay/CSRF rejection, concurrent placement-versus-purge, multiple holds, restart/recovery, partial deletion and release-versus-retention cases. Actual provider permissions/policy mutations remain separately reviewed rollout work.
+
+Operator mechanism selected before privileged endpoint implementation: separate, default-disabled OpenID Connect operator sign-in and dedicated short-lived protected cookie, exact configured issuer/subject grants, and separate status/hold-place/hold-release/evidence-read permissions. Participant and pilot sessions never qualify. The initial internal contract checkpoint bounds verified ticket authority and exact record/command/revision confirmations; it registers no handler, route or runtime hold service. Durable bundle preservation, provider protection, deletion fencing and the full concurrency/recovery acceptance remain mandatory before this story is complete. QUILS-148 supplies the private operator browser workflow; configuring a live identity provider remains separate rollout work.
+
+Initial local validation covers twelve pure authorization/command cases: participant/pilot/wrong-scheme denial, exact issuer/subject and duplicate-claim checks, distinct permissions, current-grant revocation, ticket lifetime and expiry, exact command/record/hold/revision/private-detail digest bindings, malformed Unicode and overflow rejection. No database hold or provider protection is implemented by this checkpoint; keep the story In Progress and its PR draft while the durable backend is built.
 
 ## QUILS-148: Add private production retention and legal-hold operator controls
 

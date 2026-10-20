@@ -1,0 +1,23 @@
+# Production legal holds
+
+This is the QUILS-147 design and internal contract checkpoint. It does not activate a hold service, install operator routes, provision an identity provider, mutate cloud protection, or establish production readiness. The durable preservation backend and QUILS-148 operator workflow remain required.
+
+## Operator authentication
+
+Self-hosting operators will use a separate OpenID Connect authentication scheme with a dedicated protected operator cookie. The operator feature defaults to disabled. The callback must validate the configured authority, signature, audience, nonce, state and exact issuer through the standard authentication middleware before an operator ticket can be issued. No participant token, pilot capability, generic application identity, forwarded identity header or public administrator signup grants operator authority.
+
+Operators configure exact issuer/subject pairs and explicit permissions. Status, hold placement, hold release and sensitive evidence reading are different permissions. A hold administrator does not automatically gain document-content access. The application supplies no operator identity, authentication tenant, legal policy, retention interval or reason text. Identity-provider authentication/MFA policy belongs to the operator; activation requires a reviewed deployment.
+
+The internal authority adapter accepts only a ticket from that dedicated protected-cookie scheme, an authenticated identity from the dedicated OpenID Connect scheme, an exact configured issuer/subject match, a current ticket issued within the five-minute operator session bound, and an explicitly allowed permission. It caps the resulting authority at the earlier of ticket expiry and five minutes. This adapter is not itself an OIDC token validator: the future operator middleware must establish and protect the ticket. Until that middleware exists, the adapter is internal and unregistered.
+
+Privileged POSTs will require same-origin antiforgery, rate limits and explicit confirmation. GET never places or releases a hold. Exact record, hold, operation, command ID, expected hold-state revision and a digest of the private reason/reference must be bound into an expiring one-use confirmation. Release requires its own permission and confirmation. Replaying a different command under the same ID is a conflict, not success. A stored command receipt must still be authenticated before an idempotent recovery is reported.
+
+## Preservation and concurrency requirements
+
+Hold placement must immediately fence new deletion decisions under the same parent-record lock, then verify and protect the entire evidence bundle: original and normalized documents, current copies and checkpoints, final versions, adopted/replaced referenced marks, disclosures, acceptance/publication/audit evidence, and required participant/contact history. A database placement request is only preservation-pending until the exact inventory and provider protections are verified. It must not be reported effective for evidence already deleted or of uncertain completeness.
+
+The durable backend must maintain append-only command/protection evidence, attributable private actor/purpose/reference details, an exact authenticated record revision, and a monotonically changing deletion fence. An uncertain commit is reconciled against the saved command and evidence rather than blindly reissued. Unknown protection, partial deletion or mismatched state blocks deletion and stays visible to operators. Case reasons and private operator subjects must not enter participant pages, final PDFs, public logs or unauthenticated status.
+
+Every active hold blocks deletion independently. Explicit release resolves only its exact hold; other holds continue to block. It cannot shorten time-locked protection, change original retention clocks, rewrite signed evidence, restore participant sessions or grant public access. Ordinary indefinite retention is independent of a case hold. Releasing the final hold triggers reevaluation of the frozen policy, not an immediate destructive operation.
+
+QUILS-149 must honor the same fence before each exact destructive action and storage-recovery boundary. Runtime database roles cannot edit or delete hold evidence directly. A complete implementation must cover placement/deletion races, independent holds, stale/replayed confirmations, permission revocation/expiry, restart and uncertain commits, provider failure, missing evidence, and release during unexpired retention. Source/local synthetic acceptance is distinct from hosted provider permissions and physical backup erasure.
