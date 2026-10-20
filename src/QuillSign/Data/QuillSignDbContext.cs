@@ -9,6 +9,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     public DbSet<DocumentRetentionSnapshot> DocumentRetentionSnapshots => Set<DocumentRetentionSnapshot>();
     public DbSet<ProductionRetentionPolicyRecord> ProductionRetentionPolicies => Set<ProductionRetentionPolicyRecord>();
     public DbSet<ProductionRetentionTerminalRecord> ProductionRetentionTerminals => Set<ProductionRetentionTerminalRecord>();
+    public DbSet<ProductionHoldRequestRecord> ProductionHoldRequests => Set<ProductionHoldRequestRecord>();
     public DbSet<Signer> Signers => Set<Signer>();
     public DbSet<SignaturePreview> SignaturePreviews => Set<SignaturePreview>();
     public DbSet<SignerReviewCandidate> SignerReviewCandidates => Set<SignerReviewCandidate>();
@@ -236,6 +237,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         EmailPilotModel.Configure(model);
         EmailPilotLookupModel.Configure(model);
         ProductionRetentionModel.Configure(model);
+        ProductionHoldRequestModel.Configure(model);
     }
 
     private void GuardAuditMutations()
@@ -258,6 +260,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         if(ChangeTracker.Entries<SignerContactRevisionRecord>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<SignerContactSession>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Signer contact revisions and session bindings are immutable. Purge requires its privileged path.");
+        if(ChangeTracker.Entries<ProductionHoldRequestRecord>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Private production hold requests are append-only.");
         if(ChangeTracker.Entries<LookupContactRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Lookup contact retention snapshots are immutable. Cleanup requires its privileged path.");
         if(ChangeTracker.Entries<DocumentRetentionSnapshot>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))

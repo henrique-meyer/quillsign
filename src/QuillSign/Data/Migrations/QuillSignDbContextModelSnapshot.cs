@@ -1331,6 +1331,75 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.ProductionHoldRequestRecord", b =>
+                {
+                    b.Property<Guid>("CommandId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CommandSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("Hash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<Guid>("HoldId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Operation")
+                        .HasColumnType("int");
+
+                    b.Property<string>("PolicySha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<byte[]>("PreviousHash")
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<string>("ProtectedEvidence")
+                        .IsRequired()
+                        .HasMaxLength(32768)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("Revision")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("CommandId");
+
+                    b.HasIndex("EnvelopeId", "Revision")
+                        .IsUnique();
+
+                    b.HasIndex("EnvelopeId", "HoldId", "Operation")
+                        .IsUnique();
+
+                    b.ToTable("ProductionHoldRequests", t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductionHoldRequestRecord_Hash", "[Hash] IS NULL OR DATALENGTH([Hash]) = 32");
+
+                            t.HasCheckConstraint("CK_ProductionHoldRequestRecord_PreviousHash", "[PreviousHash] IS NULL OR DATALENGTH([PreviousHash]) = 32");
+
+                            t.HasCheckConstraint("CK_ProductionHoldRequest_Bounds", "[Revision] BETWEEN 1 AND 512 AND [Operation] IN (0,1) AND DATEPART(TZOFFSET,[At])=0 AND DATALENGTH([PolicySha256])=64 AND DATALENGTH([CommandSha256])=64 AND DATALENGTH([ProtectedEvidence]) BETWEEN 64 AND 65536");
+
+                            t.HasCheckConstraint("CK_ProductionHoldRequest_Hash", "DATALENGTH([Hash])=32 AND (([Revision]=1 AND [PreviousHash] IS NULL) OR ([Revision]>1 AND DATALENGTH([PreviousHash])=32))");
+
+                            t.HasCheckConstraint("CK_ProductionHoldRequest_Ids", "[CommandId]<>'00000000-0000-0000-0000-000000000000' AND [HoldId]<>'00000000-0000-0000-0000-000000000000'");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.ProductionRetentionPolicyRecord", b =>
                 {
                     b.Property<Guid>("EnvelopeId")
@@ -2386,6 +2455,21 @@ namespace QuillSign.Data.Migrations
                     b.HasOne("QuillSign.Data.EmailOutbox", null)
                         .WithMany()
                         .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.ProductionHoldRequestRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.ProductionRetentionPolicyRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
                 });

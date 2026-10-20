@@ -1,6 +1,6 @@
 # Production legal holds
 
-This is the QUILS-147 design and internal contract checkpoint. It does not activate a hold service, install operator routes, provision an identity provider, mutate cloud protection, or establish production readiness. The durable preservation backend and QUILS-148 operator workflow remain required.
+This is the QUILS-147 design and internal pending-command checkpoint. It does not activate a hold service, install operator routes, provision an identity provider, mutate cloud protection, or establish production readiness. Complete inventory/provider preservation and the QUILS-148 operator workflow remain required.
 
 ## Operator authentication
 
@@ -17,6 +17,10 @@ Privileged POSTs will require same-origin antiforgery, rate limits and explicit 
 Hold placement must immediately fence new deletion decisions under the same parent-record lock, then verify and protect the entire evidence bundle: original and normalized documents, current copies and checkpoints, final versions, adopted/replaced referenced marks, disclosures, acceptance/publication/audit evidence, and required participant/contact history. A database placement request is only preservation-pending until the exact inventory and provider protections are verified. It must not be reported effective for evidence already deleted or of uncertain completeness.
 
 The durable backend must maintain append-only command/protection evidence, attributable private actor/purpose/reference details, an exact authenticated record revision, and a monotonically changing deletion fence. An uncertain commit is reconciled against the saved command and evidence rather than blindly reissued. Unknown protection, partial deletion or mismatched state blocks deletion and stays visible to operators. Case reasons and private operator subjects must not enter participant pages, final PDFs, public logs or unauthenticated status.
+
+The current internal request ledger persists authenticated-encrypted operator/command details separately from the participant audit. Every request binds the saved production policy, exact parent/hold/command IDs, original expected global revision, timestamp and previous-entry digest. Reads require verified enrollment and the common parent lock; exact replay returns the saved request rather than advancing its clock or revision. Missing, demo and unenrolled records cannot acquire an implicit policy. Ordinary runtime and worker SQL roles have no access to this private table. A separately approved privileged executor is still required before any runtime registration.
+
+This ledger reports only preservation-pending and release-pending requests. Both remain deletion-blocking. It provides no effective-preservation or completed-release receipt. Its bounded authenticated journal rejects corrupted entries and missing prefixes; it cannot independently detect wholesale restoration of an earlier valid database. External storage fencing and restore reconciliation in the remaining backend/acceptance work must address that case before deletion is enabled. Source migrations create the table; they do not grant operator access or change a hosted database.
 
 Every active hold blocks deletion independently. Explicit release resolves only its exact hold; other holds continue to block. It cannot shorten time-locked protection, change original retention clocks, rewrite signed evidence, restore participant sessions or grant public access. Ordinary indefinite retention is independent of a case hold. Releasing the final hold triggers reevaluation of the frozen policy, not an immediate destructive operation.
 
