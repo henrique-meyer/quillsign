@@ -7,6 +7,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
 {
     public DbSet<Envelope> Envelopes => Set<Envelope>();
     public DbSet<DocumentRetentionSnapshot> DocumentRetentionSnapshots => Set<DocumentRetentionSnapshot>();
+    public DbSet<ProductionRetentionPolicyRecord> ProductionRetentionPolicies => Set<ProductionRetentionPolicyRecord>();
+    public DbSet<ProductionRetentionTerminalRecord> ProductionRetentionTerminals => Set<ProductionRetentionTerminalRecord>();
     public DbSet<Signer> Signers => Set<Signer>();
     public DbSet<SignaturePreview> SignaturePreviews => Set<SignaturePreview>();
     public DbSet<SignerReviewCandidate> SignerReviewCandidates => Set<SignerReviewCandidate>();
@@ -233,11 +235,15 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         }
         EmailPilotModel.Configure(model);
         EmailPilotLookupModel.Configure(model);
+        ProductionRetentionModel.Configure(model);
     }
 
     private void GuardAuditMutations()
     {
         ChangeTracker.DetectChanges();
+        if (ChangeTracker.Entries<ProductionRetentionPolicyRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<ProductionRetentionTerminalRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Production retention provenance is immutable. Migration and deletion require their separate privileged paths.");
         if (ChangeTracker.Entries<EmailPilotRunRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<EmailPilotSecretRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<EmailPilotEnrollmentRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||

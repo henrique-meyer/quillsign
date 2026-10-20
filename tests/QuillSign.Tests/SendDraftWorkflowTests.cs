@@ -200,7 +200,7 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         public Clock Clock = new(); public Faults Faults = new(); public FakeSender Sender = new(); public FaultBlobs Blobs = null!; public Signals Signals = null!;
         private QueueClient queue = null!; private BlobContainerClient hints = null!; private BlobClient keyBlob = null!;
         public ClaimsPrincipal Principal => SenderConfiguration.Principal(new(Envelope.Id,Envelope.PublicId,Envelope.SenderEmail));
-        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false,int? browserPort=null,Func<VerifiedSigner?>? syntheticSigner=null,Action<IServiceCollection>? configure=null)
+        public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false,int? browserPort=null,Func<VerifiedSigner?>? syntheticSigner=null,Action<IServiceCollection>? configure=null,QuillSign.Lifecycle.ProductionRetentionPolicyOptions? productionRetention=null)
         {
             var run = new Harness(); var name = "sendtest-" + Guid.NewGuid().ToString("N"); var storage = Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
             using var source = fixture.Open(); var connection = source.Database.GetConnectionString();
@@ -234,10 +234,21 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
             using var normalized = new MemoryStream(); var pages = new PdfValidation(new()).Rewrite(new MemoryStream(PdfFixtures.Create(text:"Synthetic NO AGREEMENT")),normalized); run.Source = normalized.ToArray();
             run.Envelope = new Envelope { SenderEmail="sender-"+name+"@example.invalid",Title="<b>Synthetic NO AGREEMENT</b>",Message="<b>Synthetic message</b>",SenderVerifiedAt=run.Clock.GetUtcNow(),PreviewConfirmedAt=run.Clock.GetUtcNow(),PdfBlob=Guid.NewGuid().ToString("N"),PdfSha256=SHA256.HashData(run.Source),PageCount=pages.Count,PageSizesJson=JsonSerializer.Serialize(pages),ExpiresAt=run.Clock.GetUtcNow().AddDays(30) };
             run.First = new Signer { EnvelopeId=run.Envelope.Id,FullName="Synthetic first signer",Email="first-"+name+"@example.invalid",Order=1 }; run.Second = new Signer { EnvelopeId=run.Envelope.Id,FullName="Synthetic second signer",Email="second-"+name+"@example.invalid",Order=2 };
-            await using (var scope = run.App.Services.CreateAsyncScope()) { var db = scope.ServiceProvider.GetRequiredService<QuillSignDbContext>(); db.AddRange(run.Envelope,run.First,run.Second,
+            await using (var scope = run.App.Services.CreateAsyncScope()) { var db = scope.ServiceProvider.GetRequiredService<QuillSignDbContext>();
+                await using var creation = productionRetention is null ? null : await db.Database.BeginTransactionAsync();
+                if(productionRetention is not null) {
+                    run.Envelope.CreatedAt=run.Clock.GetUtcNow(); var setup=db.Entry(run.Envelope).CurrentValues.Clone();
+                    run.Envelope.SenderVerifiedAt=null;run.Envelope.PdfBlob=null;run.Envelope.PdfSha256=null;
+                    run.Envelope.PreviewConfirmedAt=null;run.Envelope.PageCount=null;run.Envelope.PageSizesJson=null;
+                    db.Add(run.Envelope);
+                    await new QuillSign.Lifecycle.ProductionRetentionLedger(db,new(db,run.Clock),run.Clock).PrepareNewLockedAsync(run.Envelope,productionRetention);
+                    var version=run.Envelope.RowVersion;db.Entry(run.Envelope).CurrentValues.SetValues(setup);run.Envelope.RowVersion=version;
+                } else db.Add(run.Envelope);
+                db.AddRange(run.First,run.Second,
                 new DocumentField { EnvelopeId=run.Envelope.Id,Type=FieldType.Text,Page=1,X=.1m,Y=.3m,Width=.7m,Height=.1m,Value="Synthetic sender prefill" },
-                new DocumentField { EnvelopeId=run.Envelope.Id,SignerId=run.First.Id,Type=FieldType.Signature,Page=1,X=.1m,Y=.5m,Width=.4m,Height=.1m }); await db.SaveChangesAsync(); run.Version=run.Envelope.RowVersion; }
-            await run.Blobs.Inner.WriteAsync(run.Principal,new(run.Envelope.Id,DocumentBlobKind.Normalized,Guid.Parse(run.Envelope.PdfBlob)),new MemoryStream(run.Source),run.Source.Length);
+                new DocumentField { EnvelopeId=run.Envelope.Id,SignerId=run.First.Id,Type=FieldType.Signature,Page=1,X=.1m,Y=.5m,Width=.4m,Height=.1m }); await db.SaveChangesAsync(); run.Version=run.Envelope.RowVersion;
+                if(creation is not null)await creation.CommitAsync(); }
+            await run.Blobs.Inner.WriteAsync(run.Principal,new(run.Envelope.Id,DocumentBlobKind.Normalized,Guid.Parse(run.Envelope.PdfBlob!)),new MemoryStream(run.Source),run.Source.Length);
             if(browser) {
                 run.App.Use(async(context,next)=>{context.Connection.RemoteIpAddress??=System.Net.IPAddress.Loopback;SenderConfiguration.PrivateStatusHeaders(context);await next();});
                 if(browserPort is not null)run.App.Use(async(context,next)=>{context.Response.Headers["X-Content-Type-Options"]="nosniff";context.Response.Headers["Referrer-Policy"]="no-referrer";context.Response.Headers["Content-Security-Policy"]="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";await next();});
