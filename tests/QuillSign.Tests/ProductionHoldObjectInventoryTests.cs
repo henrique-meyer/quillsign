@@ -74,6 +74,60 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
                 using (ProductionHoldSqlInventory.OpenVerified(substituted.Sql, keys)) { }
                 Assert.Throws<InvalidDataException>(() => ProductionHoldObjectInventory.OpenVerified(substituted, keys, clock));
             }
+            async Task<Guid> AddSigner(string name, string email)
+            {
+                var state = await State(); await using var db = fixture.Open();
+                var result = await new SignerSetup(db, new(db, clock), new(), clock).ChangeAsync(sender, e.PublicId,
+                    new(SignerChangeKind.Save, Convert.ToBase64String(state.RowVersion), FullName: name, Email: email), null, null);
+                Assert.Equal(SignerSetupError.None, result.Error);
+                return (await db.Signers.AsNoTracking().SingleAsync(x => x.EnvelopeId == e.Id && x.Email == email)).Id;
+            }
+            async Task SaveFields(params FieldInput[] fields)
+            {
+                var state = await State(); await using var db = fixture.Open();
+                var result = await new FieldEditor(db, new(db, clock), new(), clock).SaveAsync(sender, e.PublicId,
+                    new(Convert.ToBase64String(state.RowVersion), state.PdfBlob!, fields), null, null);
+                Assert.Equal(FieldEditorError.None, result.Error);
+            }
+            async Task ChangeSigner(Guid signer, SignerChangeKind kind)
+            {
+                var state = await State(); await using var db = fixture.Open();
+                var result = await new SignerSetup(db, new(db, clock), new(), clock).ChangeAsync(sender, e.PublicId,
+                    new(kind, Convert.ToBase64String(state.RowVersion), signer), null, null);
+                Assert.Equal(SignerSetupError.None, result.Error);
+            }
+            async Task<Guid> Recipient(Guid? recipient, bool remove, string name, string email)
+            {
+                var state = await State(); await using var db = fixture.Open();
+                var result = await new DraftDetails(db, new(db, clock), new(), clock).ChangeAsync(sender, e.PublicId,
+                    new(remove ? DetailsChangeKind.RemoveRecipient : DetailsChangeKind.SaveRecipient, Convert.ToBase64String(state.RowVersion), recipient, Name: name, Email: email), null, null);
+                Assert.Equal(DetailsError.None, result.Error);
+                return remove ? recipient!.Value : (await db.Recipients.AsNoTracking().SingleAsync(x => x.EnvelopeId == e.Id && x.Email == email)).Id;
+            }
+            var removed = await AddSigner("Removed synthetic signer", "removed-signing@example.invalid");
+            var surviving = await AddSigner("Current synthetic signer", "current-signing@example.invalid");
+            var generic = new FieldInput(Guid.NewGuid(), null, "Text", 1, .1m, .2m, .3m, .1m, false, Value: Guid.NewGuid().ToString("N"));
+            await SaveFields(new(Guid.NewGuid(), removed, "Signature", 1, .1m, .4m, .3m, .1m, true), generic);
+            await SaveFields(generic); await ChangeSigner(removed, SignerChangeKind.Remove);
+            var added = await AddSigner("Later synthetic signer", "later-signing@example.invalid"); await ChangeSigner(added, SignerChangeKind.MoveUp);
+            var retiredRecipient = await Recipient(null, false, "Retired synthetic recipient", "retired-recipient@example.invalid");
+            _ = await Recipient(null, false, "Current synthetic recipient", "current-recipient@example.invalid");
+            _ = await Recipient(retiredRecipient, true, "", "");
+            await SaveFields(generic, new(Guid.NewGuid(), surviving, "Signature", 1, .1m, .4m, .3m, .1m, true));
+            {
+                var state = await State(); await using var db = fixture.Open();
+                var result = await new DraftDetails(db, new(db, clock), new(), clock).ChangeAsync(sender, e.PublicId,
+                    new(DetailsChangeKind.SaveDetails, Convert.ToBase64String(state.RowVersion), Title: "Prepared synthetic title", Message: "Historical synthetic message"), null, null);
+                Assert.Equal(DetailsError.None, result.Error);
+                Assert.False(await db.Signers.AnyAsync(x => x.Id == removed));
+            }
+            await using (var prepared = fixture.Open())
+            {
+                await using var preparedTx = await prepared.Database.BeginTransactionAsync();
+                var preserved = await new ProductionHoldObjectInventory(prepared, keys, clock, new AzureProductionHoldObjectSource(client))
+                    .CaptureLockedAsync(e.Id, request.Current.Revision, request.Current.FenceHash!);
+                Assert.Equal(2, ProductionHoldObjectInventory.OpenVerified(preserved, keys, clock).Length);
+            }
             var first = await State();
             Assert.True(await Upload(PdfFixtures.Create(2, text: "Synthetic replacement NO AGREEMENT"), false));
             Assert.True(await Upload([], true));

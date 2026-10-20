@@ -7,6 +7,9 @@ using QuillSign.Documents;
 
 namespace QuillSign.Lifecycle;
 
+// Private evidence projection, never an HTTP input or storage capability.
+internal sealed record HoldUploadedDocument(long Sequence, Guid ObjectId, string Sha256, int Pages, long? PreviewSequence);
+
 // Explicit historical document schemas. Upload v0/v1 record digests, not the
 // newly allocated object IDs. Subsequent replacement/preview/current anchors
 // supply only the IDs actually present in those schemas; never invent one.
@@ -24,18 +27,20 @@ internal static class ProductionHoldDocumentAuditReferences
     private sealed record Upload(AuditEvent Event, UploadV0 Data, string? Retention, JsonElement? Conversion);
 
     internal static void Demand(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects)
+        => _ = ReadVerified(sql, objects);
+    internal static IReadOnlyList<HoldUploadedDocument> ReadVerified(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects)
     {
-        try { Verify(sql, objects); }
+        try { return Verify(sql, objects); }
         catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException or FormatException or DocumentRejectedException)
         { throw Invalid(); }
     }
-    private static void Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects)
+    private static IReadOnlyList<HoldUploadedDocument> Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects)
     {
         var id = sql.GetProperty("RecordId").GetGuid();
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         var selected = tables["AuditEvents"].EnumerateArray().Where(x => x.GetProperty("Event").GetString() is
             "document_uploaded" or "document_replaced" or "preview_confirmed").ToArray();
-        if (selected.Length == 0) return;
+        if (selected.Length == 0) return [];
         if (id == Guid.Empty || selected.Length > 4096) throw Invalid();
         var e = tables["Envelopes"].EnumerateArray().Single().Deserialize<Envelope>(Rows) ?? throw Invalid();
         if (e.Id != id || e.CreatedAt.Offset != TimeSpan.Zero || e.SenderVerifiedAt is null || e.SenderVerifiedAt.Value.Offset != TimeSpan.Zero ||
@@ -88,19 +93,21 @@ internal static class ProductionHoldDocumentAuditReferences
                 e.PageCount != data.pageCount || e.OriginalMime != mime)) throw Invalid();
         }
         Exact("originals", Id(e.OriginalBlob), uploads[^1].Data.originalSha256);
-        var seen = new HashSet<Guid>();
+        var previews = new Dictionary<Guid, long>();
         foreach (var preview in audits.Where(x => x.Event == "preview_confirmed"))
         {
             var prior = uploads.Select((u, n) => (u, n)).LastOrDefault(x => x.u.Event.Sequence < preview.Sequence);
             if (prior.u is null) throw Invalid();
             var data = Canonical<Preview>(preview.DataJson); var document = Id(data.document);
-            if (document != documents[prior.n] || data.pdfSha256 != prior.u.Data.pdfSha256 || !seen.Add(document)) throw Invalid();
+            if (document != documents[prior.n] || data.pdfSha256 != prior.u.Data.pdfSha256 || !previews.TryAdd(document, preview.Sequence)) throw Invalid();
             Exact("normalized", document, data.pdfSha256);
         }
         var currentPreview = audits.LastOrDefault(x => x.Event == "preview_confirmed" && x.Sequence > uploads[^1].Event.Sequence);
         if (e.PreviewConfirmedAt is { } confirmed
             ? confirmed.Offset != TimeSpan.Zero || confirmed < uploads[^1].Event.At || currentPreview is null || currentPreview.At < confirmed
             : currentPreview is not null) throw Invalid();
+        return uploads.Select((u, n) => new HoldUploadedDocument(u.Event.Sequence, documents[n], u.Data.pdfSha256, u.Data.pageCount,
+            previews.TryGetValue(documents[n], out var sequence) ? sequence : null)).ToArray();
 
         bool Owned(HoldObjectEvidence x, string area) => x.Address.Area == area && x.Address.Name.StartsWith($"{id:N}/", StringComparison.Ordinal) &&
             Guid.TryParseExact(x.Address.Name[(id.ToString("N").Length + 1)..], "N", out var file) && file != Guid.Empty;
