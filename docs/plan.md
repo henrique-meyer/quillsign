@@ -2037,6 +2037,8 @@ CI follow-up for QUILS-154: the full suite found three retention-access cases wh
 
 ### QUILS-155 — Verify isolated Azure immutable-witness provider prerequisites
 
+Provider verification passed against Azure: exact version/bytes/protection readback, historical deletion and locked-policy mutation refusal, independent legal holds and exact releases, conditional operations, lost-acknowledgement recovery, actual local SQL restore/fresh-process quarantine and complete namespace/fork detection. Temporary scoped access was removed and verified. All failed prefixes and consumed usage remain. The story remains In Progress until the one delayed exact-fixture cleanup passes after the latest lock-intent expiry plus its safety interval; this provider result permits continued QUILS-147 source work but does not complete its lifecycle or activate production holds.
+
 Historical-version checkpoint: exact native deletion refusal and fresh-process restored-SQL quarantine passed. A locked-policy shortening refusal then exposed an overly narrow test response matcher. Resume only the same authenticated four retained versions and closed failed prefix under a distinct bounded finalization phase; require the specific observed policy refusal plus unchanged exact protection readback, never an arbitrary HTTP error. Preserve every consumed counter and original clock, capture native error codes, and use explicit string date parsing in cleanup. No additional allowance or recurring service. The full pilot remains incomplete until all remaining provider probes and delayed cleanup pass.
 
 Status: In Progress. Assigned to ChatGPT Codex. Independent bounded provider-verification prerequisite for QUILS-147; it does not complete that story or activate production legal holds.
