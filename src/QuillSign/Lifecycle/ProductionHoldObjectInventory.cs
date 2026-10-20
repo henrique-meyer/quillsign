@@ -41,9 +41,14 @@ internal sealed class ProductionHoldObjectScope
     internal void Demand(HoldObjectAddress value, CancellationToken ct)
     {
         Demand(ct);
-        if (!Areas.Contains(value.Area, StringComparer.Ordinal) || !value.Name.StartsWith(Prefix, StringComparison.Ordinal) ||
-            value.Name.Length <= Prefix.Length || value.Name.Length > 1024 ||
-            value.Name[Prefix.Length..].Split('/').Any(p => p.Length == 0 || p.Any(c => c is not (>= 'a' and <= 'z' or >= '0' and <= '9' or '-'))) ||
+        ValidateAddress(RecordId, value);
+    }
+    internal static void ValidateAddress(Guid recordId, HoldObjectAddress value)
+    {
+        var prefix = $"{recordId:N}/";
+        if (recordId == Guid.Empty || !Areas.Contains(value.Area, StringComparer.Ordinal) || !value.Name.StartsWith(prefix, StringComparison.Ordinal) ||
+            value.Name.Length <= prefix.Length || value.Name.Length > 1024 ||
+            value.Name[prefix.Length..].Split('/').Any(p => p.Length == 0 || p.Any(c => c is not (>= 'a' and <= 'z' or >= '0' and <= '9' or '-'))) ||
             !Opaque(value.VersionId, true) || !Opaque(value.Snapshot, true) || value.VersionId.Length > 0 && value.Snapshot.Length > 0 ||
             !Opaque(value.ETag, false) || value.ETag.Length < 3 || value.ETag[0] != '"' || value.ETag[^1] != '"' ||
             value.ETag[1..^1].Any(c => c == '"' || c == ' ') || value.Length is < 1 or > 64 * 1024 * 1024) throw Invalid();
@@ -64,6 +69,39 @@ internal interface IProductionHoldObjectSource
 internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IDataProtectionProvider keys, TimeProvider time, IProductionHoldObjectSource source)
 {
     internal const string Version = "production-hold-object-inventory-v1";
+    internal static HoldObjectEvidence[] OpenVerified(ProductionHoldObjectSnapshot snapshot, IDataProtectionProvider keys, TimeProvider time)
+    {
+        if (snapshot.RecordId == Guid.Empty || snapshot.ProtectedManifest is not { Length: > 0 and <= 9 * 1024 * 1024 } ||
+            snapshot.Objects is < 0 or > 4096 || snapshot.Bytes is < 0 or > 256 * 1024 * 1024 ||
+            snapshot.Sql.RecordId != snapshot.RecordId || snapshot.Sql.Revision != snapshot.Revision || snapshot.Sql.FenceHash != snapshot.FenceHash ||
+            snapshot.Sql.StateSha256 != snapshot.SqlStateSha256 || snapshot.Sql.PayloadSha256 != snapshot.SqlPayloadSha256) throw Invalid();
+        using var sql = ProductionHoldSqlInventory.OpenVerified(snapshot.Sql, keys);
+        var plain = keys.CreateProtector(Version, snapshot.RecordId.ToString("N")).Unprotect(snapshot.ProtectedManifest);
+        try
+        {
+            if (plain.Length > 8 * 1024 * 1024 || Convert.ToHexStringLower(SHA256.HashData(plain)) != snapshot.ManifestSha256) throw Invalid();
+            using var document = JsonDocument.Parse(plain); var root = document.RootElement;
+            var captured = root.GetProperty("CapturedAt").GetDateTimeOffset();
+            if (root.GetProperty("Version").GetString() != Version || root.GetProperty("RecordId").GetGuid() != snapshot.RecordId ||
+                root.GetProperty("Revision").GetInt64() != snapshot.Revision || root.GetProperty("FenceHash").GetString() != snapshot.FenceHash ||
+                root.GetProperty("SqlStateSha256").GetString() != snapshot.SqlStateSha256 || root.GetProperty("SqlPayloadSha256").GetString() != snapshot.SqlPayloadSha256 ||
+                captured.Offset != TimeSpan.Zero || captured < snapshot.Sql.CapturedAt || captured > time.GetUtcNow()) throw Invalid();
+            var entries = root.GetProperty("Objects");
+            if (entries.GetArrayLength() != snapshot.Objects) throw Invalid();
+            var objects = entries.Deserialize<HoldObjectEvidence[]>() ?? throw Invalid();
+            if (objects.Sum(x => x.Address.Length) != snapshot.Bytes) throw Invalid();
+            var identities = new HashSet<(string, string, string, string)>();
+            foreach (var item in objects)
+            {
+                ProductionHoldObjectScope.ValidateAddress(snapshot.RecordId, item.Address);
+                if (item.Sha256 is not { Length: 64 } || !item.Sha256.All(char.IsAsciiHexDigitLower) ||
+                    !identities.Add((item.Address.Area, item.Address.Name, item.Address.VersionId, item.Address.Snapshot))) throw Invalid();
+            }
+            ProductionHoldObjectReferences.Demand(sql.RootElement, objects);
+            return objects;
+        }
+        finally { CryptographicOperations.ZeroMemory(plain); }
+    }
     internal async Task<ProductionHoldObjectSnapshot> CaptureLockedAsync(Guid id, long revision, string fenceHash,
         ProductionHoldObjectLimits? limits = null, CancellationToken ct = default)
     {

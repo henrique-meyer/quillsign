@@ -7,7 +7,7 @@ namespace QuillSign.Lifecycle;
 
 // Private worker authority for one exact encrypted SQL payload. It does not grant
 // participant access, hold release, source-file reads or complete preservation.
-internal sealed class ProductionHoldSqlArchiveCapability
+internal sealed class ProductionHoldSqlArchiveCapability : IProductionHoldArchivePayload
 {
     private readonly byte[] payload;
     private readonly TimeProvider time;
@@ -55,4 +55,10 @@ internal sealed class ProductionHoldSqlArchiveCapability
         if (now < issued || now >= expires) throw new UnauthorizedAccessException("The private SQL archive scope expired.");
     }
     internal Stream Open(CancellationToken ct) { Demand(ct); return new MemoryStream(payload, false); }
+    string IProductionHoldArchivePayload.Path => Path;
+    long IProductionHoldArchivePayload.Length => Length;
+    string IProductionHoldArchivePayload.Sha256 => CiphertextSha256;
+    HoldObjectAddress? IProductionHoldArchivePayload.Source => null;
+    void IProductionHoldArchivePayload.Demand(CancellationToken ct) => Demand(ct);
+    Stream IProductionHoldArchivePayload.Open(CancellationToken ct) => Open(ct);
 }
