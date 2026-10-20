@@ -24,7 +24,7 @@ internal static class ProductionRecordRetentionAccess
             if(current.PublicId!=supplied.PublicId || current.SenderEmail!=supplied.SenderEmail || current.CreatedAt!=supplied.CreatedAt ||
                 current.IsDemo!=supplied.IsDemo)throw ProductionRetentionLedger.Invalid();
         }
-        if(owned is not null)await owned.CommitAsync(ct);
+        if(owned is not null)await owned.RollbackAsync(ct);
         return read.Enrollment;
     }
 

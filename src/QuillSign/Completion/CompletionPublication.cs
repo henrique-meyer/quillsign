@@ -220,7 +220,7 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
         var retained=await ProductionRecordRetentionAccess.ReadLockedAsync(db,envelope,time,ct);
         if(retained.Kind!=ProductionEnrollmentKind.Enrolled || retained.Stage!=ProductionRecordStage.Completed)throw Invalid();
         DocumentRetentionAccess.Check(retained.Deadline,time);
-        if(owned is not null)await owned.CommitAsync(ct);
+        if(owned is not null)await owned.RollbackAsync(ct);
         return retained.Deadline;
     }
     private async Task<byte[]> Download(FinalStoredDocument reference,CompletionPublicationIntent intent,CancellationToken ct,DateTimeOffset? accessUntil=null)

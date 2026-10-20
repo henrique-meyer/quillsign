@@ -21,7 +21,7 @@ internal static class DocumentRetentionAccess
         if(production.Kind==ProductionEnrollmentKind.MissingRecord)throw Invalid();
         if(row is not null) {
             if(production.Kind==ProductionEnrollmentKind.Enrolled)throw Invalid();
-            if(owned is not null)await owned.CommitAsync(ct);
+            if(owned is not null)await owned.RollbackAsync(ct);
             return Email.Pilot.EmailPilotReadBounds.Earlier(row.DeleteAfter,access);
         }
         // A removed enrolled policy must not silently become an ordinary read.
@@ -39,7 +39,9 @@ internal static class DocumentRetentionAccess
             }
             catch(Exception e) when(e is JsonException or InvalidOperationException) {throw Invalid();}
         }
-        if(owned is not null)await owned.CommitAsync(ct);
+        // Release our read-only snapshot without introducing a lifecycle commit.
+        // The caller's later upload/terminal transaction owns its acknowledgement.
+        if(owned is not null)await owned.RollbackAsync(ct);
         return Email.Pilot.EmailPilotReadBounds.Earlier(production.Deadline,access);
     }
     internal static void Check(DateTimeOffset? deadline,TimeProvider time)
