@@ -39,7 +39,7 @@ else {
      aria-label="Read-only document preview">
 <div class="pdf-page"><canvas aria-label="Document page"></canvas><div class="textLayer"></div></div>
 </div>
-<p><a id="pdf-download" asp-page-handler="Pdf" asp-route-download="true">Download the PDF</a> · <a asp-page-handler="Pdf" target="_blank" rel="noopener">Open PDF in a new tab</a></p>
+<p><a id="pdf-download" asp-page-handler="Pdf" asp-route-download="true" pdf-file-action pdf-file-label="the PDF">Download the PDF</a> · <a asp-page-handler="Pdf" target="_blank" rel="noopener">Open PDF in a new tab</a></p>
 <p class="hint">If the preview fails, download the PDF and open it in your PDF viewer. Do not continue if you cannot view or save it.</p>
 }
 @if (Model.Context.ConsentAt is null) {

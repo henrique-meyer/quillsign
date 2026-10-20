@@ -10,10 +10,13 @@ namespace QuillSign.Tests;
 
 public sealed class CompletionReaderPageTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
-    [Fact]
-    public async Task Every_frozen_party_opens_readonly_records_and_downloads_exact_pair_after_original_deadline()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Every_frozen_party_opens_readonly_records_and_downloads_exact_pair_after_original_deadline(bool viewInline)
     {
         await using var f=await Flow.Create(fixture,true); f.Clock.Advance(f.Run.Signing.Envelope.ExpiresAt!.Value.AddSeconds(1)-f.Clock.GetUtcNow());
+        f.App.Services.GetRequiredService<QuillSign.Documents.PdfFilePresentationOptions>().ViewInsteadOfDownload=viewInline;
         f.Run.Seal.Options.Pfx.Path="unavailable";
         var parties=new List<(PartyType Type,Guid? Id)> {(PartyType.Sender,null)};
         await using(var db=fixture.Open()) {
@@ -38,7 +41,9 @@ public sealed class CompletionReaderPageTests(SqlDatabaseFixture fixture) : ICla
             }
             Assert.DoesNotContain(f.Cookies.Keys,x=>x is "QuillSign.Sender" or "QuillSign.Signer"); Assert.NotNull(await Used(link));
             var reads=f.Store.Reads; var page=await Get(f,"/complete/"+f.PublicId); Assert.Equal(reads,f.Store.Reads);
-            Assert.Contains("Your completed records",page); Assert.Contains("Download certificate of completion",page);
+            Assert.Contains("Your completed records",page); Assert.Contains(viewInline ? "View certificate of completion" : "Download certificate of completion",page);
+            Assert.Equal(viewInline ? 2 : 0,Regex.Matches(page,"<form[^>]*target=\"_blank\"[^>]*>").Count);
+            if(viewInline)Assert.Contains("rel=\"noopener noreferrer\"",page);
             Assert.DoesNotContain(f.Cookies[CompletionReaderBrowser.ReceiptCookie],page); Assert.DoesNotContain(link.RawToken,page);
             foreach(var kind in new[]{"executed","certificate"}) {
                 var count=await f.Count(); using(var unprepared=await f.Client.GetAsync(Resource(f,kind)))Assert.Equal(HttpStatusCode.NotFound,unprepared.StatusCode); Assert.Equal(count,await f.Count());
@@ -47,7 +52,8 @@ public sealed class CompletionReaderPageTests(SqlDatabaseFixture fixture) : ICla
                 Assert.Equal(count+1,await f.Count()); var grants=f.Cookies.ToDictionary(); var audits=await Audits(f);
                 using(var pdf=await f.Client.GetAsync(Resource(f,kind))) {
                     f.Take(pdf); Assert.Equal(HttpStatusCode.OK,pdf.StatusCode);Assert.Equal(kind=="executed" ? f.Published.ExecutedBytes : f.Published.CertificateBytes,await pdf.Content.ReadAsByteArrayAsync());
-                    Assert.Equal("attachment",pdf.Content.Headers.ContentDisposition!.DispositionType); Assert.True(pdf.Headers.CacheControl!.NoStore);
+                    Assert.Equal(viewInline ? "inline" : "attachment",pdf.Content.Headers.ContentDisposition!.DispositionType); Assert.True(pdf.Headers.CacheControl!.NoStore);
+                    Assert.Contains(kind,pdf.Content.Headers.ContentDisposition.FileName!);
                 }
                 Assert.Equal(audits,await Audits(f)); f.Restore(grants);
                 using(var replay=await f.Client.GetAsync(Resource(f,kind)))Assert.Equal(HttpStatusCode.OK,replay.StatusCode);
@@ -56,6 +62,12 @@ public sealed class CompletionReaderPageTests(SqlDatabaseFixture fixture) : ICla
             using(var edit=await f.Client.GetAsync("/draft/"+f.PublicId+"/review"))Assert.NotEqual(HttpStatusCode.OK,edit.StatusCode);
         }
         Assert.Equal(8,await f.Count());Assert.Equal(2,f.Store.Writes);Assert.Equal(2,f.Run.Seal.Requests);
+        f.Clock.Advance(TimeSpan.FromHours(1));
+        foreach(var kind in new[]{"executed","certificate"}) {
+            using var expired=await f.Client.GetAsync(Resource(f,kind));
+            Assert.Equal(HttpStatusCode.NotFound,expired.StatusCode);Assert.Null(expired.Content.Headers.ContentDisposition);
+        }
+        Assert.Equal(8,await f.Count());
     }
 
     internal static async Task<CompletionAccessLink> Issue(Flow f,PartyType type=PartyType.Sender,Guid? id=null) {
