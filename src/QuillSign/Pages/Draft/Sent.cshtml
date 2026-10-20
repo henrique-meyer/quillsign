@@ -21,8 +21,8 @@ else if(Model.Correction?.Blocked is { } correctionBlocked) {<p>@QuillSign.Pages
 @if(Model.Final is { } final) {
 <section aria-labelledby="final-heading"><h2 id="final-heading">Final packet</h2>
 <p>Completed at @final.CompletedAt.ToString("u"). Save both files for your records. These downloads verify the saved packet before serving it.</p>
-<form method="post" asp-page-handler="Download"><input type="hidden" name="kind" value="executed" /><button type="submit">Download executed PDF</button></form>
-<form method="post" asp-page-handler="Download"><input type="hidden" name="kind" value="certificate" /><button type="submit">Download certificate of completion</button></form>
+<form method="post" asp-page-handler="Download" pdf-file-action><input type="hidden" name="kind" value="executed" /><button type="submit" pdf-file-label="executed PDF">Download executed PDF</button></form>
+<form method="post" asp-page-handler="Download" pdf-file-action><input type="hidden" name="kind" value="certificate" /><button type="submit" pdf-file-label="certificate of completion">Download certificate of completion</button></form>
 @if(final.RetainedUntil is { } until) { <p>Server retention ends at @until.ToString("u"). Save your copies before then.</p> }
 <p>Downloads use your current verified session. Preparing a download does not confirm receipt or saving. Completion email delivery is not confirmed by this page.</p></section>
 }

@@ -24,7 +24,7 @@ else { <p>Your current adopted marks were verified.</p> }
 <div class="pdf-toolbar" aria-label="PDF controls"><button type="button" id="previous-page" disabled aria-label="Previous page">Previous</button><span id="page-number" aria-live="polite">Loading…</span><button type="button" id="next-page" disabled aria-label="Next page">Next</button><label for="pdf-zoom">Zoom</label><select id="pdf-zoom"><option value="fit">Fit width</option><option value="1">100%</option><option value="2">200%</option></select></div>
 <p id="preview-status" role="status">Loading exact review PDF…</p>
 <div id="pdf-preview" class="pdf-preview" data-url="/sign/@data.Snapshot.PublicId/review?handler=Pdf" data-load-error="This exact review is unavailable or changed. Check your saved entries and prepare it again." aria-label="Exact review PDF"><div class="pdf-page"><canvas aria-label="Review PDF page"></canvas><div class="textLayer"></div></div></div>
-<p><a asp-page-handler="Pdf" asp-route-download="true">Download exact review PDF</a> · <a asp-page-handler="Pdf" target="_blank" rel="noopener">Open exact PDF in a new tab</a></p>
+<p><a asp-page-handler="Pdf" asp-route-download="true" pdf-file-action pdf-file-label="exact review PDF">Download exact review PDF</a> · <a asp-page-handler="Pdf" target="_blank" rel="noopener">Open exact PDF in a new tab</a></p>
 <p>If the preview is unavailable, download and open this PDF in a viewer. Do not Finish unless you can review the exact copy.</p>
 <form method="post" asp-page-handler="Finish" id="finish-form">
 <input type="hidden" name="StatementVersion" value="@SignerFinishStatement.Version" />
