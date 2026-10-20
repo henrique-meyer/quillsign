@@ -81,6 +81,23 @@ public sealed class ProductionRetentionAdmissionContractTests
     }
 
     [Fact]
+    public void Production_disclosures_are_canonical_LF_with_identical_hashes_for_operator_line_endings()
+    {
+        var plan=ProductionRetentionAdmission.Prepare("sender@example.invalid",Now,Settings(),Policies());var e=plan.Envelope;
+        var frozen=ProductionRetentionPolicyContract.Freeze(e.Id,ProductionRetentionLedger.Seconds(Now),plan.Policy!);
+        var enrolled=new VerifiedProductionRetention(frozen,Now,Now,1,new string('0',64));
+        byte[]? expected=null;
+        foreach(var newline in new[]{"\n","\r\n","\r"}) {
+            var policies=Policies();policies.RetentionNotice="Synthetic first line."+newline+"Synthetic second line.";
+            var result=ProductionRetentionDisclosure.Build(e,"Synthetic NO AGREEMENT",enrolled,policies);
+            Assert.DoesNotContain('\r',ProductionRetentionDisclosure.Notice(enrolled));
+            Assert.DoesNotContain('\r',result.Text);Assert.True(ElectronicRecordDisclosure.Verify(result));
+            Assert.Contains("Synthetic first line.\nSynthetic second line.",result.Text);
+            expected??=result.Sha256;Assert.Equal(expected,result.Sha256);
+        }
+    }
+
+    [Fact]
     public void Indefinite_retention_is_explicit_and_does_not_become_a_case_hold_or_erasure_promise()
     {
         var options=Settings();options.Production.CompletedDays=0;

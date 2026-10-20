@@ -72,6 +72,6 @@ internal static class ProductionRetentionDisclosure
             Later settings changes do not replace this saved policy. Download and retain the copies delivered to you according to your own obligations.
             A retention deadline is not a promise of immediate physical erasure. Legal holds, storage protection, recovery, backups and service logs can affect preservation or deletion. Ordinary indefinite retention is separate from a case-specific legal hold.
 
-            """);
+            """).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
     }
 }
