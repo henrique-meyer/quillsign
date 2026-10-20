@@ -2037,6 +2037,8 @@ CI follow-up for QUILS-154: the full suite found three retention-access cases wh
 
 ### QUILS-155 — Verify isolated Azure immutable-witness provider prerequisites
 
+Historical-version checkpoint: exact native deletion refusal and fresh-process restored-SQL quarantine passed. A locked-policy shortening refusal then exposed an overly narrow test response matcher. Resume only the same authenticated four retained versions and closed failed prefix under a distinct bounded finalization phase; require the specific observed policy refusal plus unchanged exact protection readback, never an arbitrary HTTP error. Preserve every consumed counter and original clock, capture native error codes, and use explicit string date parsing in cleanup. No additional allowance or recurring service. The full pilot remains incomplete until all remaining provider probes and delayed cleanup pass.
+
 Status: In Progress. Assigned to ChatGPT Codex. Independent bounded provider-verification prerequisite for QUILS-147; it does not complete that story or activate production legal holds.
 
 Checkpoint: the approved two-resource deployment passed native verification. The first window stopped at a local SDK request guard before any data-plane request or blob write; temporary access was removed and verified. The properties-request regression is fixed and locally tested. The owner approved a replacement window of at most 30 minutes with an independent 25-minute stop, reusing the owned pilot container and exact scoped role within all original aggregate caps and allowance. Require a complete empty-container census before writes; preserve the failed ledger. No real protection result is claimed yet.
