@@ -26,6 +26,71 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
     private static readonly byte[] Content = "Synthetic object bytes - NO AGREEMENT"u8.ToArray();
     private static string Hash => Convert.ToHexStringLower(SHA256.HashData(Content));
 
+    [Fact]
+    public async Task Actual_document_upload_preview_and_replacement_bind_history_and_missing_old_bytes_stay_pending()
+    {
+        var client = new BlobServiceClient(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE"), new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03));
+        Assert.True(client.Uri.IsLoopback || client.Uri.Host == "azurite", "Only disposable local storage is allowed.");
+        foreach (var area in ProductionHoldObjectScope.Areas) await client.GetBlobContainerClient(area).CreateIfNotExistsAsync(PublicAccessType.None);
+        var e = new Envelope { SenderEmail = "document-sender@example.invalid", CreatedAt = clock.Now };
+        await using (var db = fixture.Open())
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(); db.Add(e);
+            await new ProductionRetentionLedger(db, new(db, clock), clock).PrepareNewLockedAsync(e, ProductionRetentionLedgerTests.Policy());
+            e.SenderVerifiedAt = clock.Now; await db.SaveChangesAsync(); await tx.CommitAsync();
+        }
+        var sender = QuillSign.Sender.SenderConfiguration.Principal(new(e.Id, e.PublicId, e.SenderEmail));
+        var store = new DocumentWorkflowTests.FaultStore(new AzureBlobStore(client, 25 * 1024 * 1024, true));
+        async Task<Envelope> State() { await using var db = fixture.Open(); return await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == e.Id); }
+        async Task<bool> Upload(byte[] bytes, bool confirm)
+        {
+            var before = await State(); await using var db = fixture.Open(); var options = new DocumentOptions();
+            var work = new DocumentWorkflow(db, store, new(options), options, new(db, clock), clock,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<DocumentWorkflow>.Instance, new());
+            if (confirm) return await work.ConfirmAsync(sender, e.PublicId, before.RowVersion, before.PdfBlob!, true, null, null, default);
+            using var input = new MemoryStream(bytes); return await work.UploadAsync(sender, e.PublicId, before.RowVersion, "synthetic.pdf", input, bytes.Length, null, null, default);
+        }
+        try
+        {
+            Assert.True(await Upload(PdfFixtures.Create(text: "Synthetic first NO AGREEMENT"), false));
+            Assert.True(await Upload([], true));
+            var request = await Hold(e.Id, clock, keys); ProductionHoldObjectSnapshot snapshot;
+            await using (var db = fixture.Open())
+            {
+                await using var tx = await db.Database.BeginTransactionAsync();
+                snapshot = await new ProductionHoldObjectInventory(db, keys, clock, new AzureProductionHoldObjectSource(client))
+                    .CaptureLockedAsync(e.Id, request.Current.Revision, request.Current.FenceHash!);
+            }
+            Assert.Equal(2, ProductionHoldObjectInventory.OpenVerified(snapshot, keys, clock).Length);
+            using (var saved = ProductionHoldSqlInventory.OpenVerified(snapshot.Sql, keys))
+            {
+                var root = JsonNode.Parse(saved.RootElement.GetRawText())!.AsObject();
+                var tail = root["Tables"]!.AsArray().Single(x => x!["Table"]!.GetValue<string>() == "AuditEvents")!["Rows"]!.AsArray()
+                    .Single(x => x!["Event"]!.GetValue<string>() == "preview_confirmed")!;
+                var row = tail.Deserialize<AuditEvent>(new JsonSerializerOptions { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } })!;
+                var data = JsonNode.Parse(row.DataJson)!; data["document"] = Guid.NewGuid().ToString("N"); row.DataJson = data.ToJsonString(); row.Hash = AuditHash.Compute(row);
+                tail["DataJson"] = row.DataJson; tail["Hash"] = Convert.ToBase64String(row.Hash);
+                var substituted = Rebind(snapshot, root, keys);
+                using (ProductionHoldSqlInventory.OpenVerified(substituted.Sql, keys)) { }
+                Assert.Throws<InvalidDataException>(() => ProductionHoldObjectInventory.OpenVerified(substituted, keys, clock));
+            }
+            var first = await State();
+            Assert.True(await Upload(PdfFixtures.Create(2, text: "Synthetic replacement NO AGREEMENT"), false));
+            Assert.True(await Upload([], true));
+            // Current workflow cleanup is still outside the future hold fence.
+            // Missing old evidence must fail preservation, not be replaced by
+            // the newer valid PDF or silently dropped from the audit graph.
+            Assert.False((await client.GetBlobContainerClient("originals").GetBlobClient($"{e.Id:N}/{first.OriginalBlob}").ExistsAsync()).Value);
+            await using var current = fixture.Open(); await using var currentTx = await current.Database.BeginTransactionAsync();
+            await Assert.ThrowsAsync<InvalidDataException>(() => new ProductionHoldObjectInventory(current, keys, clock, new AzureProductionHoldObjectSource(client))
+                .CaptureLockedAsync(e.Id, request.Current.Revision, request.Current.FenceHash!));
+            var pending = await new ProductionHoldRequests(current, keys, clock).ReadLockedAsync(e.Id);
+            Assert.True(pending.BlocksDeletion); Assert.Equal(request.Current.Revision, pending.Revision); Assert.Single(pending.Holds);
+            Assert.False(await current.AuthTokens.AnyAsync(x => x.EnvelopeId == e.Id));
+        }
+        finally { foreach (var blob in store.Created) await store.Inner.DeleteAsync(sender, blob); }
+    }
+
     [Theory]
     [InlineData(false)][InlineData(true)]
     public async Task Full_tail_and_closed_owned_mail_registry_are_checked_in_capture_and_authenticated_replay(bool unknownMail)
