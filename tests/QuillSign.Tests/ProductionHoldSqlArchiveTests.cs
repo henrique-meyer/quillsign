@@ -21,6 +21,77 @@ namespace QuillSign.Tests;
 public sealed class ProductionHoldSqlArchiveTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
     private static readonly byte[] Raw = "Synthetic source object - NO AGREEMENT"u8.ToArray();
+    [Fact]
+    public async Task Frozen_bundle_plan_owns_exact_restart_payload_and_uses_the_same_archive_addresses()
+    {
+        await using var run = await Run.Create(fixture); var (inventory, source) = await Inventory(run, "version");
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        var decoded = ProductionHoldBundlePlan.OpenVerified(plan, run.Keys, run.Time);
+        var repeated = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, plan.PlanId, inventory);
+        Assert.Equal(plan.Sha256, repeated.Sha256);
+        Assert.Equal(3, decoded.Items.Length); Assert.Equal(run.Capability.PlaceCommandId, decoded.PlaceCommandId);
+        Assert.Equal(inventory.Sql.ProtectedPayload, decoded.Snapshot.Sql.ProtectedPayload);
+        Assert.Equal(inventory.ProtectedManifest, decoded.Snapshot.ProtectedManifest);
+        var sql = await ProductionHoldSqlArchiveCapability.AuthorizeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, decoded.Snapshot.Sql);
+        var manifest = await ProductionHoldBundleArchiveCapability.AuthorizeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, decoded.Snapshot);
+        var raw = await ProductionHoldBundleArchiveCapability.AuthorizeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, decoded.Snapshot, source.Address);
+        Assert.Equal(sql.Path, Assert.Single(decoded.Items, x => x.Kind == "sql").Path);
+        Assert.Equal(manifest.Path, Assert.Single(decoded.Items, x => x.Kind == "manifest").Path);
+        Assert.Equal(raw.Path, Assert.Single(decoded.Items, x => x.Kind == "object").Path);
+        inventory.ProtectedManifest[0] ^= 1; inventory.Sql.ProtectedPayload[0] ^= 1;
+        decoded.Snapshot.ProtectedManifest[0] ^= 1;
+        run.Time.Now = run.Time.Now.AddMinutes(11);
+        var recovered = ProductionHoldBundlePlan.OpenVerified(plan, run.Keys, run.Time);
+        var fresh = await ProductionHoldBundleArchiveCapability.AuthorizeLockedAsync(run.Db, run.Keys, run.Time, plan.HoldId, recovered.Snapshot, source.Address);
+        Assert.Equal(raw.Path, fresh.Path); Assert.Equal(raw.Sha256, fresh.Sha256);
+        Assert.Equal(plan.PlanId, recovered.PlanId); Assert.Equal(plan.Sha256, Convert.ToHexStringLower(SHA256.HashData(
+            run.Keys.CreateProtector(ProductionHoldBundlePlan.Version, plan.RecordId.ToString("N"), plan.PlanId.ToString("N")).Unprotect(plan.Payload))));
+    }
+
+    [Theory]
+    [InlineData("record")][InlineData("hold")][InlineData("plan")][InlineData("hash")][InlineData("cipher")][InlineData("empty")][InlineData("keys")]
+    public async Task Frozen_plan_rejects_foreign_metadata_ciphertext_and_missing_historical_keys(string fault)
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        plan = fault switch {
+            "record" => plan with { RecordId = Guid.NewGuid() }, "hold" => plan with { HoldId = Guid.NewGuid() },
+            "plan" => plan with { PlanId = Guid.NewGuid() }, "hash" => plan with { Sha256 = new string('0', 64) },
+            "empty" => plan with { Payload = [] }, _ => plan };
+        if (fault == "cipher") plan.Payload[0] ^= 1;
+        var error = Record.Exception(() => ProductionHoldBundlePlan.OpenVerified(plan, fault == "keys" ? new EphemeralDataProtectionProvider() : run.Keys, run.Time));
+        Assert.True(error is CryptographicException or InvalidDataException, error?.ToString());
+    }
+
+    [Theory]
+    [InlineData("path")][InlineData("hash")][InlineData("length")][InlineData("source")][InlineData("kind")][InlineData("missing")][InlineData("placement")]
+    public async Task Even_authenticated_plan_items_must_match_the_exact_complete_manifest_and_placement(string fault)
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        var plan = await ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory);
+        var body = ProductionHoldBundlePlan.OpenVerified(plan, run.Keys, run.Time);
+        var index = Array.FindIndex(body.Items, x => x.Kind == "object"); var item = body.Items[index];
+        body.Items[index] = fault switch {
+            "path" => item with { Path = item.Path + "-different" }, "hash" => item with { Sha256 = new string('0', 64) },
+            "length" => item with { Length = item.Length + 1 }, "source" => item with { Source = item.Source! with { VersionId = "other-version" } },
+            "kind" => item with { Kind = "sql" }, _ => item };
+        if (fault == "missing") body = body with { Items = body.Items[..^1] };
+        if (fault == "placement") body = body with { PlaceCommandId = Guid.NewGuid() };
+        var plain = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(body);
+        plan = plan with { Sha256 = Convert.ToHexStringLower(SHA256.HashData(plain)), Payload = run.Keys.CreateProtector(
+            ProductionHoldBundlePlan.Version, plan.RecordId.ToString("N"), plan.PlanId.ToString("N")).Protect(plain) };
+        Assert.Throws<InvalidDataException>(() => ProductionHoldBundlePlan.OpenVerified(plan, run.Keys, run.Time));
+    }
+
+    [Fact]
+    public async Task Freeze_never_authorizes_a_stale_business_capture_or_an_empty_plan_identity()
+    {
+        await using var run = await Run.Create(fixture); var (inventory, _) = await Inventory(run, "version");
+        await Assert.ThrowsAsync<InvalidDataException>(() => ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.Empty, inventory));
+        await run.Db.Envelopes.Where(x => x.Id == run.Sql.RecordId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Message, "Changed after capture"));
+        await Assert.ThrowsAsync<DocumentConflictException>(() => ProductionHoldBundlePlan.FreezeLockedAsync(run.Db, run.Keys, run.Time, run.Capability.HoldId, Guid.NewGuid(), inventory));
+    }
+
     [Theory]
     [InlineData("manifest")][InlineData("version")][InlineData("snapshot")][InlineData("plain")]
     public async Task Manifest_and_raw_source_archives_bind_the_same_SQL_inventory_and_only_exact_scoped_bytes(string kind)

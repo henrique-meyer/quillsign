@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using QuillSign.Data;
 using QuillSign.Documents;
@@ -39,17 +38,15 @@ internal sealed class ProductionHoldBundleArchiveCapability : IProductionHoldArc
         RecordId = snapshot.RecordId; HoldId = hold.HoldId; PlaceCommandId = hold.PlacementCommandId; Revision = snapshot.Revision;
         FenceHash = snapshot.FenceHash; SqlStateSha256 = snapshot.SqlStateSha256; SqlPayloadSha256 = snapshot.SqlPayloadSha256; ManifestSha256 = snapshot.ManifestSha256;
         this.time = time; issued = time.GetUtcNow(); expires = issued.AddMinutes(10);
-        var prefix = $"production-holds/{RecordId:N}/{HoldId:N}/{PlaceCommandId:N}/";
         if (item is null)
         {
             memory = snapshot.ProtectedManifest.ToArray(); Length = memory.LongLength; Sha256 = Convert.ToHexStringLower(SHA256.HashData(memory));
-            Path = prefix + "manifests/" + Sha256;
+            Path = ProductionHoldArchivePaths.Manifest(RecordId, HoldId, PlaceCommandId, Sha256);
         }
         else
         {
             Source = item.Address; Length = item.Address.Length; Sha256 = item.Sha256;
-            var addressHash = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(item.Address)));
-            Path = prefix + "objects/" + addressHash + "/" + Sha256;
+            Path = ProductionHoldArchivePaths.Object(RecordId, HoldId, PlaceCommandId, item.Address, Sha256);
         }
     }
     // A null selection means only the exact protected manifest. Every raw source

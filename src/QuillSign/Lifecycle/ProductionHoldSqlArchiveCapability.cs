@@ -22,7 +22,7 @@ internal sealed class ProductionHoldSqlArchiveCapability : IProductionHoldArchiv
     internal string CiphertextSha256 { get; }
     internal long Length => payload.LongLength;
     // Outside recordGuidN/, so archives never recursively enter a source census.
-    internal string Path => $"production-holds/{RecordId:N}/{HoldId:N}/{PlaceCommandId:N}/sql/{CiphertextSha256}";
+    internal string Path => ProductionHoldArchivePaths.Sql(RecordId, HoldId, PlaceCommandId, CiphertextSha256);
 
     private ProductionHoldSqlArchiveCapability(ProductionHoldSqlSnapshot sql, PendingProductionHold hold, TimeProvider time)
     {
