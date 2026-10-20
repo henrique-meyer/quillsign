@@ -40,7 +40,14 @@ public sealed class SenderSendReadiness(SenderAvailability availability,Electron
         if(identity is null)return new(false,"This verified sender session is unavailable.",null);
         if(draft.ExpiresAt<=time.GetUtcNow())return new(false,"This draft has expired. Start a new request.",null);
         DisclosureSnapshot snapshot;
-        try { snapshot=disclosures.Build(draft.PublicId,draft.Title,identity.Value.Email,draft.DemoDisclosure); }
+        try {
+            if(draft.ProductionDisclosure is {} production) {
+                if(draft.IsDemo || production.RecordId!=identity.Value.Id || production.PublicId!=draft.PublicId || production.SenderEmail!=identity.Value.Email)
+                    throw new DisclosureRejectedException("Use this verified production record.");
+                if(production.DraftDeadline<=time.GetUtcNow())return new(false,"This draft has reached its fixed retention deadline.",null);
+                snapshot=production.Build(disclosures,draft.Title!);
+            } else snapshot=disclosures.Build(draft.PublicId,draft.Title,identity.Value.Email,draft.DemoDisclosure);
+        }
         catch(DisclosureRejectedException) { return new(false,"Electronic-record disclosure settings or document details are incomplete. Check the draft or contact this instance's operator.",null); }
         SignerReminderPolicy policy;
         try {policy=(reminders??new()).Freeze(draft.IsDemo);}

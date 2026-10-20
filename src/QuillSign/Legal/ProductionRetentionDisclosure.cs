@@ -6,6 +6,15 @@ using QuillSign.Lifecycle;
 
 namespace QuillSign.Legal;
 
+internal sealed record ProductionDisclosureContext(Guid RecordId,string PublicId,string SenderEmail,VerifiedProductionRetention Retention)
+{
+    internal static ProductionDisclosureContext? From(Envelope envelope,VerifiedProductionRetention? retention)
+        =>retention is null ? null : new(envelope.Id,envelope.PublicId,envelope.SenderEmail,retention);
+    internal DateTimeOffset DraftDeadline=>ProductionRetentionPolicyContract.AddDays(Retention.OriginalCreatedAt,Retention.Snapshot.Policy.AbandonedDraftDays);
+    internal DisclosureSnapshot Build(ElectronicRecordDisclosure builder,string title)=>builder.BuildProduction(new Envelope {
+        Id=RecordId,PublicId=PublicId,SenderEmail=SenderEmail,CreatedAt=Retention.OriginalCreatedAt,IsDemo=false },title,Retention);
+}
+
 // Pure text snapshot builder. Only callers that already verified enrollment may
 // use its result. Text and hashes confer no session, storage or deletion authority.
 internal static class ProductionRetentionDisclosure

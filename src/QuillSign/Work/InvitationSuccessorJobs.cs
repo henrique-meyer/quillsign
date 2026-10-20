@@ -89,7 +89,7 @@ public sealed class InvitationSuccessorJobs(QuillSignDbContext db, SignerAccess 
             context.Identity.DocumentHash != revision.DocumentSha256 || context.Identity.DisclosureHash != revision.DisclosureSha256) throw Invalid();
         if (await db.Suppressions.AnyAsync(x => x.Email == party.Email, ct)) throw new RecipientSuppressedException();
         var counterUntil = DayEnd(revision.ChangedAt);
-        var retention = await DocumentRetentionAccess.ReadAsync(db, parent, ct);
+        var retention = await DocumentRetentionAccess.ReadAsync(db, parent, time, ct);
         if (retention < counterUntil || retention <= time.GetUtcNow()) throw Invalid();
         var deadline = parent.ExpiresAt is { } expires && expires < counterUntil ? expires : counterUntil;
         if (retention is { } end && end < deadline) deadline = end;

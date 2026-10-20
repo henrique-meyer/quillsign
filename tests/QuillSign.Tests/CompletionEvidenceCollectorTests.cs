@@ -263,7 +263,8 @@ public sealed class CompletionEvidenceCollectorTests(SqlDatabaseFixture fixture)
                 await db.SaveChangesAsync();
             }
             await run.Refresh();var sendReview=await run.Use((DraftReview r)=>r.GetAsync(run.Sender,run.Envelope.PublicId));
-            Assert.NotNull(await run.Use((SendDraftWorkflow s)=>s.SendAsync(run.Sender,run.Envelope.PublicId,run.Envelope.RowVersion,true,true,SenderSendStatement.Version,"127.0.0.1","Synthetic sender",reviewedRetentionSha256:sendReview!.RetentionSha256)));
+            var readiness=await run.Use((SenderSendReadiness r)=>r.ReadAsync(run.Sender,sendReview!));
+            Assert.NotNull(await run.Use((SendDraftWorkflow s)=>s.SendAsync(run.Sender,run.Envelope.PublicId,run.Envelope.RowVersion,true,true,SenderSendStatement.Version,"127.0.0.1","Synthetic sender",reviewedRetentionSha256:sendReview!.RetentionSha256,reviewedDisclosureSha256:readiness.Disclosure is null ? null : Convert.ToHexStringLower(readiness.Disclosure.Sha256))));
             var last=firstOnly ? 1 : 2;for(var i=1;i<=last;i++)if(signerOverride is null || !await signerOverride(run,i))await run.SignNext(i<last || publishLast,i<last || finishLast);
             await run.Refresh(); run.Probe=new(run.H.Blobs.Inner); return run;
         }

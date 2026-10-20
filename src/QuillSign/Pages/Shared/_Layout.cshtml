@@ -34,7 +34,11 @@
         @RenderBody()
         <footer>
             <p>Designed &amp; built by <a href="https://www.hmeyer.com">Henrique Meyer</a> · <a href="https://github.com/henrique-meyer/quillsign">Source on GitHub</a></p>
-            <p>Demo instance · Data will be purged periodically. Software provided as-is. Operators are responsible for checking suitability for their use case and jurisdiction.</p>
+            @if(Context.RequestServices.GetService<QuillSign.Lifecycle.RecordLifecycleOptions>()?.Mode=="Production") {
+                <p>Software provided as-is. Retention and access follow this operator's disclosed policies. Operators are responsible for checking suitability for their use case and jurisdiction.</p>
+            } else {
+                <p>Demo instance · Data will be purged periodically. Software provided as-is. Operators are responsible for checking suitability for their use case and jurisdiction.</p>
+            }
         </footer>
         <partial name="_Analytics" />
     </main>

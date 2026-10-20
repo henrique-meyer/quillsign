@@ -8,6 +8,7 @@ using QuillSign.Signing;
 using QuillSign.Storage;
 using QuillSign.Legal;
 using QuillSign.Work;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Documents;
 
@@ -23,6 +24,7 @@ public sealed record DraftReviewSnapshot(string PublicId, string Version, string
     public DateTimeOffset? RetentionDeleteAfter {get;init;}
     public string? RetentionSha256 {get;init;}
     internal DemoDisclosureContext? DemoDisclosure {get;init;}
+    internal ProductionDisclosureContext? ProductionDisclosure {get;init;}
 }
 
 public sealed class DraftReview(QuillSignDbContext db,TimeProvider? time=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
@@ -48,8 +50,11 @@ public sealed class DraftReview(QuillSignDbContext db,TimeProvider? time=null,Qu
         var result = CheckPreparation(envelope, signers, fields, recipients);
         var limit=await RetentionSigningDeadline.ReadAsync(db,envelope,ct);
         var purgePrepared=limit.Policy is null || await DemoPurgeJobs.IsPreparedLockedAsync(db,limit.Policy,ct);
+        var production=await ProductionRecordRetentionAccess.EnrollmentAsync(db,envelope,time??TimeProvider.System,ct);
         result=result with {ExpiresAt=limit.Effective,RetentionDeleteAfter=limit.Policy?.DeleteAfter,RetentionSha256=limit.Digest,
             DemoDisclosure=purgePrepared ? DemoDisclosureContext.From(envelope.IsDemo,envelope.PublicId,limit.Policy) : null};
+        if(production is not null)result=result with {RetentionSha256=ProductionRetentionPolicyContract.Digest(production.Snapshot),
+            ProductionDisclosure=ProductionDisclosureContext.From(envelope,production)};
         if(!purgePrepared)result=result with {Errors=result.Errors.Append(new PreparationIssue("This demo document's retention service needs attention before sending.","details")).ToArray()};
         if(limit.Policy is not null && limit.Effective<=(time ?? TimeProvider.System).GetUtcNow())
             result=result with {Errors=result.Errors.Append(new PreparationIssue("This demo document has reached its signing or retention deadline.","details")).ToArray()};

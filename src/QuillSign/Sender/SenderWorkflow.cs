@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Email;
 using QuillSign.Work;
+using QuillSign.Legal;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Sender;
 
@@ -26,12 +28,18 @@ public sealed class SenderAvailability(EmailOptions email, WorkOptions work, ICo
 }
 
 public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options, SenderAvailability availability,
-    Func<EmailOutboxWriter> getOutbox, AuditWriter audit, TimeProvider time,Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
+    Func<EmailOutboxWriter> getOutbox, AuditWriter audit, TimeProvider time,Email.Pilot.EmailPilotReadBounds? pilotBounds=null,
+    RecordLifecycleOptions? lifecycle=null,ElectronicRecordOptions? electronicRecords=null)
 {
     public async Task<SenderRequestOutcome> RequestAsync(string address, string? ip, string? userAgent, CancellationToken cancellationToken = default)
     {
         var email = EmailAddress.Normalize(address);
         if (!availability.CanSend) return SenderRequestOutcome.Unavailable;
+        if(lifecycle is not null) {
+            try {_=ProductionRetentionAdmission.Prepare(email,time.GetUtcNow(),lifecycle,electronicRecords??new());}
+            catch(Exception error) when(error is InvalidOperationException or InvalidDataException or DisclosureRejectedException or ArgumentException)
+            {return SenderRequestOutcome.Unavailable;}
+        }
         var outbox = getOutbox();
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(cancellationToken), cancellationToken);
         Guid workId;
@@ -47,9 +55,11 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
             var start = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
             if (await db.Envelopes.CountAsync(x => x.SenderEmail == email && x.CreatedAt >= start, cancellationToken) >= options.DailyRequests ||
                 await db.Suppressions.AnyAsync(x => x.Email == email, cancellationToken)) return SenderRequestOutcome.Neutral;
-            var envelope = new Envelope { SenderEmail = email, CreatedAt = now, IsDemo = true };
-            db.Envelopes.Add(envelope);
-            await db.SaveChangesAsync(cancellationToken);
+            Envelope envelope;
+            if(lifecycle is null) {
+                envelope = new Envelope { SenderEmail = email, CreatedAt = now, IsDemo = true };
+                db.Envelopes.Add(envelope);await db.SaveChangesAsync(cancellationToken);
+            } else envelope=await new ProductionRetentionAdmission(db,audit,time).CreateLockedAsync(email,lifecycle,electronicRecords??new(),cancellationToken);
             await audit.AppendAsync(envelope.Id, "draft_created", email, ip, userAgent, cancellationToken);
             await audit.AppendAsync(envelope.Id, "sender_verification_requested", email, ip, userAgent, cancellationToken);
             workId = await outbox.PrepareVerificationAsync(envelope.Id, email, cancellationToken);
@@ -75,8 +85,12 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
         if (envelope is null || envelope.Status != EnvelopeStatus.Draft || envelope.SenderVerifiedAt is not null ||
             !string.Equals(envelope.SenderEmail, token.Email, StringComparison.OrdinalIgnoreCase)) return null;
         DateTimeOffset? accessEnd=null;
-        try {if(pilotBounds is not null)accessEnd=await pilotBounds.ReadAsync(envelope,cancellationToken);}
+        try {
+            accessEnd=await QuillSign.Documents.DocumentRetentionAccess.ReadAsync(db,envelope,time,cancellationToken,pilotBounds);
+            QuillSign.Documents.DocumentRetentionAccess.Check(accessEnd,time);
+        }
         catch(Email.Pilot.EmailPilotAccessUnavailableException){return null;}
+        catch(QuillSign.Documents.DocumentRetentionExpiredException){return null;}
         token.UsedAt = now;
         envelope.SenderVerifiedAt = now;
         await audit.AppendAsync(envelope.Id, "sender_email_verified", token.Email, ip, userAgent, cancellationToken);

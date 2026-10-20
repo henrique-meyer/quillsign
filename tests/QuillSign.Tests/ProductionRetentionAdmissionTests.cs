@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using QuillSign.Data;
+using QuillSign.Documents;
 using QuillSign.Legal;
 using QuillSign.Lifecycle;
 
@@ -103,6 +105,30 @@ public sealed class ProductionRetentionAdmissionContractTests
 
 public sealed class ProductionRetentionAdmissionSqlTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
+    [Fact]
+    public async Task Production_Send_requires_the_exact_reviewed_disclosure_and_recovery_uses_only_its_saved_bytes()
+    {
+        await using var h=await SendDraftWorkflowTests.Harness.Create(fixture,browser:true,
+            productionRetention:ProductionRetentionAdmissionContractTests.Settings().Production);
+        using var scope=h.App.Services.CreateScope();
+        var review=(await scope.ServiceProvider.GetRequiredService<DraftReview>().GetAsync(h.Principal,h.Envelope.PublicId))!;
+        var readiness=await scope.ServiceProvider.GetRequiredService<QuillSign.Sender.SenderSendReadiness>().ReadAsync(h.Principal,review);
+        var reviewed=Convert.ToHexStringLower(readiness.Disclosure!.Sha256);var writes=h.Blobs.Created.Count;
+        var policies=scope.ServiceProvider.GetRequiredService<ElectronicRecordOptions>();policies.PaperCopyFees="Synthetic changed operator fees.";
+        await Assert.ThrowsAsync<DocumentConflictException>(()=>h.Send(reviewedDisclosureSha256:reviewed));
+        await Assert.ThrowsAsync<DocumentConflictException>(()=>h.Send(reviewedDisclosureSha256:""));
+        await using var db=fixture.Open();Assert.Equal(writes,h.Blobs.Created.Count);
+        Assert.Equal(EnvelopeStatus.Draft,(await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==h.Envelope.Id)).Status);
+        Assert.False(await db.EmailOutbox.AnyAsync(x=>x.EnvelopeId==h.Envelope.Id));
+        Assert.NotNull(await h.Send());
+        var saved=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==h.Envelope.Id);
+        Assert.Contains("Synthetic changed operator fees.",saved.ErsdText!);Assert.NotEqual(reviewed,Convert.ToHexStringLower(saved.ErsdSha256!));
+        policies.PaperCopyFees="Synthetic later policy, never reinterpret sent evidence.";
+        Assert.NotNull(await h.Send());
+        await Assert.ThrowsAsync<DocumentConflictException>(()=>h.Send(reviewedDisclosureSha256:reviewed));
+        Assert.Equal(saved.ErsdText,(await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==h.Envelope.Id)).ErsdText);
+    }
+
     private sealed class Clock : TimeProvider { public override DateTimeOffset GetUtcNow()=>ProductionRetentionAdmissionContractTests.Now; }
     [Fact]
     public async Task Creation_and_rollback_share_the_normal_request_transaction_without_implicit_verification()

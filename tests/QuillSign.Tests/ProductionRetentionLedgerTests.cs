@@ -142,6 +142,13 @@ public sealed class ProductionRetentionLedgerTests(SqlDatabaseFixture fixture) :
         Assert.Equal(original.AddDays(days), ProductionRetentionLedger.ExactEligibleAt(enrolled, first));
         await using var db = fixture.Open(); Assert.Single(await db.ProductionRetentionTerminals.Where(x => x.EnvelopeId == h.Envelope.Id).ToArrayAsync());
         Assert.Single(await db.AuditEvents.Where(x => x.EnvelopeId == h.Envelope.Id && x.Event == ProductionRetentionLedger.TerminalEvent).ToArrayAsync());
+        // A pre-transition Sent DTO cannot hide the saved terminal deadline.
+        var deadline=await QuillSign.Documents.DocumentRetentionAccess.ReadAsync(db,h.Envelope,h.Clock,default);
+        Assert.Equal(original.AddDays(days),deadline);
+        h.Clock.Advance(deadline!.Value-h.Clock.GetUtcNow()-TimeSpan.FromTicks(1));
+        QuillSign.Documents.DocumentRetentionAccess.Check(deadline,h.Clock);
+        h.Clock.Advance(TimeSpan.FromTicks(1));
+        Assert.Throws<QuillSign.Documents.DocumentRetentionExpiredException>(()=>QuillSign.Documents.DocumentRetentionAccess.Check(deadline,h.Clock));
     }
 
     [Theory]
@@ -149,16 +156,24 @@ public sealed class ProductionRetentionLedgerTests(SqlDatabaseFixture fixture) :
     public async Task Terminal_rollback_or_unknown_commit_then_concurrent_recovery_preserves_one_anchor(bool lost)
     {
         await using var h = await Shared.Create(fixture, browser: true, productionRetention: Policy()); Assert.NotNull(await h.Send());
-        _ = await Close(h, "Void");
         await using var baseline = fixture.Open();
+        var before=await baseline.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==h.Envelope.Id);
+        var until=h.Clock.GetUtcNow().AddHours(1);
         var options = new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer(baseline.Database.GetConnectionString())
             .AddInterceptors(new Faults(ProductionRetentionLedger.TerminalEvent, lost));
         await using (var db = new QuillSignDbContext(options.Options))
         {
-            await using var tx = await db.Database.BeginTransactionAsync();
-            async Task CaptureAndCommit() { await Service(db, h.Clock).CaptureTerminalLockedAsync(h.Envelope.Id); await tx.CommitAsync(); }
-            if(lost)await Assert.ThrowsAsync<IOException>(CaptureAndCommit);else await Assert.ThrowsAsync<DbUpdateException>(CaptureAndCommit);
+            var operation=new SenderVoid(db,new(db,h.Clock),new(db,h.Clock),h.Clock);
+            Task<SenderVoidResult> CloseAndCommit()=>operation.VoidAsync(h.Principal,before.PublicId,until,before.RowVersion,
+                true,SenderVoidStatement.Version,"Synthetic faulted void",null,null);
+            if(lost)await Assert.ThrowsAsync<IOException>(CloseAndCommit);else await Assert.ThrowsAsync<DbUpdateException>(CloseAndCommit);
         }
+        Assert.Equal(lost ? EnvelopeStatus.Voided : EnvelopeStatus.Sent,
+            (await baseline.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==before.Id)).Status);
+        Assert.Equal(lost ? 1 : 0,await baseline.ProductionRetentionTerminals.CountAsync(x=>x.EnvelopeId==before.Id));
+        var retry=await new SenderVoid(baseline,new(baseline,h.Clock),new(baseline,h.Clock),h.Clock).VoidAsync(h.Principal,
+            before.PublicId,until,before.RowVersion,true,SenderVoidStatement.Version,"Synthetic faulted void",null,null);
+        Assert.Equal(lost ? SenderVoidOutcome.AlreadyVoided : SenderVoidOutcome.Voided,retry.Outcome);
         var results = await Task.WhenAll(Capture(h.Envelope.Id, h.Clock), Capture(h.Envelope.Id, h.Clock)); Assert.Equal(results[0], results[1]);
         Assert.Single(await baseline.ProductionRetentionTerminals.Where(x => x.EnvelopeId == h.Envelope.Id).ToArrayAsync());
     }

@@ -13,13 +13,13 @@ internal static class SenderPreparationRetention
     internal static async Task<DateTimeOffset?> ReadAsync(QuillSignDbContext db,Envelope envelope,TimeProvider time,CancellationToken ct,Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
     {
         DateTimeOffset? end;
-        try {end=await DocumentRetentionAccess.ReadAsync(db,envelope,ct,pilotBounds);}
+        try {end=await DocumentRetentionAccess.ReadAsync(db,envelope,time,ct,pilotBounds);}
         catch(InvalidDataException) {throw new PreparationRetentionEvidenceException();}
         DocumentRetentionAccess.Check(end,time);return end;
     }
     internal static int Status(Exception error)=>error is DocumentRetentionExpiredException ? 410 : 503;
     internal static string Message(Exception error)=>error is DocumentRetentionExpiredException ?
-        "This demo document has reached its retention deadline and is no longer available." :
+        "This document has reached its retention deadline and is no longer available." :
         "The saved document retention could not be verified. Retry later.";
 }
 

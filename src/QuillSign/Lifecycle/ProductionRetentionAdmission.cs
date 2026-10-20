@@ -5,8 +5,8 @@ using QuillSign.Legal;
 
 namespace QuillSign.Lifecycle;
 
-// Not bound to startup until the complete disclosure/publication/access integration
-// is available. A retention interval alone never selects production admission.
+// Deployment selection applies only to new ordinary records. A retention interval
+// alone never selects production admission or changes a historical record's mode.
 public sealed class RecordLifecycleOptions
 {
     public string Mode { get; set; } = "Demo";

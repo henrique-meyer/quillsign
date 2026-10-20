@@ -199,10 +199,11 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
         public WebApplication App = null!; public Envelope Envelope = null!; public Signer First = null!,Second = null!; public byte[] Source = [],Version = [];
         public Clock Clock = new(); public Faults Faults = new(); public FakeSender Sender = new(); public FaultBlobs Blobs = null!; public Signals Signals = null!;
         private QueueClient queue = null!; private BlobContainerClient hints = null!; private BlobClient keyBlob = null!;
+        private bool productionEnrolled;
         public ClaimsPrincipal Principal => SenderConfiguration.Principal(new(Envelope.Id,Envelope.PublicId,Envelope.SenderEmail));
         public static async Task<Harness> Create(SqlDatabaseFixture fixture,bool smtp = false,bool browser=false,int? browserPort=null,Func<VerifiedSigner?>? syntheticSigner=null,Action<IServiceCollection>? configure=null,QuillSign.Lifecycle.ProductionRetentionPolicyOptions? productionRetention=null)
         {
-            var run = new Harness(); var name = "sendtest-" + Guid.NewGuid().ToString("N"); var storage = Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
+            var run = new Harness {productionEnrolled=productionRetention is not null}; var name = "sendtest-" + Guid.NewGuid().ToString("N"); var storage = Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE")!;
             using var source = fixture.Open(); var connection = source.Database.GetConnectionString();
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ApplicationName = typeof(SendDraftWorkflow).Assembly.FullName,EnvironmentName = "Development",ContentRootPath = AppContext.BaseDirectory,
                 WebRootPath=browserPort is null ? null : Path.GetFullPath("../../../../../src/QuillSign/wwwroot",AppContext.BaseDirectory) }); builder.Logging.ClearProviders();
@@ -265,7 +266,21 @@ public sealed class SendDraftWorkflowTests(SqlDatabaseFixture fixture) : IClassF
             }
             return run;
         }
-        public async Task<SentDraft?> Send(bool acknowledged = true,string? reviewedRetentionSha256=null) { using var scope = App.Services.CreateScope(); return await scope.ServiceProvider.GetRequiredService<SendDraftWorkflow>().SendAsync(Principal,Envelope.PublicId,Version,acknowledged,true,SenderSendStatement.Version,"127.0.0.1","synthetic-send-test",reviewedRetentionSha256:reviewedRetentionSha256,reviewedReminderSha256:App.Services.GetRequiredService<SignerReminderOptions>().Freeze(Envelope.IsDemo).Sha256,reviewedReminderSchedulingVersion:SignerReminderEvidence.Version); }
+        public async Task<SentDraft?> Send(bool acknowledged = true,string? reviewedRetentionSha256=null,string? reviewedDisclosureSha256=null) {
+            using var scope = App.Services.CreateScope();
+            if(productionEnrolled && (reviewedRetentionSha256 is null || reviewedDisclosureSha256 is null)) {
+                var review=await new DraftReview(scope.ServiceProvider.GetRequiredService<QuillSignDbContext>(),Clock).GetAsync(Principal,Envelope.PublicId);
+                reviewedRetentionSha256??=review?.RetentionSha256;
+                if(review is not null) {
+                    var ready=await scope.ServiceProvider.GetRequiredService<SenderSendReadiness>().ReadAsync(Principal,review);
+                    reviewedDisclosureSha256??=ready.Disclosure is null ? null : Convert.ToHexStringLower(ready.Disclosure.Sha256);
+                } else {
+                    var saved=await scope.ServiceProvider.GetRequiredService<QuillSignDbContext>().Envelopes.AsNoTracking().SingleAsync(x=>x.Id==Envelope.Id);
+                    reviewedDisclosureSha256??=saved.ErsdSha256 is null ? null : Convert.ToHexStringLower(saved.ErsdSha256);
+                }
+            }
+            return await scope.ServiceProvider.GetRequiredService<SendDraftWorkflow>().SendAsync(Principal,Envelope.PublicId,Version,acknowledged,true,SenderSendStatement.Version,"127.0.0.1","synthetic-send-test",reviewedRetentionSha256:reviewedRetentionSha256,reviewedReminderSha256:App.Services.GetRequiredService<SignerReminderOptions>().Freeze(Envelope.IsDemo).Sha256,reviewedReminderSchedulingVersion:SignerReminderEvidence.Version,reviewedDisclosureSha256:reviewedDisclosureSha256);
+        }
         public async Task<bool> Once() { using var scope = App.Services.CreateScope(); return await scope.ServiceProvider.GetRequiredService<WorkProcessor>().RunOnceAsync(default); }
         public async Task<byte[]> Read(Guid id) { using var result = new MemoryStream(); await Blobs.Inner.CopyToAsync(Principal,new(Envelope.Id,DocumentBlobKind.Normalized,id),result); return result.ToArray(); }
         public async Task AssertUnsent(SqlDatabaseFixture fixture) { await using var db = fixture.Open(); var e = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == Envelope.Id); Assert.Equal(EnvelopeStatus.Draft,e.Status); Assert.Null(e.SentPdfBlob); Assert.Null(e.ErsdText); Assert.False(await db.EmailOutbox.AnyAsync(x => x.EnvelopeId == e.Id)); Assert.False(await db.AuditEvents.AnyAsync(x => x.EnvelopeId == e.Id && x.Event!="signer_added")); Assert.False(await db.AuthTokens.AnyAsync(x => x.EnvelopeId == e.Id)); }

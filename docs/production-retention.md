@@ -1,31 +1,24 @@
-# Production retention foundation
+# Frozen production retention
 
-QUILS-146 defines the policy contract for ordinary, non-demo records. QUILS-151 adds an internal persistence backend and schema; it is not registered with the running application. These foundations do not enable production enrollment, change existing retention, grant deletion authority or implement legal holds. QUILS-152 must integrate admission, disclosure, publication and access. The remaining production lifecycle stories in [the plan](plan.md#production-self-hosting-release-gate) remain required.
+Set `Records__Mode=Production` only with every `Records__Production__*` value and complete, truthful `ElectronicRecords__*` operator policies. The synthetic demo profile is rejected. Version and archive responsibility are operator text; the project supplies no production policy or recommended legal interval. The configuration example leaves those values empty. `Demo` remains the default.
 
-The operator explicitly supplies a version, archive responsibility and every interval. Completed records may have deliberately selected indefinite retention (`CompletedDays = 0`). Abandoned drafts and expired, declined and voided requests require finite positive intervals. There is no universal duration or demo default. These options are not yet bound to runtime configuration.
+An ordinary new production request atomically saves its immutable policy, exact original creation time and enrollment audit evidence before requesting email verification. Normal verification remains necessary. Changing settings affects future records; it cannot reclassify an existing demo, enroll an old record or change an existing production clock. The restricted demo pilot retains its separate admission rules.
 
-| Record state | Clock | Result |
-| --- | --- | --- |
-| Unsent abandoned draft | Original record creation | Finite draft interval |
-| Still signing | No terminal clock yet | Await terminal state; no deletion deadline |
-| Incomplete completion | Requires authoritative disposition/recovery | No automatic deletion deadline |
-| Completed | Actual completion | Finite completed interval or explicit indefinite retention |
-| Expired | Authoritative effective expiry | Finite expired interval |
-| Declined | Actual decline | Finite declined interval |
-| Voided | Actual void | Finite voided interval |
+| State | Retention clock |
+| --- | --- |
+| Unsent draft | Original creation plus the frozen abandoned-draft interval; document replacement does not restart it |
+| Signing pending or completion incomplete | No automatic retention deadline; session and signing deadlines still apply |
+| Expired | Effective signing expiry plus the frozen expired interval, even if maintenance executes later |
+| Declined | Actual authenticated decline plus the frozen declined interval |
+| Voided | Actual authenticated void plus the frozen voided interval |
+| Completed | Actual immutable publication plus the frozen completed interval; explicit `0` means indefinite preservation |
 
-The persistence backend verifies the exact record, original creation and terminal event/time under the existing envelope transaction and audit chain. In particular, a late expiry worker does not restart retention from its processing time. Incomplete completion requires recovery or an explicit reviewed disposition; worker failure alone must never make accepted signing evidence deletable. Operator visibility and disposition remain dependent work.
+All finite values are positive whole days, measured as elapsed durations. Exact original timestamps are retained alongside normalized audit/policy clocks. Operator text and the saved policy reference appear in the electronic-record disclosure reviewed at Send and later accepted by the signers. Send rejects a stale policy review. Historical disclosure and publication formats remain verifiable without rewriting their bytes.
 
-The draft rule is a creation-based maximum lifetime, not a sliding inactivity timer. Saves, replacement uploads and later settings changes cannot restart it. The integration must disclose and enforce that saved deadline before this rule is enabled.
+Terminal status alone is insufficient. The actual transition atomically captures one anchor bound to its authoritative evidence. Reads verify the saved enrollment and terminal prefix under the common record lock; missing, orphaned or conflicting provenance fails closed. Later operational access events neither renew a deadline nor invalidate the original bounded signing snapshot. Readers do not manufacture anchors or repair missing enrollment.
 
-Snapshot values are immutable and independent of later configuration. Stored snapshots use a bounded exact canonical representation and a SHA-256 digest for correlation with trusted provenance. A digest alone does not authenticate the record or authorize access, hold release or deletion. Missing/duplicate/unknown properties, unsupported versions, inconsistent times and unrepresentable deadlines fail closed. Capture UTC whole-second timestamps once at the trusted persistence boundary.
+Final publication binds its recipe to the authenticated production policy, verifies the exact sealed bytes and actual immutable protection, and rejects development write-once protection for production. Finite protection must cover the exact actual completion interval; an adapter may preserve longer, never shorter. Explicit indefinite preservation is separate from a case-specific legal hold. The application does not provision or shorten locked cloud protection through these settings.
 
-Enrollment occurs only while creating a new production record, in the same transaction as its insert and append-only enrollment evidence. Reads distinguish missing records, demo records and unenrolled historical records; they never silently enroll or migrate a historical document. A retry after an uncertain commit reads and verifies the original saved policy, rather than replacing it with current settings. The backend captures one immutable terminal anchor only through an explicit internal operation and verifies its authoritative transition again on reads and retries. A completed status alone is insufficient: recorded publication evidence must verify.
+Sender, signer, completed-record lookup, final-download and notification paths check the saved access deadline after their own authorization. A stale pre-transition record cannot hide a terminal deadline. Narrow final-read capabilities also expire during an in-flight read at a finite access cutoff. Preserved bytes, including indefinite preservation, do not renew an expired session or invitation or grant broader access.
 
-Exact original timestamps are retained alongside the second-normalized policy clock. Finite terminal durations use the exact original timestamp, so normalization cannot shorten the interval. Storage integration must round a protection deadline up if the provider cannot represent that precision. The backend grants no destructive capability, and normal startup does not call it. Installing the schema alone does not make an instance ready for real contracts.
-
-An eligibility date is not a statement that data has been deleted or may safely be deleted. Future maintenance must also verify active holds, current owned versions, immutable storage protection and destructive authority, and recover partial/uncertain outcomes. Indefinite retention is a policy choice, distinct from case-specific legal holds. No physical-erasure, backup, regulatory-compliance or real-use readiness claim is made by this contract.
-
-QUILS-152 is in progress. Its preparatory creation boundary validates an explicit record mode, all operator disclosure fields and the complete production policy before inserting a record. It copies policy values before later configuration mutation and uses the existing caller-owned creation transaction. The production disclosure builder describes exact saved intervals, the original fractional creation clock and archive responsibility without treating an eligibility date as proof of erasure. A versioned publication wrapper binds the canonical policy and enrollment audit reference while preserving legacy/demo recipe bytes. Metadata access helpers distinguish draft deadlines from signing/completion recovery and never create terminal anchors on reads.
-
-These new helpers and options are not registered with normal startup yet. Normal intake still creates demo records. Admission, review/Send, publication, participant/worker access and actual browser verification must all be integrated before production configuration can be enabled. A passing preparatory test suite is not a production readiness claim.
+This integration grants no deletion or hold authority. Production legal holds, privileged operator controls, deletion/recovery and complete self-hosted acceptance remain required in QUILS-147 through QUILS-150. A retention eligibility date is neither proof of physical erasure nor a guarantee of enforceability. Cloud rollout, grants and actual destructive operations require a separate reviewed deployment.

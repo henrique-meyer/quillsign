@@ -79,6 +79,7 @@ else { <p>The reviewed reminder policy allows reminders @string.Join(" and ",rem
 <input type="hidden" asp-for="Version" /><input type="hidden" name="StatementVersion" value="@SenderSendStatement.Version" />
 @if(Model.Readiness?.Reminders is not null) { <input type="hidden" asp-for="ReminderSha256" /><input type="hidden" asp-for="ReminderSchedulingVersion" /> }
 @if(Model.Draft.RetentionSha256 is not null) { <input type="hidden" asp-for="RetentionSha256" /> }
+@if(Model.Draft.ProductionDisclosure is not null) { <input type="hidden" asp-for="DisclosureSha256" /> }
 <label class="send-check"><input type="checkbox" asp-for="ExclusionsAcknowledged" required /> I confirm this is not a will, court or family-law document, foreclosure/eviction/utility notice, or another excluded record, and this transaction is suitable for electronic signing.</label>
 <label class="send-check"><input type="checkbox" asp-for="SendAcknowledged" required /> @SenderSendStatement.Text</label>
 <button type="submit" disabled="@(!Model.Draft.ChecksPassed || Model.Readiness?.Available!=true || Model.ReloadRequired)">Send for signing</button>

@@ -54,10 +54,20 @@ Set `PublicSite__Origin` to the public HTTPS origin (without a path, query or fr
 | `Seal__TsaUrl` | HTTPS RFC 3161 endpoint; FreeTSA publishes `https://freetsa.org/tsr` |
 | `Seal__TsaTrustedRootPaths__0` | Absolute runtime path to a verified public TSA root certificate; indexed entries support multiple roots |
 | `Seal__TimestampCoordination__Enabled` | Enable shared Blob-lease request coordination; required for FreeTSA |
-| `Retention__CompletedDays` | Retention interval for completed ordinary requests |
+| `Retention__CompletedDays` | Existing unenrolled/legacy completion interval; does not select production admission |
 | `Demo__PurgeAfterDays` | Positive demo interval; new uploads freeze an upload-based retention snapshot |
+| `Records__Mode` | `Demo` by default; explicit `Production` requires every production rule and complete operator disclosures |
+| `Records__Production__Version` | Operator's version for the policy frozen into each newly admitted production record |
+| `Records__Production__ArchiveResponsibility` | Operator-supplied responsibility for retaining copies |
+| `Records__Production__AbandonedDraftDays` | Positive elapsed interval from original production record creation |
+| `Records__Production__ExpiredDays`, `Records__Production__DeclinedDays`, `Records__Production__VoidedDays` | Positive intervals from verified effective expiry, actual decline or actual void |
+| `Records__Production__CompletedDays` | Explicit positive interval from actual publication, or explicit `0` for indefinite preservation |
 
 Retention settings remain unset by default for self-hosters. A configured demo upload freezes an exact [first-upload deadline](docs/document-retention.md) and atomically schedules [durable purge work](docs/demo-purge-coordinator.md); replacement, signing and setting changes cannot extend it. The public demo is configured for seven days. Final publication requires matching final-version protection. The worker uses guarded SQL cleanup and bounded object deletion, with persistent storage-only recovery for late writes. Ordinary/legacy completion-based intervals are unchanged and are not automatically scheduled for erasure by this demo worker. The demo's worker permissions and maintenance scheduling passed staging checks; a naturally elapsed enrolled purge remains a validation gate. A day count does not guarantee physical erasure of versions, backups, soft-deleted copies or logs.
+
+Production admission freezes the selected mode, policy version, intervals and archive responsibility before requesting sender verification. Startup rejects incomplete production settings and the synthetic demo disclosure profile. Sender review and Send use that saved policy; later configuration changes apply to new records. Unsent drafts use their original creation time, while pending signing and incomplete completion have no automatic retention deadline. Terminal access uses the authenticated saved transition, and publication verifies actual immutable storage protection for its frozen interval. Retained files never extend a participant's session. See the [production retention integration](docs/production-retention.md).
+
+These controls are one part of production readiness. Privileged legal holds, production deletion/recovery controls and complete self-hosted acceptance remain required work in the [implementation plan](docs/plan.md). Selecting `Production` does not certify legal suitability, complete that work, migrate historical records, change cloud protection or enable email.
 
 ## Run locally
 

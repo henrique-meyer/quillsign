@@ -15,7 +15,7 @@ internal sealed class CompletionFinalCapability : ClaimsPrincipal
     internal bool ExactDeadline {get;}
     internal DateTimeOffset? ExactUntil=>ExactDeadline ? requiredUntil : null;
     private CompletionFinalCapability(FinalDocument target,long length,byte[] sha256,DateTimeOffset? requiredUntil,
-        bool development,FinalStoredDocument? reference,TimeProvider time,bool exact=false)
+        bool development,FinalStoredDocument? reference,TimeProvider time,bool exact=false,DateTimeOffset? accessUntil=null)
     {
         if(target.EnvelopeId==Guid.Empty || target.ObjectId==Guid.Empty || !Enum.IsDefined(target.Kind) || length is <16 or >64*1024*1024 || sha256 is not {Length:32})
             throw new UnauthorizedAccessException("Invalid final document scope.");
@@ -25,14 +25,20 @@ internal sealed class CompletionFinalCapability : ClaimsPrincipal
         this.target=target; this.length=length; this.sha256=sha256.ToArray(); this.requiredUntil=requiredUntil;
         this.reference=reference is null ? null : Digest(reference); DevelopmentWriteOnce=development;
         this.time=time;ExactDeadline=exact; expires=time.GetUtcNow().AddMinutes(2);
+        if(accessUntil is { } end) {
+            if(reference is null || end.Offset!=TimeSpan.Zero)throw new UnauthorizedAccessException("Invalid final read deadline.");
+            if(end<expires)expires=end;
+        }
         if(exact && reference is null && requiredUntil is DateTimeOffset cutoff && cutoff<expires)expires=cutoff;
         AddIdentity(identity);
     }
     internal static ClaimsPrincipal Write(FinalDocument target,long length,byte[] hash,DateTimeOffset? requiredUntil,bool development,TimeProvider time)
         =>new CompletionFinalCapability(target,length,hash,requiredUntil,development,null,time);
     internal static ClaimsPrincipal Read(FinalStoredDocument reference,TimeProvider time)
+        =>ReadBounded(reference,time,null);
+    internal static ClaimsPrincipal ReadBounded(FinalStoredDocument reference,TimeProvider time,DateTimeOffset? accessUntil)
         =>new CompletionFinalCapability(reference.Document,reference.Length,reference.Sha256,null,
-            reference.Protection==FinalProtection.DevelopmentWriteOnce,reference,time);
+            reference.Protection==FinalProtection.DevelopmentWriteOnce,reference,time,accessUntil:accessUntil);
     internal static ClaimsPrincipal WriteFixed(FinalDocument target,long length,byte[] hash,DateTimeOffset until,bool development,TimeProvider time)
         =>new CompletionFinalCapability(target,length,hash,until,development,null,time,true);
     internal static ClaimsPrincipal ReadFixed(FinalStoredDocument reference,DateTimeOffset until,TimeProvider time)

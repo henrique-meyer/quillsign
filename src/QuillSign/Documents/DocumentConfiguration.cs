@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Features;
 using QuillSign.Legal;
 using QuillSign.Signing;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Documents;
 
@@ -38,7 +39,12 @@ public static class DocumentConfiguration
         var preparation = config.GetSection("Preparation").Get<PreparationOptions>() ?? new();
         if (preparation.MaximumRecipients is < 1 or > 100) throw new InvalidOperationException("Preparation:MaximumRecipients must be between 1 and 100.");
         services.AddSingleton(preparation); services.AddScoped<DraftDetails>(); services.AddScoped<DraftReview>();
-        services.AddSingleton(config.GetSection("ElectronicRecords").Get<ElectronicRecordOptions>() ?? new());
+        var disclosure=config.GetSection("ElectronicRecords").Get<ElectronicRecordOptions>() ?? new();
+        var records=config.GetSection("Records").Get<RecordLifecycleOptions>() ?? new();
+        // Pure operator preflight: no record, SQL connection, provider request or email.
+        // Production can never inherit the synthetic profile or incomplete policies.
+        _=ProductionRetentionAdmission.Prepare("preflight@example.invalid",TimeProvider.System.GetUtcNow(),records,disclosure);
+        services.AddSingleton(records);services.AddSingleton(disclosure);
         services.AddSingleton<ElectronicRecordDisclosure>();
         services.AddSingleton(sp => new SenderPdfRenderer(storageMaximum, options.MaximumPages,
             sp.GetRequiredService<FieldEditorOptions>().MaximumFields));

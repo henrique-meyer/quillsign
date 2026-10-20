@@ -8,9 +8,26 @@ internal sealed record ProductionRecordRetentionRead(ProductionEnrollmentKind Ki
 
 // Internal metadata boundary. The caller already authorizes the participant and
 // holds its transaction; this result is not a session or destructive capability.
-// It remains unregistered until all production runtime paths are integrated.
+// No read enrolls a historical record or manufactures missing terminal evidence.
 internal static class ProductionRecordRetentionAccess
 {
+    // Publication metadata verification also runs before a terminal anchor exists.
+    // Keep that enrollment-only read separate to avoid recursive terminal checks.
+    internal static async Task<VerifiedProductionRetention?> EnrollmentAsync(QuillSignDbContext db,Envelope supplied,
+        TimeProvider time,CancellationToken ct=default)
+    {
+        await using var owned=db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        var read=await new ProductionRetentionLedger(db,new(db,time),time).ReadLockedAsync(supplied.Id,ct);
+        if(read.Kind==ProductionEnrollmentKind.MissingRecord)throw ProductionRetentionLedger.Invalid();
+        if(read.Enrollment is not null) {
+            var current=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==supplied.Id,ct);
+            if(current.PublicId!=supplied.PublicId || current.SenderEmail!=supplied.SenderEmail || current.CreatedAt!=supplied.CreatedAt ||
+                current.IsDemo!=supplied.IsDemo)throw ProductionRetentionLedger.Invalid();
+        }
+        if(owned is not null)await owned.CommitAsync(ct);
+        return read.Enrollment;
+    }
+
     internal static async Task<ProductionRecordRetentionRead> ReadLockedAsync(QuillSignDbContext db,Envelope supplied,
         TimeProvider time,CancellationToken ct=default)
     {

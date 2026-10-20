@@ -13,12 +13,83 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Signing;
 using QuillSign.Storage;
+using QuillSign.Lifecycle;
 using Run=QuillSign.Tests.CompletionSealOutputTests.Run;
 
 namespace QuillSign.Tests;
 
 public sealed class CompletionPublicationTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
+    [Theory]
+    [InlineData(365)][InlineData(0)]
+    public async Task Genuine_production_admission_and_publication_use_only_frozen_policy_with_atomic_terminal_provenance(int days)
+    {
+        var settings=ProductionRetentionAdmissionContractTests.Settings();settings.Production.CompletedDays=days;
+        await using var run=await Run.Create(fixture,demo:false,configure:services=>services.AddSingleton(settings));
+        _=await run.Prepare();settings.Mode="Demo";settings.Production.CompletedDays=1;settings.Production.Version="changed-after-creation";
+        var store=new FinalStore(run.Signing.H.Clock) {Locked=days>0,Held=days==0};
+        await using var db=fixture.Open();var service=Service(run,db,store,new() {CompletedDays=1});
+        var published=(await service.PublishAsync(run.Signing.Envelope.Id))!;
+        var envelope=await run.Signing.Refresh();Assert.False(envelope.IsDemo);
+        Assert.Equal(QuillSign.Legal.ProductionRetentionDisclosure.Version,envelope.ErsdVersion);
+        Assert.Contains("synthetic-v1",envelope.ErsdText!);
+        Assert.Equal(days==0 ? (DateTimeOffset?)null : published.CompletedAt.AddDays(days),envelope.PurgeAfter);
+        var intent=await db.CompletionPublicationIntents.AsNoTracking().SingleAsync(x=>x.EnvelopeId==envelope.Id);
+        Assert.Equal(days,intent.RetentionDays);Assert.False(intent.DevelopmentWriteOnce);
+        Assert.NotNull(ProductionCompletionRetentionBinding.Read(intent));
+        Assert.Equal(days==0 ? FinalProtection.LegalHold : FinalProtection.LockedTime,published.Executed.Protection);
+        await using(var tx=await db.Database.BeginTransactionAsync()) {
+            var access=await ProductionRecordRetentionAccess.ReadLockedAsync(db,envelope,run.Signing.H.Clock);
+            Assert.Equal(ProductionRecordStage.Completed,access.Stage);Assert.Equal(envelope.PurgeAfter,access.Deadline);
+            Assert.Equal("synthetic-v1",access.Enrollment!.Snapshot.Policy.Version);await tx.CommitAsync();
+        }
+        Assert.Single(await db.ProductionRetentionTerminals.Where(x=>x.EnvelopeId==envelope.Id).ToArrayAsync());
+        // The original enrollment and terminal clocks survive a legitimate access tail.
+        await using(var tx=await db.Database.BeginTransactionAsync()) {
+            var previous=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id).OrderByDescending(x=>x.Sequence).FirstAsync();
+            for(var i=0;i<530;i++) {
+                var entry=new AuditEvent {EnvelopeId=envelope.Id,Sequence=previous.Sequence+1,PrevHash=previous.Hash,
+                    At=run.Signing.H.Clock.GetUtcNow(),ActorType=PartyType.System,Event="synthetic_final_download",DataJson="{}"};
+                entry.Hash=AuditHash.Compute(entry);db.Add(entry);previous=entry;
+            }
+            await db.SaveChangesAsync();await tx.CommitAsync();
+        }
+        await using(var tx=await db.Database.BeginTransactionAsync()) {
+            var access=await ProductionRecordRetentionAccess.ReadLockedAsync(db,envelope,run.Signing.H.Clock);
+            Assert.Equal(envelope.PurgeAfter,access.Deadline);
+            var ledger=new ProductionRetentionLedger(db,new AuditWriter(db,run.Signing.H.Clock),run.Signing.H.Clock);
+            Assert.Equal(published.CompletedAt,(await ledger.CaptureTerminalLockedAsync(envelope.Id)).OriginalAt);
+            await tx.CommitAsync();
+        }
+        var again=(await service.PublishAsync(envelope.Id))!;Assert.Equal(published.ExecutedBytes,again.ExecutedBytes);
+        Assert.Equal(2,run.Seal.Requests);Assert.Equal(2,store.Writes);
+        var reads=store.Reads;
+        foreach(var critical in new[]{ProductionRetentionLedger.EnrollmentEvent,ProductionRetentionLedger.TerminalEvent,"completed"}) {
+            await using var tamper=await db.Database.BeginTransactionAsync();
+            var tail=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==envelope.Id).OrderByDescending(x=>x.Sequence).FirstAsync();
+            tail.Event=critical;var altered=AuditHash.Compute(tail);
+            await db.AuditEvents.Where(x=>x.Id==tail.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Event,critical).SetProperty(x=>x.Hash,altered));
+            await Assert.ThrowsAsync<InvalidDataException>(()=>service.ReadAsync(envelope.Id));Assert.Equal(reads,store.Reads);
+            await tamper.RollbackAsync();
+        }
+        await using(var tamper=await db.Database.BeginTransactionAsync()) {
+            await db.ProductionRetentionTerminals.Where(x=>x.EnvelopeId==envelope.Id).ExecuteDeleteAsync();
+            await Assert.ThrowsAsync<InvalidDataException>(()=>service.ReadAsync(envelope.Id));Assert.Equal(reads,store.Reads);
+            await tamper.RollbackAsync();
+        }
+        await using(var tamper=await db.Database.BeginTransactionAsync()) {
+            // Removing enrollment cannot turn a new bound publication into a legacy read.
+            await db.ProductionRetentionTerminals.Where(x=>x.EnvelopeId==envelope.Id).ExecuteDeleteAsync();
+            await db.ProductionRetentionPolicies.Where(x=>x.EnvelopeId==envelope.Id).ExecuteDeleteAsync();
+            await Assert.ThrowsAsync<InvalidDataException>(()=>service.ReadAsync(envelope.Id));Assert.Equal(reads,store.Reads);
+            await tamper.RollbackAsync();
+        }
+        if(days>0) {
+            run.Signing.H.Clock.Advance(envelope.PurgeAfter!.Value-run.Signing.H.Clock.GetUtcNow());
+            await Assert.ThrowsAsync<DocumentRetentionExpiredException>(()=>service.ReadAsync(envelope.Id));Assert.Equal(reads,store.Reads);
+        }
+    }
+
     [Fact]
     public async Task Production_terminal_source_requires_actual_verified_publication_not_a_completed_status_alone()
     {
@@ -205,12 +276,12 @@ public sealed class CompletionPublicationTests(SqlDatabaseFixture fixture) : ICl
     private sealed class FinalStore(TimeProvider time) : ICompletionFinalStore
     {
         public sealed record Object(FinalStoredDocument Reference,byte[] Bytes);
-        public ConcurrentDictionary<FinalDocument,Object> Objects=new(); public int Writes,Reads; public bool Locked; public FinalDocumentKind? LoseWrite; public Func<FinalDocument,Task>? AfterWrite,AfterRead;
+        public ConcurrentDictionary<FinalDocument,Object> Objects=new(); public int Writes,Reads; public bool Locked,Held; public FinalDocumentKind? LoseWrite; public Func<FinalDocument,Task>? AfterWrite,AfterRead;
         public async Task<FinalStoredDocument> WriteAsync(ClaimsPrincipal p,FinalDocument target,Stream source,long length,byte[] hash,DateTimeOffset? until,CancellationToken ct=default)
         {
             Demand("DemandWrite",p,target,length,hash,until); ct.ThrowIfCancellationRequested(); Interlocked.Increment(ref Writes);
             using var bytes=new MemoryStream(); await source.CopyToAsync(bytes,ct); Assert.Equal(length,bytes.Length); Assert.Equal(hash,SHA256.HashData(bytes.ToArray()));
-            var saved=Objects.GetOrAdd(target,_=>new(new(target,length,hash.ToArray(),"synthetic-version","synthetic-etag",Locked ? FinalProtection.LockedTime : FinalProtection.DevelopmentWriteOnce,
+            var saved=Objects.GetOrAdd(target,_=>new(new(target,length,hash.ToArray(),"synthetic-version","synthetic-etag",Held ? FinalProtection.LegalHold : Locked ? FinalProtection.LockedTime : FinalProtection.DevelopmentWriteOnce,
                 Locked ? until?.AddHours(1) : null,time.GetUtcNow()),bytes.ToArray()));
             if(AfterWrite is not null)await AfterWrite(target); if(LoseWrite==target.Kind) {LoseWrite=null; throw new IOException("Synthetic lost final write acknowledgement");} ct.ThrowIfCancellationRequested(); return saved.Reference;
         }

@@ -69,6 +69,7 @@ public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState ch
             await audit.AppendAsync(id,"expired",null,null,null,ct,JsonSerializer.Serialize(new Evidence("signing-expiry-v1",Convert.ToBase64String(e.RowVersion),deadline.ToUniversalTime(),at,binding)),PartyType.System);
             var recorded=await db.AuditEvents.AsNoTracking().SingleAsync(x=>x.EnvelopeId==id && x.Event=="expired",ct);
             if(recorded.At<at || recorded.At>time.GetUtcNow())throw Invalid();
+            await QuillSign.Lifecycle.ProductionRecordRetentionAccess.AnchorLockedIfEnrolledAsync(db,id,time,ct);
             // An unknown acknowledgement never claims success. A fresh explicit operation
             // verifies saved status/evidence and cannot append a second expiration.
             if(lease is not null)await VerifyLease(e.Id,lease,payload!,ct);
