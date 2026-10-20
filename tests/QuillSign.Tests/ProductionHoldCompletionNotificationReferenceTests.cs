@@ -220,7 +220,8 @@ public sealed class ProductionHoldCompletionNotificationSqlTests(SqlDatabaseFixt
     [Fact]
     public async Task Actual_sequential_signing_publication_and_four_queued_notifications_bind_exact_retained_pair()
     {
-        var local = new Azure.Storage.Blobs.BlobServiceClient(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE"));
+        var local = new Azure.Storage.Blobs.BlobServiceClient(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE"),
+            new Azure.Storage.Blobs.BlobClientOptions(Azure.Storage.Blobs.BlobClientOptions.ServiceVersion.V2023_11_03));
         Assert.True(local.Uri.IsLoopback || local.Uri.Host == "azurite", "Only disposable local storage is allowed.");
         // Existing local fixtures use captured mail, a loopback timestamp test
         // authority and an in-memory final store; no real provider is called.
@@ -232,12 +233,17 @@ public sealed class ProductionHoldCompletionNotificationSqlTests(SqlDatabaseFixt
         Assert.Equal(4, mail.Count(x => x.Template == CompletionNotificationJobs.Template));
         var tokens = await db.AuthTokens.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync();
         Assert.DoesNotContain(tokens, x => x.Purpose == TokenPurpose.CompletionAccess);
-        using var sql = JsonDocument.Parse(JsonSerializer.Serialize(new { RecordId = f.Id, Tables = new object[] {
+        var previews = await db.SignaturePreviews.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync();
+        var originalPreviews = JsonSerializer.Serialize(previews);
+        using var sql = JsonDocument.Parse(JsonSerializer.Serialize(new { RecordId = f.Id, CapturedAt = f.Clock.GetUtcNow(), Tables = new object[] {
             new { Table = "Envelopes", Rows = await db.Envelopes.AsNoTracking().Where(x => x.Id == f.Id).ToArrayAsync() },
             new { Table = "Signers", Rows = await db.Signers.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
             new { Table = "Recipients", Rows = await db.Recipients.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
             new { Table = "CompletionPublicationIntents", Rows = await db.CompletionPublicationIntents.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
             new { Table = "CompletionPublicationResults", Rows = await db.CompletionPublicationResults.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
+            new { Table = "SignaturePreviews", Rows = previews },
+            new { Table = "SignerContactRevisions", Rows = await db.SignerContactRevisions.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
+            new { Table = "SignerFinishAcceptances", Rows = await db.SignerFinishAcceptances.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
             new { Table = "EmailOutbox", Rows = mail }, new { Table = "AuthTokens", Rows = tokens },
             new { Table = "AuditEvents", Rows = await db.AuditEvents.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() }
         } }, new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } }));
@@ -248,6 +254,26 @@ public sealed class ProductionHoldCompletionNotificationSqlTests(SqlDatabaseFixt
             objects.Add(new(new("final", $"{f.Id:N}/{stored.Document.Kind.ToString().ToLowerInvariant()}/{stored.Document.ObjectId:N}", stored.VersionId, "", stored.ETag, bytes.LongLength), Convert.ToHexStringLower(hash)));
         }
         ProductionHoldCompletionNotificationReferences.Demand(sql.RootElement, objects, keys);
+        var localContainer = local.GetBlobContainerClient("normalized");
+        foreach (var (objectId, hash) in previews.SelectMany(p => new[] { (p.DocumentId, p.DocumentSha256), (p.SignatureObjectId, p.SignatureSha256), (p.InitialsObjectId, p.InitialsSha256) }).DistinctBy(x => x.Item1))
+        {
+            var name = $"{f.Id:N}/{objectId:N}"; var blob = localContainer.GetBlobClient(name);
+            var properties = (await blob.GetPropertiesAsync()).Value;
+            var content = await blob.DownloadContentAsync(new Azure.Storage.Blobs.Models.BlobDownloadOptions { Conditions = new() { IfMatch = properties.ETag } });
+            var bytes = content.Value.Content.ToArray(); Assert.Equal(hash, SHA256.HashData(bytes));
+            objects.Add(new(new("normalized", name, "", "", properties.ETag.ToString(), bytes.LongLength), Convert.ToHexStringLower(hash)));
+        }
+        Assert.Equal(2, previews.Count(x => x.UsedAt is not null));
+        ProductionHoldAdoptionAuditReferences.Demand(sql.RootElement, objects);
+        // Reopening saved encrypted evidence uses the same original timestamps,
+        // not a live preview reader, and emits neither a session nor a token.
+        var protector = keys.CreateProtector("synthetic-hold-adoption-replay");
+        var encrypted = protector.Protect(sql.RootElement.GetRawText());
+        using (var replay = JsonDocument.Parse(protector.Unprotect(encrypted)))
+            ProductionHoldAdoptionAuditReferences.Demand(replay.RootElement, objects);
+        var mark = objects.Single(x => x.Address.Name.EndsWith(previews[0].SignatureObjectId.ToString("N")));
+        objects.Remove(mark); Assert.Throws<InvalidDataException>(() => ProductionHoldAdoptionAuditReferences.Demand(sql.RootElement, objects)); objects.Add(mark);
+        Assert.Equal(originalPreviews, JsonSerializer.Serialize(await db.SignaturePreviews.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync()));
         objects.RemoveAt(1);
         Assert.Throws<InvalidDataException>(() => ProductionHoldCompletionNotificationReferences.Demand(sql.RootElement, objects, keys));
         Assert.Equal(tokens.Length, await db.AuthTokens.CountAsync(x => x.EnvelopeId == f.Id));

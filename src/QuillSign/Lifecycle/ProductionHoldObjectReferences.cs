@@ -58,7 +58,7 @@ internal static class ProductionHoldObjectReferences
             SignerReferences(row);
         foreach (var row in Rows("SignerContactRevisions"))
         {
-            var snapshot = Typed<RetiredSignerEntries>(row, "RetirementJson", 4 * 1024 * 1024);
+            var snapshot = ReadRetired(row);
             var raw = row.GetProperty("EvidenceJson").GetString();
             if (raw is null || raw.Length > 8192 || Encoding.UTF8.GetByteCount(raw) > 8192) throw Invalid();
             SignerContactRevision revision;
@@ -129,6 +129,7 @@ internal static class ProductionHoldObjectReferences
             }
         }
     }
+    internal static RetiredSignerEntries ReadRetired(JsonElement row) => Typed<RetiredSignerEntries>(row, "RetirementJson", 4 * 1024 * 1024);
     private static T Typed<T>(JsonElement row, string property, int maximum)
     {
         var raw = row.GetProperty(property).GetString();
