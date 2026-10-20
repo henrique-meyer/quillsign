@@ -8,6 +8,9 @@ using QuillSign.Signing;
 
 namespace QuillSign.Lifecycle;
 
+// A verified historical projection, not an asset capability or live authority.
+internal sealed record HoldAdoptedMark(long Sequence, Guid Id, Guid SignerId, Guid SignatureObjectId, Guid InitialsObjectId, string SignatureSha256, string InitialsSha256);
+
 // Saved adoption history, never a live preview/access reader. Consent, field
 // changes and the complete acceptance graph retain their separate checks.
 internal static class ProductionHoldAdoptionAuditReferences
@@ -20,12 +23,14 @@ internal static class ProductionHoldAdoptionAuditReferences
         string disclosureSha256, string serverEvidence, string identityEvidence);
 
     internal static void Demand(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects)
+        => _ = ReadVerified(sql, objects);
+    internal static HoldAdoptedMark[] ReadVerified(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects)
     {
-        try { Verify(sql, objects); }
+        try { return Verify(sql, objects); }
         catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException or FormatException or NullReferenceException)
         { throw Invalid(); }
     }
-    private static void Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects)
+    private static HoldAdoptedMark[] Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         T[] Table<T>(string name, int limit)
@@ -33,7 +38,7 @@ internal static class ProductionHoldAdoptionAuditReferences
         var audits = Table<AuditEvent>("AuditEvents", 4096);
         var previews = Table<SignaturePreview>("SignaturePreviews", 4000);
         var signers = Table<Signer>("Signers", 100);
-        if (!audits.Any(x => x.Event == "signature_adopted") && !previews.Any(x => x.UsedAt is not null) && signers.All(x => Matches(null, x))) return;
+        if (!audits.Any(x => x.Event == "signature_adopted") && !previews.Any(x => x.UsedAt is not null) && signers.All(x => Matches(null, x))) return [];
         var id = sql.GetProperty("RecordId").GetGuid(); var captured = sql.GetProperty("CapturedAt").GetDateTimeOffset();
         var envelope = Table<Envelope>("Envelopes", 1).Single();
         var sent = audits.Single(x => x.Event == "sent");
@@ -63,7 +68,7 @@ internal static class ProductionHoldAdoptionAuditReferences
         }
         foreach (var group in retirements.Values.GroupBy(x => x.Revision.SignerId))
             addresses[group.Key] = group.OrderBy(x => x.Revision.Number).First().Revision.OldEmail;
-        var used = new HashSet<Guid>(); var corrected = new HashSet<Guid>();
+        var used = new HashSet<Guid>(); var corrected = new HashSet<Guid>(); var result = new List<HoldAdoptedMark>();
         foreach (var audit in audits.Where(x => x.Event is "signature_adopted" or SignerContactHistory.Event).OrderBy(x => x.Sequence))
         {
             if (audit.EnvelopeId != id || audit.Sequence <= sent.Sequence || audit.At.Offset != TimeSpan.Zero || audit.At < envelope.SentAt || audit.At > captured ||
@@ -92,30 +97,32 @@ internal static class ProductionHoldAdoptionAuditReferences
                 evidence.replacedAdoptionId != states[signerId]?.Id || !Same(p.DisclosureSha256, envelope.ErsdSha256) ||
                 !SignatureAdoption.MatchesAdoptionEvidence(audit.DataJson, p, Hex(p.DocumentSha256), Hex(envelope.ErsdSha256)) ||
                 evidence.serverEvidence != "previewed_assets_bound_to_explicit_adoption_request" || evidence.identityEvidence != "email_link_session_with_prior_consent") throw Invalid();
-            Guid source; byte[] hash;
-            if (signer.Order == 1)
-            { source = Guid.ParseExact(envelope.SentPdfBlob!, "N"); hash = envelope.SentPdfSha256!; }
-            else
-            {
-                var previous = signers.Single(x => x.Order == signer.Order - 1);
-                var finish = finishes.Single(x => x.SignerId == previous.Id && x.ProcessedAt is not null);
-                if (previous.Status != SignerStatus.Signed || previous.SignedAt != finish.FinishedAt || finish.EnvelopeId != id || finish.ProcessedAt > p.CreatedAt ||
-                    finish.FinishedAt > finish.ProcessedAt || !Same(finish.DisclosureSha256, envelope.ErsdSha256)) throw Invalid();
-                source = finish.PdfObjectId; hash = finish.PdfSha256;
-            }
+            var (source, hash) = Source(envelope, signer, signers, finishes, p.CreatedAt);
             if (p.DocumentId != source || !Same(p.DocumentSha256, hash)) throw Invalid();
             Match(p.DocumentId, p.DocumentSha256); Match(p.SignatureObjectId, p.SignatureSha256, true); Match(p.InitialsObjectId, p.InitialsSha256, true);
             states[signerId] = p;
+            result.Add(new(audit.Sequence, p.Id, signerId, p.SignatureObjectId, p.InitialsObjectId, Hex(p.SignatureSha256), Hex(p.InitialsSha256)));
         }
         if (corrected.Count != records.Length || previews.Any(x => x.UsedAt is not null && !used.Contains(x.Id))) throw Invalid();
         foreach (var signer in signers)
             if (addresses[signer.Id] != signer.Email || !Matches(states[signer.Id], signer)) throw Invalid();
+        return result.ToArray();
 
         void Match(Guid objectId, byte[] hash, bool mark = false)
         {
             if (objectId == Guid.Empty || hash is not { Length: 32 } || !objects.Any(x => x.Address.Area == "normalized" &&
                 x.Address.Name == $"{id:N}/{objectId:N}" && x.Sha256 == Hex(hash) && (!mark || x.Address.Length is > 0 and <= SignaturePng.MaximumBytes))) throw Invalid();
         }
+    }
+    internal static (Guid Id, byte[] Hash) Source(Envelope envelope, Signer signer, IReadOnlyList<Signer> signers,
+        IReadOnlyList<SignerFinishAcceptance> finishes, DateTimeOffset before)
+    {
+        if (signer.Order == 1) return (Guid.ParseExact(envelope.SentPdfBlob!, "N"), envelope.SentPdfSha256!);
+        var previous = signers.Single(x => x.Order == signer.Order - 1);
+        var finish = finishes.Single(x => x.SignerId == previous.Id && x.ProcessedAt is not null);
+        if (previous.Status != SignerStatus.Signed || previous.SignedAt != finish.FinishedAt || finish.EnvelopeId != envelope.Id || finish.ProcessedAt > before ||
+            finish.FinishedAt > finish.ProcessedAt || !Same(finish.DisclosureSha256, envelope.ErsdSha256)) throw Invalid();
+        return (finish.PdfObjectId, finish.PdfSha256);
     }
     private static bool Matches(SignaturePreview? p, Signer signer) => p is not null ? SignatureAdoption.MatchesRevision(p, signer) :
         signer.SignatureAdoptionId is null && signer.SignatureAdoptedAt is null && signer.SignatureImageBlob is null && signer.InitialsImageBlob is null &&

@@ -104,7 +104,7 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
             .AsNoTracking().Where(x=>x.EnvelopeId==f.EnvelopeId && x.Event=="signer_finish_accepted" && x.ActorType==PartyType.Signer && x.ActorId==f.SignerId && x.ActorEmail==email).ToArrayAsync(ct);
         return events.Length==1 && Same(events[0].Hash,AuditHash.Compute(events[0])) && events[0].Ip==f.Ip && events[0].UserAgent==f.UserAgent && events[0].DataJson==EvidenceJson(f);
     }
-    private static string EvidenceJson(SignerFinishAcceptance f)=>JsonSerializer.Serialize(new { finishId=f.Id,candidateId=f.ReviewCandidateId,
+    internal static string EvidenceJson(SignerFinishAcceptance f)=>JsonSerializer.Serialize(new { finishId=f.Id,candidateId=f.ReviewCandidateId,
         f.AdoptionId,f.SourceObjectId,f.PdfObjectId,f.PdfLength,sourceSha256=Hex(f.SourceSha256),disclosureSha256=Hex(f.DisclosureSha256),
         sessionSha256=Hex(f.SessionSha256),snapshotSha256=Hex(f.SnapshotSha256),pdfSha256=Hex(f.PdfSha256),recipeSha256=Hex(f.RecipeSha256),
         fieldsSha256=Hex(f.FieldsSha256),statementSha256=Hex(f.StatementSha256),f.SnapshotVersion,f.StatementVersion,f.Statement,f.ProspectiveDate,

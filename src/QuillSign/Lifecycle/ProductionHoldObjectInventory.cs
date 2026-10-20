@@ -100,8 +100,9 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
             ProductionHoldObjectReferences.Demand(sql.RootElement, objects);
             ProductionHoldAuditChain.Demand(sql.RootElement);
             var documents = ProductionHoldDocumentAuditReferences.ReadVerified(sql.RootElement, objects);
-            ProductionHoldPreparationAuditReferences.Demand(sql.RootElement, documents);
-            ProductionHoldAdoptionAuditReferences.Demand(sql.RootElement, objects);
+            var fields = ProductionHoldPreparationAuditReferences.ReadVerified(sql.RootElement, documents);
+            var adoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(sql.RootElement, objects);
+            ProductionHoldFieldAuditReferences.Demand(sql.RootElement, objects, fields, adoptions);
             ProductionHoldNotificationReferences.Demand(sql.RootElement, objects, keys);
             return objects;
         }
@@ -129,8 +130,9 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
             ProductionHoldObjectReferences.Demand(verified.RootElement, evidence);
             ProductionHoldAuditChain.Demand(verified.RootElement);
             var documents = ProductionHoldDocumentAuditReferences.ReadVerified(verified.RootElement, evidence);
-            ProductionHoldPreparationAuditReferences.Demand(verified.RootElement, documents);
-            ProductionHoldAdoptionAuditReferences.Demand(verified.RootElement, evidence);
+            var fields = ProductionHoldPreparationAuditReferences.ReadVerified(verified.RootElement, documents);
+            var adoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(verified.RootElement, evidence);
+            ProductionHoldFieldAuditReferences.Demand(verified.RootElement, evidence, fields, adoptions);
             ProductionHoldNotificationReferences.Demand(verified.RootElement, evidence, keys);
         }
         // Detect observed late additions/replacements/deletions. This deliberately

@@ -234,6 +234,7 @@ public sealed class ProductionHoldCompletionNotificationSqlTests(SqlDatabaseFixt
         var tokens = await db.AuthTokens.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync();
         Assert.DoesNotContain(tokens, x => x.Purpose == TokenPurpose.CompletionAccess);
         var previews = await db.SignaturePreviews.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync();
+        var fields = await db.Fields.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync();
         var originalPreviews = JsonSerializer.Serialize(previews);
         using var sql = JsonDocument.Parse(JsonSerializer.Serialize(new { RecordId = f.Id, CapturedAt = f.Clock.GetUtcNow(), Tables = new object[] {
             new { Table = "Envelopes", Rows = await db.Envelopes.AsNoTracking().Where(x => x.Id == f.Id).ToArrayAsync() },
@@ -242,6 +243,7 @@ public sealed class ProductionHoldCompletionNotificationSqlTests(SqlDatabaseFixt
             new { Table = "CompletionPublicationIntents", Rows = await db.CompletionPublicationIntents.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
             new { Table = "CompletionPublicationResults", Rows = await db.CompletionPublicationResults.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
             new { Table = "SignaturePreviews", Rows = previews },
+            new { Table = "Fields", Rows = fields },
             new { Table = "SignerContactRevisions", Rows = await db.SignerContactRevisions.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
             new { Table = "SignerFinishAcceptances", Rows = await db.SignerFinishAcceptances.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync() },
             new { Table = "EmailOutbox", Rows = mail }, new { Table = "AuthTokens", Rows = tokens },
@@ -264,13 +266,21 @@ public sealed class ProductionHoldCompletionNotificationSqlTests(SqlDatabaseFixt
             objects.Add(new(new("normalized", name, "", "", properties.ETag.ToString(), bytes.LongLength), Convert.ToHexStringLower(hash)));
         }
         Assert.Equal(2, previews.Count(x => x.UsedAt is not null));
-        ProductionHoldAdoptionAuditReferences.Demand(sql.RootElement, objects);
+        var adoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(sql.RootElement, objects);
+        // This scoped fixture supplies its genuine saved definitions. The full
+        // inventory obtains them from the separately verified preparation fold.
+        var definitions = fields.Select(x => new QuillSign.Signing.FieldInput(x.Id, x.SignerId, x.Type.ToString(), x.Page, x.X, x.Y, x.Width, x.Height,
+            x.Required, x.Label, x.SignerId is null ? x.Value : null)).ToArray();
+        ProductionHoldFieldAuditReferences.Demand(sql.RootElement, objects, definitions, adoptions);
         // Reopening saved encrypted evidence uses the same original timestamps,
         // not a live preview reader, and emits neither a session nor a token.
         var protector = keys.CreateProtector("synthetic-hold-adoption-replay");
         var encrypted = protector.Protect(sql.RootElement.GetRawText());
         using (var replay = JsonDocument.Parse(protector.Unprotect(encrypted)))
-            ProductionHoldAdoptionAuditReferences.Demand(replay.RootElement, objects);
+        {
+            var replayAdoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(replay.RootElement, objects);
+            ProductionHoldFieldAuditReferences.Demand(replay.RootElement, objects, definitions, replayAdoptions);
+        }
         var mark = objects.Single(x => x.Address.Name.EndsWith(previews[0].SignatureObjectId.ToString("N")));
         objects.Remove(mark); Assert.Throws<InvalidDataException>(() => ProductionHoldAdoptionAuditReferences.Demand(sql.RootElement, objects)); objects.Add(mark);
         Assert.Equal(originalPreviews, JsonSerializer.Serialize(await db.SignaturePreviews.AsNoTracking().Where(x => x.EnvelopeId == f.Id).ToArrayAsync()));

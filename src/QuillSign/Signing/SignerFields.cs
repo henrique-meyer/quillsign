@@ -103,7 +103,7 @@ public sealed class SignerFields(QuillSignDbContext db,SignerAccess access,Signa
         return new(f.Id,Convert.ToBase64String(f.RowVersion),f.Type,f.Page,f.X,f.Y,f.Width,f.Height,f.Required,f.Label,mark ? null : f.Value,
             f.FilledAt,f.SignatureAdoptionId,Hex(f.ImageSha256),filled,mark && hasMarkState && !bound);
     }
-    private static string? Canonical(string? value)
+    internal static string? Canonical(string? value)
     {
         if (value is null || value.Length > 4000) return null;
         try

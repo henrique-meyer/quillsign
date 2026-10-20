@@ -24,16 +24,18 @@ internal static class ProductionHoldPreparationAuditReferences
         "recipient_added" or "recipient_updated" or "recipient_removed" or "envelope_details_updated" or "fields_saved";
 
     internal static void Demand(JsonElement sql, IReadOnlyList<HoldUploadedDocument> documents)
+        => _ = ReadVerified(sql, documents);
+    internal static FieldInput[] ReadVerified(JsonElement sql, IReadOnlyList<HoldUploadedDocument> documents)
     {
-        try { Verify(sql, documents); }
+        try { return Verify(sql, documents); }
         catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException or FormatException)
         { throw Invalid(); }
     }
-    private static void Verify(JsonElement sql, IReadOnlyList<HoldUploadedDocument> documents)
+    private static FieldInput[] Verify(JsonElement sql, IReadOnlyList<HoldUploadedDocument> documents)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         var auditRows = tables["AuditEvents"];
-        if (!auditRows.EnumerateArray().Any(x => Selected(x.GetProperty("Event").GetString()!))) return;
+        if (!auditRows.EnumerateArray().Any(x => Selected(x.GetProperty("Event").GetString()!))) return [];
         if (auditRows.GetArrayLength() > 4096) throw Invalid();
         var id = sql.GetProperty("RecordId").GetGuid();
         var e = tables["Envelopes"].EnumerateArray().Single().Deserialize<Envelope>(Rows) ?? throw Invalid();
@@ -153,6 +155,7 @@ internal static class ProductionHoldPreparationAuditReferences
                 field != new FieldInput(current.Id, current.SignerId, current.Type.ToString(), current.Page, current.X, current.Y, current.Width, current.Height, current.Required, current.Label,
                     current.SignerId is null || e.Status == EnvelopeStatus.Draft ? current.Value : field.Value)) throw Invalid();
         }
+        return fields;
         T[] Entities<T>(string name, int maximum) { if (tables[name].GetArrayLength() > maximum) throw Invalid(); return tables[name].Deserialize<T[]>(Rows) ?? throw Invalid(); }
     }
     private static bool SetEqual<T>(IEnumerable<T> expected, IEnumerable<T> actual, Func<T, Guid> key) => expected.OrderBy(key).SequenceEqual(actual.OrderBy(key));

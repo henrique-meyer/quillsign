@@ -130,6 +130,7 @@ internal static class ProductionHoldObjectReferences
         }
     }
     internal static RetiredSignerEntries ReadRetired(JsonElement row) => Typed<RetiredSignerEntries>(row, "RetirementJson", 4 * 1024 * 1024);
+    internal static DocumentField[] ReadFinishFields(JsonElement row) => Typed<DocumentField[]>(row, "FieldsJson", 16 * 1024 * 1024);
     private static T Typed<T>(JsonElement row, string property, int maximum)
     {
         var raw = row.GetProperty(property).GetString();
