@@ -20,6 +20,21 @@ namespace QuillSign.Tests;
 public sealed class CompletionPublicationTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
     [Fact]
+    public async Task Production_terminal_source_requires_actual_verified_publication_not_a_completed_status_alone()
+    {
+        await using var run=await Run.Create(fixture,demo:false);_=await run.Prepare();var store=new FinalStore(run.Signing.H.Clock) {Locked=true};
+        await using var db=fixture.Open();var published=(await Service(run,db,store,new() {CompletedDays=7}).PublishAsync(run.Signing.Envelope.Id))!;
+        await using var tx=await db.Database.BeginTransactionAsync();var e=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==published.EnvelopeId);
+        var chain=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==e.Id).OrderBy(x=>x.Sequence).ToArrayAsync();
+        var source=await QuillSign.Lifecycle.ProductionRetentionTerminalSource.ReadAsync(db,e,chain,run.Signing.H.Clock,default);
+        Assert.NotNull(source);Assert.Equal(published.CompletedAt,source.Value.At);Assert.Equal("completed",source.Value.Event.Event);
+        await db.Envelopes.Where(x=>x.Id==e.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.FinalSha256,new byte[32]));
+        e=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==e.Id);
+        await Assert.ThrowsAsync<InvalidDataException>(()=>QuillSign.Lifecycle.ProductionRetentionTerminalSource.ReadAsync(db,e,chain,run.Signing.H.Clock,default));
+        // Roll back the synthetic tamper; this fixture proves publication provenance only.
+        // Enrollment-to-publication integration is the separately required QUILS-152 slice.
+    }
+    [Fact]
     public async Task Exact_production_seals_publish_once_and_remain_readable_after_owned_completion_and_a_large_audit_tail()
     {
         await using var run=await Run.Create(fixture); var pair=(await run.Prepare())!; var store=new FinalStore(run.Signing.H.Clock);

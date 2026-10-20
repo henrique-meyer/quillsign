@@ -1331,6 +1331,113 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.ProductionRetentionPolicyRecord", b =>
+                {
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("AuditHash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<long>("AuditSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("EnrolledAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("OriginSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<DateTimeOffset>("OriginalCreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PolicyJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PolicySha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.HasKey("EnvelopeId");
+
+                    b.ToTable("ProductionRetentionPolicies", t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductionRetentionPolicyRecord_AuditHash", "[AuditHash] IS NULL OR DATALENGTH([AuditHash]) = 32");
+
+                            t.HasCheckConstraint("CK_ProductionRetentionPolicyRecord_OriginSha256", "[OriginSha256] IS NULL OR DATALENGTH([OriginSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_ProductionRetentionPolicyRecord_PolicyJson", "[PolicyJson] IS NULL OR ISJSON([PolicyJson]) = 1");
+
+                            t.HasCheckConstraint("CK_ProductionRetentionPolicy_Bounds", "DATALENGTH([PolicyJson]) BETWEEN 2 AND 16384 AND DATALENGTH([PolicySha256])=64 AND [AuditSequence] BETWEEN 1 AND 512");
+
+                            t.HasCheckConstraint("CK_ProductionRetentionPolicy_Clock", "DATEPART(TZOFFSET,[OriginalCreatedAt])=0 AND DATEPART(TZOFFSET,[EnrolledAt])=0 AND [EnrolledAt]>=[OriginalCreatedAt]");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.ProductionRetentionTerminalRecord", b =>
+                {
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("AuditHash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<long>("AuditSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("ClockAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("OriginalAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PolicySha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("SourceAuditHash")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<long>("SourceAuditSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.HasKey("EnvelopeId");
+
+                    b.ToTable("ProductionRetentionTerminals", t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductionRetentionTerminalRecord_AuditHash", "[AuditHash] IS NULL OR DATALENGTH([AuditHash]) = 32");
+
+                            t.HasCheckConstraint("CK_ProductionRetentionTerminalRecord_SourceAuditHash", "[SourceAuditHash] IS NULL OR DATALENGTH([SourceAuditHash]) = 32");
+
+                            t.HasCheckConstraint("CK_ProductionRetentionTerminalRecord_Status", "[Status] IS NULL OR [Status] IN ('Draft','Sent','Completed','Declined','Voided','Expired')");
+
+                            t.HasCheckConstraint("CK_ProductionRetentionTerminal_Bounds", "[Status] IN ('Completed','Expired','Declined','Voided') AND DATALENGTH([PolicySha256])=64 AND [SourceAuditSequence] BETWEEN 1 AND 511 AND [AuditSequence] BETWEEN 2 AND 512 AND [AuditSequence]>[SourceAuditSequence]");
+
+                            t.HasCheckConstraint("CK_ProductionRetentionTerminal_Clock", "DATEPART(TZOFFSET,[OriginalAt])=0 AND DATEPART(TZOFFSET,[ClockAt])=0 AND DATEPART(TZOFFSET,[RecordedAt])=0 AND [RecordedAt]>=[OriginalAt] AND [ClockAt]<=[OriginalAt] AND DATEDIFF_BIG(nanosecond,[ClockAt],[OriginalAt]) BETWEEN 0 AND 999999999 AND DATEPART(nanosecond,[ClockAt])=0");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.Recipient", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2279,6 +2386,30 @@ namespace QuillSign.Data.Migrations
                     b.HasOne("QuillSign.Data.EmailOutbox", null)
                         .WithMany()
                         .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.ProductionRetentionPolicyRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QuillSign.Data.ProductionRetentionTerminalRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.ProductionRetentionPolicyRecord", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("QuillSign.Data.Envelope", null)
+                        .WithMany()
+                        .HasForeignKey("EnvelopeId")
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
                 });

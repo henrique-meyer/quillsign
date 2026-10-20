@@ -123,6 +123,10 @@ public static class DatabasePermissions
             DENY UPDATE, DELETE ON OBJECT::[dbo].[AuditEvents] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[DocumentRetentionSnapshots] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[DocumentRetentionSnapshots] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[ProductionRetentionPolicies] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[ProductionRetentionPolicies] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[ProductionRetentionTerminals] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[ProductionRetentionTerminals] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[LookupContactRetentionSnapshots] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[LookupContactRetentionSnapshots] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[SignerContactRevisions] TO [app_runtime_role];

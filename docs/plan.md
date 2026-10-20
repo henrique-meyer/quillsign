@@ -20,7 +20,7 @@ Acceptance: tracked plan and native Jira agree on the required production work, 
 
 ## QUILS-146: Define versioned production retention policy contracts
 
-Status: In Progress. Assigned to ChatGPT Codex. Independent source-only prerequisite; production behavior remains unchanged.
+Status: Done after PR #152 passed all ten exact-head checks and merged; native Jira Done verified in the merge pass. Independent source-only prerequisite; production behavior remains unchanged.
 
 Dependencies: QUILS-145. Owner explicitly authorized independent source implementation while the QUILS-139 sandbox test is pending on 2026-10-19. Remove the sandbox story as a source prerequisite; QUILS-150 retains it as a production acceptance gate. Do not change the pinned sandbox deployment or its approved package.
 
@@ -34,11 +34,15 @@ Validation: all 37 focused production-policy cases pass with a warning-free Rele
 
 ## QUILS-151: Persist and audit frozen production retention policies
 
-Status: To Do. Assigned to ChatGPT Codex. Required production implementation; depends on QUILS-146.
+Status: In Progress. Assigned to ChatGPT Codex. Required production implementation; merged QUILS-146 prerequisite verified.
 
 Dependencies: QUILS-146.
 
 Implement the persistence part of the original QUILS-146 scope after its versioned policy contract merges. Freeze the correct non-demo record policy at creation/first enrollment, including explicit finite/indefinite settings, record origin and evidence-bound policy digest. Insert-only SQL/schema and append-only audit provenance must distinguish new enrollment from legacy/missing policy; no automatic backfill or reinterpretation of signed records. Capture terminal state/time anchors under the existing envelope transaction and recover uncertain commits idempotently. Settings changes apply prospectively; explicit extensions/migration preserve historical evidence. No demo enrollment changes, hosted migration/grant, live service or deletion. Test SQL provenance, concurrency, source/state bindings, tampering, rollback and restart/unknown commits. This work is a required production release prerequisite for legal holds and deletion, not optional deferred scope.
+
+Creation enrollment is an explicit internal operation in the new envelope's caller-owned transaction; ordinary reads never enroll legacy records. Preserve the exact original creation timestamp and normalize the policy clock once to UTC seconds. Persist the canonical immutable policy plus enrollment audit binding atomically, and verify the existing saved evidence after uncertain commits without consulting current options. Terminal anchors bind one verified authoritative transition event and its exact original timestamp under the common envelope lock; expiry uses its effective deadline rather than delayed worker execution, and completion requires the actual publication evidence. Missing or inconsistent provenance grants no lifecycle or deletion authority. Keep the backend unregistered until QUILS-152 integrates it.
+
+Validation in progress: the warning-free Release build and all 44 local contract/guard regressions pass, including seven new transaction, immutability and exact-duration cases. Migration generation and pending-model verification pass without connecting to a database. SQL enrollment, provenance, permissions, concurrency, rollback, lost-acknowledgement and actual terminal-transition cases are prepared and remain a required CI gate; no local SQL success or hosted activation is claimed. The genuine completion-source fixture verifies publication metadata separately; full enrolled admission-through-publication integration remains required in QUILS-152.
 
 ## QUILS-152: Bind production disclosures completion and access to frozen retention
 
@@ -47,6 +51,8 @@ Status: To Do. Assigned to ChatGPT Codex. Required production implementation; de
 Dependencies: QUILS-151.
 
 Implement the integration part of the original QUILS-146 scope after the policy contract and persistence story merge. Bind real-use disclosure/Send snapshots, final publication protection/deadlines and sender/signer/lookup/final reads to the exact saved production policy and terminal anchor. Preserve legacy publication recipe verification and all demo behavior. Never read mutable current options to shorten or extend an enrolled record, conflate ordinary indefinite retention with a case hold, rewrite signed evidence, restore expired sessions or authorize deletion. Pending signing and incomplete completion must remain explicit unresolved states rather than accidental purge candidates. Show actual retention/access and archive responsibility without hold reasons; fail closed for absent/inconsistent enrollment and insufficient storage protection. Validate meaningful SQL and real synthetic desktop/mobile/keyboard flows including clock boundaries, configuration changes, old recipes and corrupted evidence. Follow the local SEO regression runbook for visible routes. No fabricated operator policies, hosted settings/grants, live email/TSA or cloud policy changes. This preserves the original QUILS-146 integration requirements as mandatory production work.
+
+Replace ordinary admission's current fixed demo selection with explicit deployment-mode configuration. New production records require a complete production policy and truthful operator disclosures before admission and freeze their selected mode and policy at creation. Preserve historical demo records and restricted-pilot rules; changing the completed-retention setting alone must never silently convert existing records or make an installation production ready.
 
 ## QUILS-147: Preserve production records with authorized durable legal holds
 
