@@ -1,6 +1,6 @@
 # Production legal holds
 
-This is the QUILS-147 design and internal pending-command checkpoint. It does not activate a hold service, install operator routes, provision an identity provider, mutate cloud protection, or establish production readiness. Complete inventory/provider preservation and the QUILS-148 operator workflow remain required.
+This is the QUILS-147 design and internal pending-command/SQL-inventory checkpoint. It does not activate a hold service, install operator routes, provision an identity provider, mutate cloud protection, or establish production readiness. Referenced-object inventory/provider preservation and the QUILS-148 operator workflow remain required.
 
 ## Operator authentication
 
@@ -21,6 +21,10 @@ The durable backend must maintain append-only command/protection evidence, attri
 The current internal request ledger persists authenticated-encrypted operator/command details separately from the participant audit. Every request binds the saved production policy, exact parent/hold/command IDs, original expected global revision, timestamp and previous-entry digest. Reads require verified enrollment and the common parent lock; exact replay returns the saved request rather than advancing its clock or revision. Missing, demo and unenrolled records cannot acquire an implicit policy. Ordinary runtime and worker SQL roles have no access to this private table. A separately approved privileged executor is still required before any runtime registration.
 
 This ledger reports only preservation-pending and release-pending requests. Both remain deletion-blocking. It provides no effective-preservation or completed-release receipt. Its bounded authenticated journal rejects corrupted entries and missing prefixes; it cannot independently detect wholesale restoration of an earlier valid database. External storage fencing and restore reconciliation in the remaining backend/acceptance work must address that case before deletion is enabled. Source migrations create the table; they do not grant operator access or change a hosted database.
+
+The private SQL inventory builder verifies that exact pending fence and captures all explicitly covered record-owned scalar rows under the parent transaction and SQL range locks. It checks row/byte bounds before loading, includes column/type descriptions and per-table content digests, and returns authenticated encrypted output. The content fingerprint excludes capture time so a later source change can be distinguished from a repeated capture. It includes the record's own linked lookup-retention metadata, never global suppression or unrelated lookup/pilot data. An unexpected model or pilot association fails closed. It neither repairs provenance nor changes a retention clock, session, source row or audit event.
+
+An encrypted SQL snapshot alone is not complete preservation. The remaining worker must verify every required referenced object/version, maintain external fencing against restore and concurrent mutation/deletion, bind the exact SQL and object inventories to durable protection receipts, and reconcile uncertainty before reporting an effective hold. Unknown provider protection or missing objects must keep the request pending or failed and deletion blocked.
 
 Every active hold blocks deletion independently. Explicit release resolves only its exact hold; other holds continue to block. It cannot shorten time-locked protection, change original retention clocks, rewrite signed evidence, restore participant sessions or grant public access. Ordinary indefinite retention is independent of a case hold. Releasing the final hold triggers reevaluation of the frozen policy, not an immediate destructive operation.
 

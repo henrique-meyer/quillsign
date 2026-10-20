@@ -219,6 +219,8 @@ public sealed class ProductionHoldRequestGuardTests
             .UseSqlServer("Server=127.0.0.1,1;Database=SyntheticNoConnection;Integrated Security=true;Encrypt=true").Options);
         var service = new ProductionHoldRequests(db, new EphemeralDataProtectionProvider(), TimeProvider.System);
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.ReadLockedAsync(Guid.NewGuid()));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new ProductionHoldSqlInventory(db, new EphemeralDataProtectionProvider(), TimeProvider.System)
+            .CaptureLockedAsync(Guid.NewGuid(), 1, new string('0', 64)));
         var command = new ProductionHoldCommand(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 0, ProductionHoldOperation.Place,
             "Synthetic purpose", "Synthetic reason", "synthetic-reference");
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.PrepareLockedAsync(null!, new(false, []), command));
