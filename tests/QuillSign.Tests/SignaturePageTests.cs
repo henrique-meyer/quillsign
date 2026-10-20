@@ -28,7 +28,9 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
         await using var run=await Browser.Create(fixture);
         using(var anonymous=await run.Client.GetAsync(run.Path))Assert.Equal(HttpStatusCode.Unauthorized,anonymous.StatusCode);
         await run.Session("sender"); using(var sender=await run.Client.GetAsync(run.Path))Assert.Equal(HttpStatusCode.Unauthorized,sender.StatusCode);
-        await run.Session("signer"); var page=await run.Get(); Assert.Contains("Type (keyboard accessible)",page); Assert.Contains("No preview prepared",page); Assert.DoesNotContain("name=\"Acknowledged\" value=\"true\" checked",page);
+        await run.Session("signer"); var page=await run.Get(); Assert.Contains("role=\"tablist\"",page); Assert.Contains("aria-controls=\"drawn-marks\"",page); Assert.Contains("aria-controls=\"uploaded-marks\"",page); Assert.Contains("No preview prepared",page); Assert.DoesNotContain("name=\"Acknowledged\" value=\"true\" checked",page);
+        Assert.Contains("name=\"ConfirmedName\" value=\"Synthetic signer\" readonly",page);
+        Assert.DoesNotContain("id=\"name-confirmed\" checked",page); Assert.DoesNotContain("Mobile",page);
         await using(var db=fixture.Open()) { Assert.False(await db.SignaturePreviews.AnyAsync(x=>x.EnvelopeId==run.Envelope.Id)); Assert.Null((await db.Signers.SingleAsync(x=>x.Id==run.Signer.Id)).SignatureAdoptionId); }
         using(var missingCsrf=await run.Preview(page,false))Assert.Equal(HttpStatusCode.BadRequest,missingCsrf.StatusCode);
         using var prepared=await run.Preview(page); Assert.Equal(HttpStatusCode.OK,prepared.StatusCode); Assert.True(prepared.Headers.CacheControl!.NoStore);
@@ -48,6 +50,31 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
         using(var replaced=await run.Preview(confirmed))Assert.Equal(HttpStatusCode.OK,replaced.StatusCode);
         await using var inspect=fixture.Open(); Assert.Single(await inspect.AuditEvents.Where(x=>x.EnvelopeId==run.Envelope.Id).ToArrayAsync());
         Assert.Equal(SignerStatus.Viewed,(await inspect.Signers.SingleAsync(x=>x.Id==run.Signer.Id)).Status);
+    }
+
+    [Theory]
+    [InlineData(false,"Synthetic signer")]
+    [InlineData(true,"")]
+    [InlineData(true,"Different signer")]
+    [InlineData(true,"synthetic signer")]
+    public async Task Adoption_requires_explicit_confirmation_of_exact_trusted_name_without_identity_mutation(bool confirmed,string name)
+    {
+        await using var run=await Browser.Create(fixture); await run.Session("signer"); var page=await run.Get();
+        using var prepared=await run.Preview(page); using var data=JsonDocument.Parse(await prepared.Content.ReadAsStringAsync());
+        var receipt=data.RootElement.GetProperty("receipt").GetString()!;
+        using(var denied=await run.Adopt(page,receipt,nameConfirmed:confirmed,confirmedName:name))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest,denied.StatusCode);
+            Assert.Contains("Confirm your name",await denied.Content.ReadAsStringAsync());
+        }
+        await using(var db=fixture.Open())
+        {
+            var signer=await db.Signers.SingleAsync(x=>x.Id==run.Signer.Id);
+            Assert.Equal("Synthetic signer",signer.FullName); Assert.Null(signer.SignatureAdoptionId);
+            Assert.False(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==run.Envelope.Id));
+        }
+        // A refused confirmation does not consume or silently replace the exact saved preview.
+        using var accepted=await run.Adopt(page,receipt); Assert.Equal(HttpStatusCode.Redirect,accepted.StatusCode);
     }
 
     [Theory]
@@ -157,8 +184,8 @@ public sealed class SignaturePageTests(SqlDatabaseFixture fixture) : IClassFixtu
             foreach(var name in new[]{"Signature","Initials"}) { if(kind=="missing-file" && name=="Initials")continue; var file=new ByteArrayContent(kind=="oversize" ? new byte[512*1024+1] : kind=="invalid-png" ? new byte[]{1,2,3} : SignatureAdoptionTests.Mark()); file.Headers.ContentType=new(kind=="mime" ? "image/jpeg" : "image/png"); form.Add(file,name,"synthetic.png"); }
             return Client.PostAsync(Path+"?handler=Preview",form);
         }
-        public Task<HttpResponseMessage> Adopt(string page,string receipt,bool ack=true,bool csrf=true,string version=SignatureAdoptionStatement.Version)
-        { var form=new Dictionary<string,string> { ["Receipt"]=receipt,["Acknowledged"]=ack.ToString(),["StatementVersion"]=version }; if(csrf)form["__RequestVerificationToken"]=Token(page); return Client.PostAsync(Path+"?handler=Adopt",new FormUrlEncodedContent(form)); }
+        public Task<HttpResponseMessage> Adopt(string page,string receipt,bool ack=true,bool csrf=true,string version=SignatureAdoptionStatement.Version,bool nameConfirmed=true,string confirmedName="Synthetic signer")
+        { var form=new Dictionary<string,string> { ["Receipt"]=receipt,["Acknowledged"]=ack.ToString(),["StatementVersion"]=version,["NameConfirmed"]=nameConfirmed.ToString(),["ConfirmedName"]=confirmedName }; if(csrf)form["__RequestVerificationToken"]=Token(page); return Client.PostAsync(Path+"?handler=Adopt",new FormUrlEncodedContent(form)); }
         internal static string Token(string page)=>WebUtility.HtmlDecode(Regex.Match(page,"name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").Groups[1].Value);
         public async ValueTask DisposeAsync() { Client.Dispose(); await App.DisposeAsync(); foreach(var blob in Storage.Created)await Storage.Inner.DeleteAsync(BlobStorageTests.Sender(blob.EnvelopeId),blob); }
     }

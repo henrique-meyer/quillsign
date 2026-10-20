@@ -7,6 +7,8 @@ const byId = id => document.getElementById(id);
 const panel = byId("adoption-preview");
 const receipt = byId("preview-receipt");
 const ack = byId("adoption-ack");
+const nameConfirmed = byId("name-confirmed");
+const tabs = [...form.querySelectorAll('[role="tab"]')];
 const adopt = byId("adopt-button");
 const prepare = byId("prepare-preview");
 const status = byId("capture-status");
@@ -21,7 +23,8 @@ const pads = ["signature", "initials"].map(name => {
 });
 
 function invalidate() {
-    generation++; clearTimeout(expiryTimer); receipt.value = ""; ack.checked = false; adopt.disabled = true;
+    generation++; clearTimeout(expiryTimer); receipt.value = ""; ack.checked = false; nameConfirmed.checked = false; adopt.disabled = true;
+    error.hidden = true;
     panel.hidden = true; byId("signature-image").removeAttribute("src"); byId("initials-image").removeAttribute("src");
     status.textContent = "Marks changed. Prepare and review a new saved preview.";
 }
@@ -29,7 +32,7 @@ function setBusy(value) {
     busy = value;
     for (const control of form.querySelectorAll("input,button")) control.disabled = value;
     for (const { pad } of pads) value ? pad.off() : pad.on();
-    prepare.disabled = value; adopt.disabled = value || !receipt.value || !ack.checked;
+    prepare.disabled = value; updateAdoption();
 }
 function resizePads() {
     if (busy || byId("drawn-marks").hidden) return;
@@ -48,13 +51,32 @@ function resizePads() {
 }
 const observer = new ResizeObserver(resizePads); for (const { canvas } of pads) observer.observe(canvas);
 window.addEventListener("resize", resizePads);
-form.addEventListener("input", invalidate);
-form.addEventListener("change", () => {
-    invalidate(); const method = form.elements.Method.value;
-    byId("typed-marks").hidden = method !== "Typed"; byId("drawn-marks").hidden = method !== "Drawn"; byId("uploaded-marks").hidden = method !== "Uploaded";
+form.addEventListener("input", () => { invalidate(); renderTypedSamples(); });
+form.addEventListener("change", invalidate);
+// Selecting a tab changes capture mode; only explicit preparation sends images.
+function selectTab(tab) {
+    if (busy || tab.getAttribute("aria-selected") === "true") return;
+    invalidate(); form.elements.Method.value = tab.dataset.method;
+    for (const item of tabs) {
+        const selected = item === tab;
+        item.setAttribute("aria-selected", String(selected)); item.tabIndex = selected ? 0 : -1;
+        byId(item.getAttribute("aria-controls")).hidden = !selected;
+    }
     resizePads();
-});
-ack.addEventListener("change", () => { adopt.disabled = busy || !receipt.value || !ack.checked; });
+}
+for (const tab of tabs) {
+    tab.addEventListener("click", () => selectTab(tab));
+    tab.addEventListener("keydown", event => {
+        if (busy || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const index = tabs.indexOf(tab);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        selectTab(tabs[next]); tabs[next].focus();
+    });
+}
+function updateAdoption() { adopt.disabled = busy || !receipt.value || !ack.checked || !nameConfirmed.checked; }
+ack.addEventListener("change", updateAdoption);
+nameConfirmed.addEventListener("change", updateAdoption);
 
 function canvas(width, height) {
     const result = document.createElement("canvas"); result.width = width; result.height = height; return result;
@@ -73,6 +95,13 @@ function typed(value, maximum) {
     if (size < 20) throw new Error("This typed mark is too long to display clearly. Shorten it or use Draw/Upload.");
     context.font = `${size}px cursive`; context.fillStyle = "#152b3c"; context.textBaseline = "middle";
     context.fillText(value, 80, 200); return surface;
+}
+function renderTypedSamples() {
+    for (const [input, target, maximum] of [["typed-name", "typed-signature-sample", 200], ["typed-initials", "typed-initials-sample", 20]]) {
+        const surface = byId(target), context = surface.getContext("2d", { colorSpace: "srgb" });
+        context.clearRect(0, 0, surface.width, surface.height);
+        try { context.drawImage(typed(byId(input).value, maximum), 0, 0); } catch { /* Validation is announced on explicit preparation. */ }
+    }
 }
 async function uploaded(input) {
     const file = input.files[0]; if (!file || file.size > 5 * 1024 * 1024) throw new Error("Choose both images, each no larger than 5 MiB.");
@@ -120,12 +149,13 @@ form.addEventListener("submit", async event => {
         panel.hidden = false; status.textContent = "Saved preview ready. Review both marks and the adoption statement.";
         byId("preview-heading").focus();
         expiryTimer = setTimeout(() => { invalidate(); status.textContent = "The saved preview expired. Prepare and review it again."; }, remaining);
-    } catch (problem) { invalidate(); error.textContent = problem.message || "The preview could not be prepared."; error.hidden = false; status.textContent = "No adoption was recorded. Correct the issue and prepare a new preview."; }
+    } catch (problem) { invalidate(); error.textContent = problem.message || "The preview could not be prepared."; error.hidden = false; status.textContent = "No new adoption was recorded. Correct the issue and prepare a new preview."; }
     finally { setBusy(false); resizePads(); }
 });
 adoptForm.addEventListener("submit", event => {
-    if (busy || !receipt.value || !ack.checked) { event.preventDefault(); return; }
+    if (busy || !receipt.value || !ack.checked || !nameConfirmed.checked) { event.preventDefault(); return; }
     busy = true; adopt.disabled = true; status.textContent = "Confirming adoption…";
 });
 prepare.disabled = false;
+renderTypedSamples();
 window.addEventListener("pageshow", event => { if (event.persisted) { invalidate(); setBusy(false); resizePads(); } });

@@ -17,27 +17,39 @@
 else { <p>Prepare both marks, review the saved preview, then choose Adopt and Sign. This adopts your marks; it does not fill document fields or complete signing.</p> }
 <noscript><p class="document-error">Enable JavaScript to prepare and review signature images. You may still download the document and disclosure from the review page.</p></noscript>
 <form method="post" asp-page-handler="Preview" enctype="multipart/form-data" id="mark-capture">
-<fieldset><legend>How would you like to create both marks?</legend>
-<label class="check-label"><input type="radio" name="Method" value="Typed" checked /> Type (keyboard accessible)</label>
-<label class="check-label"><input type="radio" name="Method" value="Drawn" /> Draw</label>
-<label class="check-label"><input type="radio" name="Method" value="Uploaded" /> Upload images</label>
-</fieldset>
-<div id="typed-marks">
+<div class="mark-picker">
+<input type="hidden" name="Method" value="Typed" />
+<div class="capture-tabs" role="tablist" aria-label="Create your signature and initials">
+<button type="button" role="tab" id="tab-type" aria-controls="typed-marks" aria-selected="true" data-method="Typed">Type</button>
+<button type="button" role="tab" id="tab-draw" aria-controls="drawn-marks" aria-selected="false" tabindex="-1" data-method="Drawn">Draw</button>
+<button type="button" role="tab" id="tab-image" aria-controls="uploaded-marks" aria-selected="false" tabindex="-1" data-method="Uploaded">Image</button>
+</div>
+<div id="typed-marks" class="capture-panel" role="tabpanel" aria-labelledby="tab-type" tabindex="0">
 <label for="typed-name">Name for your signature</label><input id="typed-name" name="TypedName" value="@Model.TypedName" maxlength="200" autocomplete="name" />
 <label for="typed-initials">Initials</label><input id="typed-initials" name="TypedInitials" maxlength="20" autocomplete="off" />
-<p class="hint">The preview uses the name and initials you enter. Check the exact saved appearance before adopting.</p>
+<div class="mark-pair typed-samples" aria-hidden="true"><div><span>Signature</span><canvas id="typed-signature-sample" width="1600" height="400"></canvas></div><div><span>Initials</span><canvas id="typed-initials-sample" width="1600" height="400"></canvas></div></div>
+<p class="hint">Type is keyboard accessible. These samples are not saved. Check the exact saved appearance before adopting.</p>
 </div>
-<div id="drawn-marks" hidden>
+<div id="drawn-marks" class="capture-panel" role="tabpanel" aria-labelledby="tab-draw" tabindex="0" hidden>
 <p id="draw-instructions">Draw each mark with a mouse, pen or touch. Use Type for a keyboard-accessible alternative.</p>
+<div class="mark-pair">
+<div>
 <label id="signature-canvas-label">Draw your signature</label><canvas id="signature-canvas" class="signature-pad" aria-labelledby="signature-canvas-label" aria-describedby="draw-instructions"></canvas>
 <button type="button" class="quiet-button" id="clear-signature">Clear signature</button>
+</div><div>
 <label id="initials-canvas-label">Draw your initials</label><canvas id="initials-canvas" class="signature-pad" aria-labelledby="initials-canvas-label" aria-describedby="draw-instructions"></canvas>
 <button type="button" class="quiet-button" id="clear-initials">Clear initials</button>
+</div></div>
 </div>
-<div id="uploaded-marks" hidden>
+<div id="uploaded-marks" class="capture-panel" role="tabpanel" aria-labelledby="tab-image" tabindex="0" hidden>
 <p>Choose one static PNG or JPEG for each mark. Each file must be at most 5 MiB and 2048 × 1024 pixels. Animated images and other formats are unsupported. Use a clear, tightly framed mark.</p>
+<div class="mark-pair"><div>
 <label for="signature-upload">Signature image</label><input id="signature-upload" type="file" accept="image/png,image/jpeg" />
+</div><div>
 <label for="initials-upload">Initials image</label><input id="initials-upload" type="file" accept="image/png,image/jpeg" />
+</div></div>
+<p class="hint">Choose both images, then prepare the saved preview below to check their exact appearance.</p>
+</div>
 </div>
 <p id="capture-status" role="status" aria-live="polite">No preview prepared.</p>
 <p id="capture-error" class="document-error" role="alert" hidden></p>
@@ -46,11 +58,15 @@ else { <p>Prepare both marks, review the saved preview, then choose Adopt and Si
 <section id="adoption-preview" class="start-card" hidden>
 <h2 tabindex="-1" id="preview-heading">Review your saved marks</h2>
 <p>These are the exact images saved by the server. Check both before adopting. Changing any input requires a new preview.</p>
-<figure><img id="signature-image" alt="Saved signature preview" /><figcaption>Signature</figcaption></figure>
-<figure><img id="initials-image" alt="Saved initials preview" /><figcaption>Initials</figcaption></figure>
+<div class="mark-pair"><figure><img id="signature-image" alt="Saved signature preview" /><figcaption>Signature</figcaption></figure>
+<figure><img id="initials-image" alt="Saved initials preview" /><figcaption>Initials</figcaption></figure></div>
 <p id="preview-expiry"></p>
 <form method="post" asp-page-handler="Adopt" id="adopt-marks">
 <input type="hidden" name="Receipt" id="preview-receipt" /><input type="hidden" name="StatementVersion" id="statement-version" />
+<label for="confirmed-name">Your name on this request</label>
+<input id="confirmed-name" name="ConfirmedName" value="@Model.Context.SignerName" readonly aria-describedby="name-help" />
+<p class="hint" id="name-help">Provided by the sender. If it is incorrect, contact the sender before adopting these marks.</p>
+<label class="check-label"><input type="checkbox" name="NameConfirmed" value="true" id="name-confirmed" required /> I confirm this is my name.</label>
 <p id="adoption-statement"></p>
 <label class="check-label"><input type="checkbox" name="Acknowledged" value="true" id="adoption-ack" required /> I agree to the adoption statement above for these exact signature and initials.</label>
 <button type="submit" id="adopt-button" disabled>Adopt and Sign</button>

@@ -24,6 +24,8 @@ public sealed class SignatureModel(SignerAccess access,SignatureAdoption adoptio
     [BindProperty] public string? TypedInitials { get; set; }
     [BindProperty] public string? Receipt { get; set; }
     [BindProperty] public bool Acknowledged { get; set; }
+    [BindProperty] public bool NameConfirmed { get; set; }
+    [BindProperty] public string? ConfirmedName { get; set; }
     [BindProperty] public string? StatementVersion { get; set; }
     private void Private() { Response.Headers.CacheControl="no-store"; Response.Headers["Referrer-Policy"]="no-referrer"; }
     private async Task<bool> Load(string publicId,CancellationToken ct)
@@ -57,7 +59,8 @@ public sealed class SignatureModel(SignerAccess access,SignatureAdoption adoptio
         if(!await Load(publicId,ct))return NotFound();
         try
         {
-            if(!ModelState.IsValid)return Failure(400,"Prepare a new preview and acknowledge its statement before adopting.");
+            if(!ModelState.IsValid || !NameConfirmed || !string.Equals(ConfirmedName,Context.SignerName,StringComparison.Ordinal))
+                return Failure(400,"Confirm your name on this request and acknowledge the saved marks before adopting. If the name is incorrect, contact the sender.");
             var result=await adoption.AdoptAsync(User,publicId,Receipt,Acknowledged,StatementVersion,HttpContext.Connection.RemoteIpAddress?.ToString(),Request.Headers.UserAgent.ToString(),ct);
             if(result==SignatureAdoptionResult.InvalidContext)return NotFound();
             if(result is SignatureAdoptionResult.Adopted or SignatureAdoptionResult.AlreadyAdopted)
@@ -73,7 +76,7 @@ public sealed class SignatureModel(SignerAccess access,SignatureAdoption adoptio
     private IActionResult Failure(int status,string message)
     {
         if(SenderConfiguration.WantsJson(HttpContext))return Error(status,message);
-        Receipt=null; ModelState.Remove(nameof(Receipt)); ModelState.AddModelError("",message); Response.StatusCode=status; return Page();
+        Receipt=null; TypedName=Context.SignerName; ModelState.Remove(nameof(Receipt)); ModelState.AddModelError("",message); Response.StatusCode=status; return Page();
     }
     private static JsonResult Error(int status,string message)=>new(new { message }) { StatusCode=status };
     private static async Task<byte[]> ReadPng(IFormFile? file,CancellationToken ct)
