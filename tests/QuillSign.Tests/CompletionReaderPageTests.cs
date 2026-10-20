@@ -62,6 +62,12 @@ public sealed class CompletionReaderPageTests(SqlDatabaseFixture fixture) : ICla
             using(var edit=await f.Client.GetAsync("/draft/"+f.PublicId+"/review"))Assert.NotEqual(HttpStatusCode.OK,edit.StatusCode);
         }
         Assert.Equal(8,await f.Count());Assert.Equal(2,f.Store.Writes);Assert.Equal(2,f.Run.Seal.Requests);
+        f.Clock.Advance(TimeSpan.FromHours(1));
+        foreach(var kind in new[]{"executed","certificate"}) {
+            using var expired=await f.Client.GetAsync(Resource(f,kind));
+            Assert.Equal(HttpStatusCode.NotFound,expired.StatusCode);Assert.Null(expired.Content.Headers.ContentDisposition);
+        }
+        Assert.Equal(8,await f.Count());
     }
 
     internal static async Task<CompletionAccessLink> Issue(Flow f,PartyType type=PartyType.Sender,Guid? id=null) {
