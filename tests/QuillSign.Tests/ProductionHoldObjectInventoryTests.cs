@@ -2,15 +2,18 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Lifecycle;
+using QuillSign.Signing;
 using QuillSign.Storage;
 using QuillSign.Work;
 
@@ -54,6 +57,50 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
             Assert.Throws<InvalidDataException>(() => ProductionHoldObjectInventory.OpenVerified(omitted, keys, clock));
         }
         finally { CryptographicOperations.ZeroMemory(raw); }
+    }
+
+    [Fact]
+    public async Task Queued_verification_can_be_captured_before_issuance_and_changed_protected_mail_is_not_verified()
+    {
+        var (id, request, original) = await Held();
+        var mail = new EmailOutbox { EnvelopeId = id, To = "synthetic-sender@example.invalid", Template = "sender-verification", AvailableAt = clock.Now,
+            PayloadJson = new EmailPayloadProtection(keys).Protect(new(Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(SHA256.HashData(Content)), Guid.NewGuid())) };
+        await using (var db = fixture.Open()) { db.Add(mail); await db.SaveChangesAsync(); }
+        var snapshot = await Capture(id, request, Source(id, original));
+        Assert.Single(ProductionHoldObjectInventory.OpenVerified(snapshot, keys, clock));
+        await using (var db = fixture.Open())
+            await db.EmailOutbox.Where(x => x.Id == mail.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.PayloadJson, "{}"));
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => Capture(id, request, Source(id, original)));
+        Assert.Contains("verification or decline", error.Message);
+        // Later corrupt SQL does not rewrite the exact earlier encrypted capture.
+        Assert.Single(ProductionHoldObjectInventory.OpenVerified(snapshot, keys, clock));
+    }
+
+    [Fact]
+    public async Task Actual_captured_invitation_decline_matches_its_protected_SQL_capture_without_renewing_access()
+    {
+        var storage = new BlobServiceClient(Environment.GetEnvironmentVariable("QUILLSIGN_TEST_STORAGE"));
+        Assert.True(storage.Uri.IsLoopback || storage.Uri.Host == "azurite", "Only the disposable local object service is allowed.");
+        await using var h = await SendDraftWorkflowTests.Harness.Create(fixture, browser: true, productionRetention: ProductionRetentionLedgerTests.Policy());
+        Assert.NotNull(await h.Send()); Assert.True(await h.Once());
+        var raw = Regex.Match(h.Sender.Last!.Text, "token=([A-Za-z0-9_-]{43})").Groups[1].Value;
+        using var services = h.App.Services.CreateScope();
+        var identity = await services.ServiceProvider.GetRequiredService<SignerAccess>().RedeemAsync(raw, null, null);
+        Assert.NotNull(identity);
+        Assert.NotNull(await services.ServiceProvider.GetRequiredService<SignerConsent>().DeclineAsync(
+            SignerAccessConfiguration.Principal(identity), h.Envelope.PublicId, "Synthetic refusal", null, null));
+        var protection = services.ServiceProvider.GetRequiredService<IDataProtectionProvider>();
+        var request = await Hold(h.Envelope.Id, h.Clock, protection);
+        await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
+        var tokenBefore = await db.AuthTokens.AsNoTracking().SingleAsync(x => x.EnvelopeId == h.Envelope.Id && x.PartyId == identity.SignerId && x.Purpose == TokenPurpose.SignerAccess);
+        var snapshot = await new ProductionHoldSqlInventory(db, protection, h.Clock).CaptureLockedAsync(h.Envelope.Id, request.Current.Revision, request.Current.FenceHash!);
+        using var sql = ProductionHoldSqlInventory.OpenVerified(snapshot, protection);
+        var objects = new List<HoldObjectEvidence> { new(new("normalized", $"{h.Envelope.Id:N}/{identity.DocumentId:N}", "historical", "", "\"etag\"", 32), identity.DocumentHash) };
+        ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, objects, protection);
+        objects.Clear();
+        Assert.Throws<InvalidDataException>(() => ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, objects, protection));
+        var tokenAfter = await db.AuthTokens.AsNoTracking().SingleAsync(x => x.Id == tokenBefore.Id);
+        Assert.Equal(tokenBefore.ExpiresAt, tokenAfter.ExpiresAt); Assert.Equal(tokenBefore.UsedAt, tokenAfter.UsedAt);
     }
 
     [Fact]
@@ -215,15 +262,21 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
             await creation.CommitAsync();
         }
         envelope.OriginalBlob = original.ToString("N"); envelope.OriginalSha256 = SHA256.HashData(Content); await db.SaveChangesAsync();
-        var command = new ProductionHoldCommand(Guid.NewGuid(), envelope.Id, Guid.NewGuid(), 0, ProductionHoldOperation.Place, "Synthetic preservation", "Synthetic reason", "synthetic-reference");
+        var request = await Hold(envelope.Id, clock, keys);
+        return (envelope.Id, request, original);
+    }
+    private async Task<ProductionHoldRequestReceipt> Hold(Guid id, TimeProvider at, IDataProtectionProvider protection)
+    {
+        var command = new ProductionHoldCommand(Guid.NewGuid(), id, Guid.NewGuid(), 0, ProductionHoldOperation.Place, "Synthetic preservation", "Synthetic reason", "synthetic-reference");
         const string issuer = "https://operator.synthetic.invalid"; const string subject = "synthetic-operator";
         var operators = new ProductionOperatorPolicy(true, [new(issuer, subject, new HashSet<ProductionOperatorPermission> { command.Permission })]);
         var ticket = new AuthenticationTicket(new(new ClaimsIdentity([new("iss", issuer, ClaimValueTypes.String, issuer), new("sub", subject, ClaimValueTypes.String, issuer)], ProductionOperatorAuthority.OidcScheme)),
-            new AuthenticationProperties { IssuedUtc = clock.Now, ExpiresUtc = clock.Now.AddMinutes(5) }, ProductionOperatorAuthority.CookieScheme);
-        var authority = ProductionOperatorAuthority.FromValidatedTicket(ticket, operators, command.Permission, clock);
+            new AuthenticationProperties { IssuedUtc = at.GetUtcNow(), ExpiresUtc = at.GetUtcNow().AddMinutes(5) }, ProductionOperatorAuthority.CookieScheme);
+        var authority = ProductionOperatorAuthority.FromValidatedTicket(ticket, operators, command.Permission, at);
+        await using var db = fixture.Open();
         await using var tx = await db.Database.BeginTransactionAsync();
-        var request = await new ProductionHoldRequests(db, keys, clock).PrepareLockedAsync(authority, operators, command); await tx.CommitAsync();
-        return (envelope.Id, request, original);
+        var request = await new ProductionHoldRequests(db, protection, at).PrepareLockedAsync(authority, operators, command); await tx.CommitAsync();
+        return request;
     }
     private async Task<ProductionHoldObjectSnapshot> Capture(Guid id, ProductionHoldRequestReceipt request, Fake source,
         ProductionHoldObjectLimits? limits = null, CancellationToken ct = default)

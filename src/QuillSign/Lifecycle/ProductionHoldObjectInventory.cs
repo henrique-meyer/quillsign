@@ -99,6 +99,7 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
             }
             ProductionHoldObjectReferences.Demand(sql.RootElement, objects);
             ProductionHoldInvitationReferences.Demand(sql.RootElement, objects, keys);
+            ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, objects, keys);
             return objects;
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
@@ -124,6 +125,7 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
         {
             ProductionHoldObjectReferences.Demand(verified.RootElement, evidence);
             ProductionHoldInvitationReferences.Demand(verified.RootElement, evidence, keys);
+            ProductionHoldDecisionNotificationReferences.Demand(verified.RootElement, evidence, keys);
         }
         // Detect observed late additions/replacements/deletions. This deliberately
         // does not claim to fence writes that happen after the second listing.
