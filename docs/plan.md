@@ -91,7 +91,7 @@ Detailed protocol: [production legal holds](production-legal-holds.md).
 
 ## QUILS-148: Add private production retention and legal-hold operator controls
 
-Status: In Progress. Assigned to ChatGPT Codex. Connected source implementation; no hosted activation claimed.
+Status: Done. PR #161 merged after all twelve exact-head checks and seven required families succeeded; native Jira Done verified in the same pass. Connected source only; no hosted activation claimed.
 
 Dependencies: QUILS-146, QUILS-147.
 
@@ -121,7 +121,7 @@ CI-diagnosed finite expiry fixture correction (2026-10-21): exact420 full integr
 
 ## QUILS-149: Delete expired production records with hold-aware durable recovery
 
-Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
+Status: In Progress. Assigned to ChatGPT Codex. Connected source deletion/recovery implementation after QUILS-148 merged; no actual production/cloud deletion or rollout claimed.
 
 Dependencies: QUILS-146, QUILS-147, QUILS-148.
 
@@ -132,6 +132,18 @@ Use exact opaque record/version references, conditional deletion, bounded batche
 Active holds and unexpired or inconsistent protection block deletion; the worker must never shorten/remove locked retention or release holds to make progress. Reconcile SQL/Blob partial failure, cancellation, crash/restart, duplicate events, uncertain provider outcomes and late writes without exceeding scope or restoring participant access. Report logical expiry, inaccessible, pending deletion, protection/hold blocked and verified active-data cleanup separately. Soft-delete, historical versions, backups, logs and participant-held copies have explicit documented limits; do not claim universal physical erasure.
 
 Acceptance: accelerated synthetic clock plus real bounded integration/browser/operator flows demonstrate finite and indefinite policies, all terminal states, concurrent hold/release races, protected versions, retries and late-write recovery. Existing seven-day demo semantics and failure-safe cleanup remain unchanged. No actual production/cloud deletion or permission/policy rollout in source implementation without a reviewed operator-approved package.
+
+Connected implementation protocol (2026-10-21):
+
+Connected source implementation begins after QUILS-148 PR161 merged a39808fa59b880784b7bdca71f0a7b08d528a6fb/native Done. Reuse the existing frozen policy, complete business/request/control inventory, runtime admission and exact independent hold release. First authenticate original lifecycle retention eligibility and retained-copy/archive commitments. An ordinary SQL absence, mutable IsDemo value, policy deadline, email submission or storage recovery marker alone never authorizes deletion. No new legal retention duration or production activation is selected.
+
+Append closed deletion reservation, immutable exact plan/item intent/outcome, SQL-commit and terminal receipt events after existing witness kinds. Preserve historical bytes and full business/request fingerprints. Atomic external ordering is explicit: any prior pending/active hold or unresolved business/provider operation prevents reservation; a committed irreversible deletion reservation prevents later hold placement and every participant/business mutation before destructive I/O. Reservation, cancellation, lease expiry, missing SQL and unknown outcomes never reopen access. New deletion scope supports authenticated R0 or exact independently released requests without minting a positive hold revision. Extend the existing closed runtime witness guard rather than trusting a new side marker.
+
+Inventory all owned current objects, versions and snapshots in four ordinary areas and exact separately authenticated archive prefixes. Bind bounded encrypted deterministic create-only plans/receipts outside deleted prefixes; inspect fresh actual version protection around each conditional destructive request. Never release a hold or shorten retention for purge. Preserve unknown/lost acknowledgement and late-write scope until exact outcome reconciliation, with a storage-only bounded encrypted recovery index that is a scheduling hint only. Terminal active-data cleanup leaves an external no-resurrection barrier and no unnecessary new participant payload; existing witness/audit/backup/soft-delete/participant-copy limits remain explicit.
+
+Use a distinct typed production cleanup WorkKind and admission before Claim lease/attempt mutation. Add one new source migration and static dbo-owned production-only SQL procedure with exact physical transaction/work lease/parent rowversion/policy/request-control predicates, explicit owned FK deletion order, direct global association refusals, bounded counts and unknown-commit reconciliation. Worker-only EXECUTE is explicit opt-in via dedicated narrow role/admin command; ordinary runtime gets no generic DELETE or procedure execution, no guard bypass/EXECUTE AS/dynamic SQL. Preserve the exact detached cleanup work/recovery reference, global operator observability and pilot accounting. Default-disabled runtime remains closed; source/local synthetic only, no hosted permission/schema/deletion rollout.
+
+Acceptance is one connected genuine local lifecycle with accelerated original policy clock, complete independent holds/exact releases, exact protected/current/history/snapshot and archive cleanup, narrow SQL purge, interrupted storage/SQL acknowledgement and storage-only restart/old-database restore refusal, plus state/indefinite/copy-commitment and hold-vs-delete race coverage. Exercise only changed operator deletion status in real desktop/mobile/keyboard if visible UI changes; reuse completed OIDC/signing evidence. Warning-free build, changed meaningful native/provider tests, secret scan and every exact-head CI family precede PR merge/native Done. QUILS-150 remains final release/hosted/recovery acceptance; no universal physical-erasure claim.
 
 ## QUILS-150: Validate production lifecycle recovery and self-hosting release readiness
 
