@@ -27,6 +27,7 @@ internal sealed class ProductionHoldObjectScope
     { RecordId = id; this.time = time; this.issued = issued; this.expires = expires; }
     internal static ProductionHoldObjectScope FromVerified(ProductionHoldSqlSnapshot sql, IDataProtectionProvider keys, TimeProvider time)
     {
+        if (sql.AcknowledgementOnly || sql.Revision is < 1 or > 512 || sql.FenceHash is not { Length: 64 } || !sql.FenceHash.All(char.IsAsciiHexDigitLower)) throw Invalid();
         using var verified = ProductionHoldSqlInventory.OpenVerified(sql, keys);
         var now = time.GetUtcNow();
         if (now.Offset != TimeSpan.Zero || sql.CapturedAt.Offset != TimeSpan.Zero || sql.CapturedAt > now || now - sql.CapturedAt >= TimeSpan.FromMinutes(10) ||

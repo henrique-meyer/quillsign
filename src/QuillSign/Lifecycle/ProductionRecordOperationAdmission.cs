@@ -1,0 +1,158 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.EntityFrameworkCore;
+using QuillSign.Data;
+
+namespace QuillSign.Lifecycle;
+
+internal sealed record HoldWitnessOperation(Guid OperationId, string Kind, string Reference, long RequestRevision,
+    string? RequestFenceHash, string ContentSha256, string SqlStateSha256, long ReservationSequence);
+
+// Immutable saved reservation identity, not participant/operator authority. Every
+// use reauthenticates it against the external journal and exact SQL request head.
+internal sealed record ProductionRecordOperation(Guid RecordId, Guid OperationId, string Kind, string Reference,
+    long RequestRevision, string? RequestFenceHash, string ContentSha256, string SqlStateSha256, long ReservationSequence);
+
+// Private/unregistered admission kernel. Provider work, its SQL transaction and
+// durable worker Finish are the caller's responsibility BEFORE CompleteAsync.
+// A receipt is their verified exact outcome digest, never an absence listing or
+// proof manufactured from an expired lease. Failed/unknown work remains open.
+internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
+    TimeProvider time, ProductionHoldWitnessJournal witness)
+{
+    internal async Task<HoldWitnessState> InitializeAsync(Guid recordId, CancellationToken ct = default)
+    {
+        var before = await witness.ReadAsync(recordId, ct);
+        if (before.Sequence != 0 && (!before.Initialized || before.Sequence != 1)) throw Invalid();
+        await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var requests = await Requests(db, recordId, ct);
+        if (requests.Revision != 0 || requests.FenceHash is not null || requests.Holds.Count != 0) throw Invalid();
+        var sql = await Capture(db, recordId, requests, ct); var content = ContentDigest(sql, keys);
+        using (var verified = ProductionHoldSqlInventory.OpenAcknowledgementVerified(sql, keys)) DemandFresh(verified.RootElement);
+        if (before.Initialized && (before.BusinessStateSha256 != content || before.SqlStateSha256 != sql.StateSha256)) throw Invalid();
+        var result = await witness.InitializeAsync(recordId, content, sql.StateSha256, Id(recordId, Guid.Empty, "initialize"), ct);
+        if (!result.Initialized || result.BusinessStateSha256 != content || result.SqlStateSha256 != sql.StateSha256 || result.Sequence != 1) throw Invalid();
+        await tx.RollbackAsync(ct); return result;
+    }
+
+    internal async Task<ProductionRecordOperation> BeginAsync(Guid recordId, Guid operationId, string kind, string reference, CancellationToken ct = default)
+    {
+        Tuple(recordId, operationId, kind, reference);
+        var before = await witness.ReadAsync(recordId, ct);
+        if (before.Operations?.ContainsKey(operationId) == true) return await ResumeAsync(recordId, operationId, kind, reference, ct);
+        if (!before.Initialized || before.Frozen) throw Invalid();
+        await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var requests = await Requests(db, recordId, ct); ProductionHoldWitnessJournal.DemandSql(before, requests);
+        var sql = await Capture(db, recordId, requests, ct); var content = ContentDigest(sql, keys);
+        if (content != before.BusinessStateSha256) throw Invalid();
+        await DemandControls(db, recordId, before, ct);
+        var state = await witness.ReserveOperationAsync(recordId, operationId, kind, reference, requests, content, sql.StateSha256,
+            Id(recordId, operationId, "reserve"), ct);
+        var scope = Scope(recordId, operationId, kind, reference, state);
+        DemandActive(scope, state); await tx.RollbackAsync(ct); return scope;
+    }
+
+    internal async Task<ProductionRecordOperation> ResumeAsync(Guid recordId, Guid operationId, string kind, string reference, CancellationToken ct = default)
+    {
+        Tuple(recordId, operationId, kind, reference);
+        var state = await witness.ReadAsync(recordId, ct); var scope = Scope(recordId, operationId, kind, reference, state);
+        // Settled replay conveys no provider authority. CompleteAsync can confirm
+        // its original receipt; DemandAsync always rejects further provider I/O.
+        if (!state.SettledOperations.ContainsKey(operationId)) await DemandAsync(scope, ct);
+        return scope;
+    }
+
+    internal async Task DemandAsync(ProductionRecordOperation scope, CancellationToken ct = default)
+    {
+        var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state);
+        await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
+        await tx.RollbackAsync(ct);
+        // Pending hold intent may arrive during the read, but only this same
+        // previously admitted operation may drain. Its own business edits need
+        // not match the old baseline while it is executing.
+        DemandActive(scope, await witness.ReadAsync(scope.RecordId, ct));
+    }
+
+    internal async Task<HoldWitnessState> CompleteAsync(ProductionRecordOperation scope, string receiptSha256, CancellationToken ct = default)
+    {
+        if (!Hash(receiptSha256)) throw Invalid();
+        var state = await witness.ReadAsync(scope.RecordId, ct);
+        if (Scope(scope.RecordId, scope.OperationId, scope.Kind, scope.Reference, state) != scope) throw Invalid();
+        if (state.SettledOperations.TryGetValue(scope.OperationId, out var saved))
+        { if (saved != receiptSha256) throw Invalid(); return state; }
+        DemandActive(scope, state);
+        await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
+        await DemandControls(db, scope.RecordId, state, ct);
+        var current = await Capture(db, scope.RecordId, requests, ct);
+        var operation = state.Operations![scope.OperationId];
+        var result = await witness.SettleOperationAsync(scope.RecordId, operation, receiptSha256, ContentDigest(current, keys), current.StateSha256,
+            Id(scope.RecordId, scope.OperationId, "settle"), ct);
+        if (!result.SettledOperations.TryGetValue(scope.OperationId, out var proof) || proof != receiptSha256) throw Invalid();
+        await tx.RollbackAsync(ct); return result;
+    }
+
+    internal static string ContentDigest(ProductionHoldSqlSnapshot snapshot, IDataProtectionProvider keys)
+    {
+        using var sql = ProductionHoldSqlInventory.OpenAcknowledgementVerified(snapshot, keys);
+        // Only the separately authenticated request head is outside this digest.
+        // The original full SQL StateSha256 still binds EVERY request/business
+        // row. No other evidence or schema column is removed from that binding.
+        return ProductionHoldWitnessJournal.Digest(JsonSerializer.SerializeToUtf8Bytes(new { Version = "production-hold-external-content-v1", snapshot.RecordId,
+            PolicySha256 = sql.RootElement.GetProperty("PolicySha256").GetString(), Tables = sql.RootElement.GetProperty("Tables").EnumerateArray()
+                .Where(x => x.GetProperty("Table").GetString() != "ProductionHoldRequests").ToArray() }));
+    }
+
+    private Task<ProductionHoldSqlSnapshot> Capture(QuillSignDbContext db, Guid id, ProductionHoldRequestSnapshot requests, CancellationToken ct)
+        => new ProductionHoldSqlInventory(db, keys, time).CaptureAcknowledgementLockedAsync(id, requests.Revision, requests.FenceHash, ct: ct);
+    private Task<ProductionHoldRequestSnapshot> Requests(QuillSignDbContext db, Guid id, CancellationToken ct)
+        => new ProductionHoldRequests(db, keys, time).ReadLockedAsync(id, ct);
+    private async Task DemandControls(QuillSignDbContext db, Guid id, HoldWitnessState state, CancellationToken ct)
+    {
+        var controls = new ProductionHoldControls(db, keys, time);
+        foreach (var prefix in state.Holds.Values.Select(x => x.Control).Where(x => x is not null).Distinct())
+            await controls.DemandExtendsLockedAsync(id, prefix!, ct);
+    }
+    private static ProductionRecordOperation Scope(Guid id, Guid operationId, string kind, string reference, HoldWitnessState state)
+    {
+        Tuple(id, operationId, kind, reference);
+        if (!state.Initialized || state.Operations is null || !state.Operations.TryGetValue(operationId, out var operation) || operation.Kind != kind || operation.Reference != reference) throw Invalid();
+        return new(id, operationId, kind, reference, operation.RequestRevision, operation.RequestFenceHash, operation.ContentSha256, operation.SqlStateSha256, operation.ReservationSequence);
+    }
+    private static void DemandActive(ProductionRecordOperation scope, HoldWitnessState state)
+    {
+        if (Scope(scope.RecordId, scope.OperationId, scope.Kind, scope.Reference, state) != scope || state.OutstandingOperation != scope.OperationId ||
+            state.SettledOperations.ContainsKey(scope.OperationId) || state.RequestRevision != scope.RequestRevision || state.RequestFenceHash != scope.RequestFenceHash ||
+            state.Holds.Values.Any(x => !x.Released && state.Unacknowledged?.CommandId != x.Placement.CommandId)) throw Invalid();
+    }
+    private static void DemandHead(ProductionRecordOperation scope, ProductionHoldRequestSnapshot requests)
+    { if (requests.Revision != scope.RequestRevision || requests.FenceHash != scope.RequestFenceHash) throw Invalid(); }
+    private static void Tuple(Guid id, Guid operationId, string kind, string reference)
+    { if (id == Guid.Empty || operationId == Guid.Empty || !ProductionHoldWitnessJournal.OperationText(kind, 128) || !ProductionHoldWitnessJournal.OperationText(reference, 512)) throw Invalid(); }
+    private static void DemandFresh(JsonElement sql)
+    {
+        var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
+        var e = tables["Envelopes"].EnumerateArray().Single();
+        if (e.GetProperty("IsDemo").GetBoolean() || e.GetProperty("Status").GetString() != nameof(EnvelopeStatus.Draft) ||
+            e.GetProperty("SenderVerifiedAt").ValueKind != JsonValueKind.Null || e.GetProperty("PdfBlob").ValueKind != JsonValueKind.Null ||
+            e.GetProperty("OriginalBlob").ValueKind != JsonValueKind.Null || e.GetProperty("SentAt").ValueKind != JsonValueKind.Null) throw Invalid();
+        var allowed = new HashSet<string>(StringComparer.Ordinal) { "Envelopes", "ProductionRetentionPolicies", "AuditEvents", "WorkItems", "EmailOutbox", "ProductionHoldRequests" };
+        if (tables.Any(x => !allowed.Contains(x.Key) && x.Value.GetArrayLength() != 0) || tables["ProductionHoldRequests"].GetArrayLength() != 0 ||
+            tables["AuditEvents"].EnumerateArray().Any(x => x.GetProperty("Event").GetString() is not ("production_retention_enrolled" or "draft_created" or "sender_verification_requested"))) throw Invalid();
+        foreach (var row in tables["WorkItems"].EnumerateArray())
+            if (row.GetProperty("Status").GetString() != nameof(WorkStatus.Queued) || row.GetProperty("Attempts").GetInt32() != 0 ||
+                row.GetProperty("LeaseOwner").ValueKind != JsonValueKind.Null || row.GetProperty("LeaseExpiresAt").ValueKind != JsonValueKind.Null ||
+                row.GetProperty("LastError").ValueKind != JsonValueKind.Null) throw Invalid();
+        foreach (var row in tables["EmailOutbox"].EnumerateArray())
+            if (row.GetProperty("Template").GetString() != "sender-verification" || row.GetProperty("Status").GetString() != nameof(EmailStatus.Queued) ||
+                row.GetProperty("Attempts").GetInt32() != 0 || row.GetProperty("SubmissionStartedAt").ValueKind != JsonValueKind.Null ||
+                row.GetProperty("ProviderMessageId").ValueKind != JsonValueKind.Null || row.GetProperty("Provider").ValueKind != JsonValueKind.Null ||
+                row.GetProperty("LeaseOwner").ValueKind != JsonValueKind.Null || row.GetProperty("LeaseExpiresAt").ValueKind != JsonValueKind.Null || row.GetProperty("LastError").ValueKind != JsonValueKind.Null) throw Invalid();
+    }
+    private static Guid Id(Guid id, Guid operation, string phase) => new(SHA256.HashData(Encoding.ASCII.GetBytes($"production-record-operation-v1:{id:N}:{operation:N}:{phase}")).AsSpan(0, 16));
+    private static bool Hash(string? value) => value is { Length: 64 } && value.All(char.IsAsciiHexDigitLower);
+    private static InvalidDataException Invalid() => new("The exact production operation admission and acknowledgement could not be verified.");
+}

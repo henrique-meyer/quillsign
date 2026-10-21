@@ -16,7 +16,8 @@ internal sealed record ProductionHoldSqlLimits(int MaximumRows = 4096, long Maxi
 internal sealed record ProductionHoldSqlTable(string Table, long Rows, string Sha256);
 internal sealed record ProductionHoldSqlSnapshot(Guid RecordId, long Revision, string FenceHash, DateTimeOffset CapturedAt,
     string StateSha256, string PayloadSha256, long PlaintextBytes, byte[] ProtectedPayload, IReadOnlyList<ProductionHoldSqlTable> Tables,
-    ProductionHoldControlPrefix? Control = null);
+    ProductionHoldControlPrefix? Control = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool AcknowledgementOnly = false);
 
 // Private worker building block, unregistered. This captures SQL evidence only;
 // it is not proof of referenced blob completeness or provider preservation.
@@ -39,8 +40,18 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
     // Private consumers must authenticate persisted bytes rather than trusting the
     // separately stored summary/hash or accepting a caller-supplied table list.
     internal static JsonDocument OpenVerified(ProductionHoldSqlSnapshot snapshot, IDataProtectionProvider keys)
+        => Open(snapshot, keys, false);
+
+    // Acknowledgement captures bind SQL only; they are never object/archive
+    // capabilities, even when they acknowledge a later positive request head.
+    internal static JsonDocument OpenAcknowledgementVerified(ProductionHoldSqlSnapshot snapshot, IDataProtectionProvider keys)
+        => Open(snapshot, keys, true);
+    private static JsonDocument Open(ProductionHoldSqlSnapshot snapshot, IDataProtectionProvider keys, bool acknowledgement)
     {
-        if (snapshot.RecordId == Guid.Empty || snapshot.ProtectedPayload is not { Length: > 0 and <= 17 * 1024 * 1024 } ||
+        if (!acknowledgement && snapshot.AcknowledgementOnly || snapshot.Revision is < 0 or > 512 ||
+            (snapshot.Revision == 0 ? !snapshot.AcknowledgementOnly || snapshot.FenceHash is not null :
+                snapshot.FenceHash is not { Length: 64 } || !snapshot.FenceHash.All(char.IsAsciiHexDigitLower)) ||
+            snapshot.RecordId == Guid.Empty || snapshot.ProtectedPayload is not { Length: > 0 and <= 17 * 1024 * 1024 } ||
             snapshot.PlaintextBytes is < 1 or > 16 * 1024 * 1024 || snapshot.Control is null) throw Invalid();
         ProductionHoldControls.ValidatePrefix(snapshot.Control);
         var plain = keys.CreateProtector(Version, snapshot.RecordId.ToString("N")).Unprotect(snapshot.ProtectedPayload);
@@ -50,6 +61,7 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
             if (plain.LongLength != snapshot.PlaintextBytes || Convert.ToHexStringLower(SHA256.HashData(plain)) != snapshot.PayloadSha256) throw Invalid();
             using var input = new MemoryStream(plain, false);
             document = JsonDocument.Parse(input); var root = document.RootElement;
+            if ((root.TryGetProperty("AcknowledgementOnly", out var marker) && marker.GetBoolean()) != snapshot.AcknowledgementOnly) throw Invalid();
             if (root.GetProperty("Version").GetString() != Version || root.GetProperty("RecordId").GetGuid() != snapshot.RecordId ||
                 root.GetProperty("Revision").GetInt64() != snapshot.Revision || root.GetProperty("FenceHash").GetString() != snapshot.FenceHash ||
                 root.GetProperty("CapturedAt").GetDateTimeOffset() != snapshot.CapturedAt || root.GetProperty("StateSha256").GetString() != snapshot.StateSha256 ||
@@ -69,16 +81,24 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
 
     internal async Task<ProductionHoldSqlSnapshot> CaptureLockedAsync(Guid id, long revision, string fenceHash,
         ProductionHoldSqlLimits? limits = null, CancellationToken ct = default)
+        => await Capture(id, revision, fenceHash, false, limits, ct);
+
+    internal Task<ProductionHoldSqlSnapshot> CaptureAcknowledgementLockedAsync(Guid id, long revision, string? fenceHash,
+        ProductionHoldSqlLimits? limits = null, CancellationToken ct = default)
+        => Capture(id, revision, fenceHash, true, limits, ct);
+
+    private async Task<ProductionHoldSqlSnapshot> Capture(Guid id, long revision, string? fenceHash, bool acknowledgement,
+        ProductionHoldSqlLimits? limits, CancellationToken ct)
     {
         limits ??= new();
         if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw new InvalidOperationException("SQL evidence capture requires a clean caller-owned private transaction.");
-        if (id == Guid.Empty || revision is < 1 or > 512 || fenceHash is not { Length: 64 } ||
-            !fenceHash.All(char.IsAsciiHexDigitLower) || limits.MaximumRows is < 1 or > 4096 ||
+        if (id == Guid.Empty || revision < (acknowledgement ? 0 : 1) || revision > 512 ||
+            (revision == 0 ? fenceHash is not null : fenceHash is not { Length: 64 } || !fenceHash.All(char.IsAsciiHexDigitLower)) || limits.MaximumRows is < 1 or > 4096 ||
             limits.MaximumDatabaseBytes is < 1 or > 16 * 1024 * 1024 || limits.MaximumJsonBytes is < 64 or > 16 * 1024 * 1024) throw Invalid();
         var entities = db.Model.GetEntityTypes().ToArray();
         if (!KnownTypes.SetEquals(entities.Select(x => x.ClrType))) throw Invalid();
         var holds = await new ProductionHoldRequests(db, keys, time).ReadLockedAsync(id, ct);
-        if (!holds.BlocksDeletion || holds.Revision != revision || holds.FenceHash != fenceHash) throw new DocumentConflictException();
+        if (!acknowledgement && !holds.BlocksDeletion || holds.Revision != revision || holds.FenceHash != fenceHash) throw new DocumentConflictException();
         // Control progress has its own authenticated prefix, outside the business
         // fingerprint. Including subsequent receipt publication in that fingerprint
         // would invalidate the very capture the receipt must preserve.
@@ -146,14 +166,18 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
         var state = SerializeBounded(new { Version, RecordId = id, Revision = revision, FenceHash = fenceHash, PolicySha256 = policy, Tables = data }, limits.MaximumJsonBytes);
         var stateHash = Convert.ToHexStringLower(SHA256.HashData(state)); CryptographicOperations.ZeroMemory(state);
         var at = time.GetUtcNow();
-        var plain = SerializeBounded(new { Version, RecordId = id, Revision = revision, FenceHash = fenceHash, PolicySha256 = policy,
-            CapturedAt = at, StateSha256 = stateHash, Tables = data, Control = control }, limits.MaximumJsonBytes);
+        var content = new { Version, RecordId = id, Revision = revision, FenceHash = fenceHash, PolicySha256 = policy,
+            CapturedAt = at, StateSha256 = stateHash, Tables = data, Control = control };
+        var plain = acknowledgement
+            ? SerializeBounded(new { content.Version, content.RecordId, content.Revision, content.FenceHash, content.PolicySha256,
+                content.CapturedAt, content.StateSha256, content.Tables, content.Control, AcknowledgementOnly = true }, limits.MaximumJsonBytes)
+            : SerializeBounded(content, limits.MaximumJsonBytes);
         try
         {
             var payloadHash = Convert.ToHexStringLower(SHA256.HashData(plain));
             var protectedPayload = keys.CreateProtector(Version, id.ToString("N")).Protect(plain);
-            return new(id, revision, fenceHash, at, stateHash, payloadHash, plain.LongLength, protectedPayload,
-                data.Select(x => new ProductionHoldSqlTable(x.Table, x.Count, x.Sha256)).ToArray(), control);
+            return new(id, revision, fenceHash!, at, stateHash, payloadHash, plain.LongLength, protectedPayload,
+                data.Select(x => new ProductionHoldSqlTable(x.Table, x.Count, x.Sha256)).ToArray(), control, acknowledgement);
         }
         finally { CryptographicOperations.ZeroMemory(plain); }
     }
