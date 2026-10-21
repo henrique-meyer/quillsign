@@ -43,7 +43,7 @@ internal sealed class AzureProductionDeletionStore:IProductionDeletionStore,IDis
                 scope.DemandItem(item);if(!item.Name.StartsWith(prefix,StringComparison.Ordinal))throw Invalid();items.Add(item);
             }
             if(items.Select(x=>(x.Name,x.VersionId,x.Snapshot,x.Deleted)).Distinct().Count()!=items.Count)throw Invalid();
-            return new(items.AsReadOnly(),page.ContinuationToken);
+            return new(items.AsReadOnly(),string.IsNullOrEmpty(page.ContinuationToken)?null:page.ContinuationToken);
         }
         await scope.DemandAsync(ct);return new([],null);
     }

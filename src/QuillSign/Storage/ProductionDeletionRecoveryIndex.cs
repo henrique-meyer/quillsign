@@ -69,7 +69,7 @@ internal sealed class AzureProductionDeletionRecoveryIndex:IProductionDeletionRe
                 if(parts.Length!=2||!Guid.TryParseExact(parts[0],"N",out var record)||!Guid.TryParseExact(parts[1],"N",out var deletion)||item.Name!=Path(record,deletion))throw Invalid();
                 hints.Add(await ReadAsync(record,deletion,ct));
             }
-            return new(hints.AsReadOnly(),page.ContinuationToken);
+            return new(hints.AsReadOnly(),string.IsNullOrEmpty(page.ContinuationToken)?null:page.ContinuationToken);
         }
         return new([],null);
     }

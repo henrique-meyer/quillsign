@@ -137,7 +137,10 @@ internal sealed partial class ProductionDeletionCoordinator
         var after=await Addresses(scope,ct);if(!before.SequenceEqual(after))throw ProductionDeletionProtocol.Invalid();
         return new(0,values.ToArray(),before.Where(x=>x.Deleted||x.HasVersionsOnly).ToArray());
     }
-    private async Task<ProductionDeletionObject[]> Addresses(ProductionDeletionObjectScope scope,CancellationToken ct)
+    private Task<ProductionDeletionObject[]> Addresses(ProductionDeletionObjectScope scope,CancellationToken ct)
+        =>ReadStorageAddressesAsync(storage,scope,ct);
+
+    internal static async Task<ProductionDeletionObject[]> ReadStorageAddressesAsync(IProductionDeletionStore storage,ProductionDeletionObjectScope scope,CancellationToken ct=default)
     {
         var values=new List<ProductionDeletionObject>();var identities=new HashSet<string>(StringComparer.Ordinal);long bytes=0;
         foreach(var area in ProductionDeletionObjectScope.Areas){
