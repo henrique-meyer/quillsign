@@ -9,6 +9,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Lifecycle;
 using QuillSign.Signing;
+using QuillSign.Storage;
 using QuillSign.Work;
 using static QuillSign.Tests.ProductionHoldWitnessJournalTests;
 
