@@ -225,7 +225,7 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
     }
 
     internal static async Task<SignerCurrentSource> DemandInvitationPrefixLockedAsync(QuillSignDbContext db,EmailOutbox mail,TimeProvider clock,CancellationToken ct)
-    {
+        => await Guard(async () => {
         if(db.Database.CurrentTransaction is null||mail.EnvelopeId is not {} id||mail.Template!="signer-invitation")throw new ProductionWorkBlockedException();
         var parent=await db.Envelopes.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id,ct)??throw new ProductionWorkBlockedException();
         if(parent.Status!=EnvelopeStatus.Sent||await db.SignerContactRevisions.AnyAsync(x=>x.EnvelopeId==id,ct))throw new ProductionWorkBlockedException();
@@ -241,7 +241,7 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
             :sent.InvitationWorkId;
         if(expected!=mail.Id)throw new ProductionWorkBlockedException();
         return source;
-    }
+    });
     private static bool Pending(Signer signer)=>signer.Status==SignerStatus.Pending&&signer.ConsentAt is null&&signer.SignedAt is null&&signer.SignatureAdoptionId is null;
 
     public Task PrepareOutcomeLockedAsync(QuillSignDbContext db, WorkLease lease, Guid? recordId, CancellationToken ct)
@@ -305,5 +305,11 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
         catch (Exception error) when (error is InvalidDataException or UnauthorizedAccessException or DocumentConflictException or
             IOException or HttpRequestException or Azure.RequestFailedException)
         { throw new ProductionWorkBlockedException(error); }
+    }
+    private static async Task<T> Guard<T>(Func<Task<T>> action)
+    {
+        T result = default!;
+        await Guard(async () => { result = await action(); });
+        return result;
     }
 }
