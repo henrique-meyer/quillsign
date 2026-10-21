@@ -55,7 +55,7 @@ internal static class ProductionDeletionBrowserProof
             ["ProductionDeletion:Enabled"]="true",["ProductionDeletion:CompletedCommitmentStatement"]=Statement,["ConnectionStrings:Database"]=connection
         }).Build();
         var builder=WebApplication.CreateBuilder(new WebApplicationOptions{ApplicationName=typeof(ProductionOperatorBrowser).Assembly.FullName,ContentRootPath=AppContext.BaseDirectory,EnvironmentName="Development"});
-        builder.Logging.ClearProviders();builder.WebHost.ConfigureKestrel(k=>k.ListenLocalhost(18150,l=>l.UseHttps(certificate)));
+        builder.Logging.ClearProviders();builder.WebHost.UseStaticWebAssets();builder.WebHost.ConfigureKestrel(k=>k.ListenLocalhost(18150,l=>l.UseHttps(certificate)));
         builder.Services.AddRazorPages();builder.Services.AddDataProtection();builder.Services.AddSingleton(keys);builder.Services.AddSingleton(time);
         builder.Services.AddDbContext<QuillSignDbContext>(o=>o.UseSqlServer(connection));builder.Services.AddSingleton(new DocumentOptions());
         builder.Services.AddSingleton(new WorkOptions{Enabled=true});builder.Services.AddPlatformPdfSeals(config);builder.Services.AddProductionOperator(config);
@@ -69,7 +69,7 @@ internal static class ProductionDeletionBrowserProof
             o.Events.OnRedirectToIdentityProvider=c=>{c.ProtocolMessage.IssuerAddress=origin+"/__fixture/idp";return Task.CompletedTask;};
         });
         builder.Services.Configure<CookieAuthenticationOptions>(ProductionOperatorAuthority.CookieScheme,o=>o.TimeProvider=time);
-        await using var app=builder.Build();app.UseProductionOperatorPrivacy();app.UseRouting();app.UseRateLimiter();app.UseAuthentication();app.UseAuthorization();
+        await using var app=builder.Build();app.UseProductionOperatorPrivacy();app.UseStaticFiles();app.UseRouting();app.UseRateLimiter();app.UseAuthentication();app.UseAuthorization();
         app.MapRazorPages().WithProductionOperatorRateLimit();
         var done=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var workStarted=0;var workDone=false;
         app.MapGet("/__fixture/idp",(HttpContext c)=>{
