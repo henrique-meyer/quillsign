@@ -141,9 +141,10 @@ public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess 
                 var current=await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==email.Id,ct);
                 if(JsonSerializer.Serialize(current)!=JsonSerializer.Serialize(email) || payload.LastTokenId is not null || payload.Contact!=SignerContactEpoch.Legacy)
                     throw new ProductionWorkBlockedException();
-                await ProductionWorkAdmission.DemandInitialInvitationAsync(db,current,ct);
-                var first=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==envelopeId).OrderBy(x=>x.Order).FirstAsync(ct);
-                if(first.Id!=payload.SignerId)throw new ProductionWorkBlockedException();
+                var prefix=await ProductionWorkAdmission.DemandInitialInvitationAsync(db,current,ct,time);
+                var target=await db.Signers.AsNoTracking().SingleAsync(x=>x.EnvelopeId==envelopeId&&x.Order==prefix.Version+1,ct);
+                if(target.Id!=payload.SignerId||prefix.ObjectId!=context.Identity.DocumentId||
+                    !prefix.Sha256.AsSpan().SequenceEqual(context.DocumentSha256))throw new ProductionWorkBlockedException();
                 await admission!.DemandLockedAsync(db,lease.Id,envelopeId,lease.Kind,lease.Owner,lease.Attempt,false,ct);
             }
             var owned = await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {lease.Id}").AsNoTracking().SingleAsync(ct);
@@ -241,16 +242,19 @@ public sealed class SignerInvitationDelivery(QuillSignDbContext db,SignerAccess 
         var current=await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==lease.Id,ct);
         var token=await db.AuthTokens.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==invitation.Record.Id,ct);
         var signer=await db.Signers.AsNoTracking().SingleAsync(x=>x.Id==payload.SignerId && x.EnvelopeId==id,ct);
-        if(parent.Status!=EnvelopeStatus.Sent || parent.CurrentCopyVersion!=0 || parent.CurrentFinishId is not null || parent.ExpiresAt!=originalExpiry ||
-            parent.ExpiresAt<=time.GetUtcNow() || parent.Title!=context.Title || parent.SentPdfBlob!=context.Identity.DocumentId.ToString("N") ||
-            parent.SentPdfSha256 is not {Length:32} source || !source.AsSpan().SequenceEqual(context.DocumentSha256) ||
+        var source=await ProductionWorkAdmission.DemandInvitationPrefixLockedAsync(db,original,time,ct);
+        if(parent.Status!=EnvelopeStatus.Sent || parent.ExpiresAt!=originalExpiry ||
+            parent.ExpiresAt<=time.GetUtcNow() || parent.Title!=context.Title || source.ObjectId!=context.Identity.DocumentId ||
+            !source.Sha256.AsSpan().SequenceEqual(context.DocumentSha256) ||
             parent.ErsdSha256 is not {Length:32} disclosure || !disclosure.AsSpan().SequenceEqual(context.Disclosure.Sha256) ||
-            signer.Order!=1 || signer.Status!=SignerStatus.Pending || signer.Email!=original.To || signer.FullName!=context.SignerName || signer.Role!=context.Role ||
+            signer.Order!=source.Version+1 || signer.Status!=SignerStatus.Pending || signer.Email!=original.To || signer.FullName!=context.SignerName || signer.Role!=context.Role ||
             signer.ConsentAt is not null || signer.SignatureAdoptionId is not null || signer.SignedAt is not null ||
             current.EnvelopeId!=id || current.Template!=original.Template || current.To!=original.To || current.PayloadJson!=protectedPayload ||
             current.AttachmentsJson!=original.AttachmentsJson || current.Status!=EmailStatus.Queued || current.SubmissionStartedAt!=intentAt ||
             current.Attempts!=lease.Attempt || current.Provider is not null || current.ProviderMessageId is not null ||
             token is null || JsonSerializer.Serialize(token)!=savedToken || protection.ReadCanonical(current.PayloadJson)!=(payload with{LastTokenId=invitation.Record.Id}))
+            throw new ProductionWorkBlockedException();
+        if(await db.AuthTokens.CountAsync(x=>x.EnvelopeId==id&&x.Purpose==TokenPurpose.SignerAccess&&x.PartyId==signer.Id,ct)!=1)
             throw new ProductionWorkBlockedException();
         DemandClocks(lease,invitation,context);
     }

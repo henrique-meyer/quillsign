@@ -23,6 +23,7 @@ internal sealed record ProductionRecordOperation(Guid RecordId, Guid OperationId
 internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness)
 {
+    internal TimeProvider Clock => time;
     private sealed record HandlerFinalizationPermit(ProductionRecordOperation Scope, Guid TransactionId, HoldWitnessOutcome HandlerOutcome);
     private readonly ConditionalWeakTable<QuillSignDbContext, HandlerFinalizationPermit> handlerFinalizers = new();
     internal async Task<bool> IsUnenrolledDemoAsync(QuillSignDbContext db, Guid recordId, CancellationToken ct = default)
