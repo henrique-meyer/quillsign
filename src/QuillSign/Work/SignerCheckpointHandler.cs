@@ -52,8 +52,8 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
                 if(signer.Status!=SignerStatus.Signed || signer.SignedAt!=f.FinishedAt || !SignerCheckpointState.PublishedEvidence(evidence,f,signer))return new(WorkOutcome.Failed,"checkpoint-evidence-unavailable");
                 if(production)
                 {
-                    // No reminder/completion repair belongs to this finite first
-                    // checkpoint path; unchanged replay seals its own handler cut.
+                    // Admission verified the exact existing downstream work.
+                    // Missing work is never repaired by a readonly replay.
                     await HoldAdmission!.PrepareHandlerOutcomeLockedAsync(db,lease,envelopeId,ct);
                     if(!await Owns(lease,located.PayloadJson,envelopeId,ct))throw new ProductionWorkBlockedException();
                     await transaction.CommitAsync(ct);return new(WorkOutcome.Completed);
@@ -70,7 +70,8 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
                 return new(WorkOutcome.Failed,"checkpoint-not-current");
             var next=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==envelopeId && x.Order>signer.Order).OrderBy(x=>x.Order).FirstOrDefaultAsync(ct);
             if(next is not null && next.Status!=SignerStatus.Pending)return new(WorkOutcome.Failed,"next-signer-not-pending");
-            if(production&&(signer.Order!=1||next is null||next.Order!=2))throw new ProductionWorkBlockedException();
+            if(production&&(source.Version!=signer.Order-1||next is not null&&next.Order!=signer.Order+1||
+                next is null&&(completion is null||completion.HoldAdmission is null)))throw new ProductionWorkBlockedException();
             var inviteNext=next is not null && (envelope.ExpiresAt is null || envelope.ExpiresAt>time.GetUtcNow());
             f.ProcessedAt=time.GetUtcNow(); f.NextInvitationId=inviteNext ? Guid.NewGuid() : null;
             var changed=await db.SignerFinishAcceptances.Where(x=>x.Id==f.Id && x.RowVersion==f.RowVersion && x.ProcessedAt==null)
@@ -85,7 +86,9 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
             if(inviteNext)await invitations.PrepareAsync(envelopeId,next!.Id,next.Email,ct,f.NextInvitationId,
                 production?(id,due,token)=>DemandInvitationHintLocked(lease,located.PayloadJson,envelope,f,next!,id,due,token):null);
             var reminderSchedule=production||reminders is null ? [] : await reminders.PrepareCurrentLockedAsync(envelopeId,ct);
-            var completionWork=!production&&next is null && completion is not null ? await completion.PrepareAsync(envelopeId,ct) : null;
+            var completionWork=next is null&&completion is not null?await completion.PrepareAsync(envelopeId,ct,
+                production?(id,due,token)=>DemandCompletionHintLocked(lease,located.PayloadJson,envelope,f,signer.Order,id,due,token):null):null;
+            if(production&&next is null&&completionWork!=CompletionJobs.WorkId(envelopeId))throw new ProductionWorkBlockedException();
             if(!Accepted(envelope,f) || inviteNext && envelope.ExpiresAt<=time.GetUtcNow() || !await Owns(lease,located.PayloadJson,envelopeId,ct))return new(WorkOutcome.Retry,"checkpoint-expired-during-publication");
             if(production)
             {
@@ -121,8 +124,26 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
         if(work is null||mail is null||work.EnvelopeId!=original.Id||work.Kind!=WorkKind.Email||work.Status!=WorkStatus.Queued||work.Attempts!=0||
             work.LeaseOwner is not null||work.LeaseExpiresAt is not null||work.AvailableAt!=due||mail.EnvelopeId!=original.Id||mail.Template!="signer-invitation"||
             mail.To!=next.Email||mail.Status!=EmailStatus.Queued||mail.Attempts!=0||mail.SubmissionStartedAt is not null||mail.Provider is not null||mail.ProviderMessageId is not null||
-            mail.AvailableAt!=due||mail.AttachmentsJson!="[]"||current is null||current.ObjectId!=finish.PdfObjectId||current.Version!=1||current.FinishId!=finish.Id||
+            mail.AvailableAt!=due||mail.AttachmentsJson!="[]"||current is null||current.ObjectId!=finish.PdfObjectId||current.Version!=next.Order-1||current.FinishId!=finish.Id||
             !SignerCheckpointState.Same(current.Sha256,finish.PdfSha256)||original.ExpiresAt<=time.GetUtcNow()||!await Owns(lease,payload,original.Id,ct))throw new ProductionWorkBlockedException();
+    }
+    private async Task DemandCompletionHintLocked(WorkLease lease,string payload,Envelope original,SignerFinishAcceptance finish,int copyVersion,
+        Guid id,DateTimeOffset due,CancellationToken ct)
+    {
+        if(id!=CompletionJobs.WorkId(original.Id)||finish.NextInvitationId is not null||!Accepted(original,finish)||
+            !await Owns(lease,payload,original.Id,ct))throw new ProductionWorkBlockedException();
+        await HoldAdmission!.DemandLockedAsync(db,lease.Id,original.Id,lease.Kind,lease.Owner,lease.Attempt,false,ct);
+        var work=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id,ct);
+        var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==original.Id,ct);
+        var current=await state.CurrentAsync(envelope,ct);
+        if(current is null||current.Version!=copyVersion||current.FinishId!=finish.Id||current.ObjectId!=finish.PdfObjectId||
+            !SignerCheckpointState.Same(current.Sha256,finish.PdfSha256)||envelope.ErsdSha256 is not {Length:32}||
+            await db.Signers.AnyAsync(x=>x.EnvelopeId==original.Id&&x.Status!=SignerStatus.Signed,ct)||
+            work is null||work.EnvelopeId!=original.Id||work.Kind!=WorkKind.Sealing||work.Status!=WorkStatus.Queued||work.Attempts!=0||
+            work.LeaseOwner is not null||work.LeaseExpiresAt is not null||work.AvailableAt!=due||
+            work.PayloadJson!=JsonSerializer.Serialize(new CompletionWorkPayload(CompletionJobs.Version,finish.Id,copyVersion,
+                Convert.ToHexStringLower(finish.PdfSha256),Convert.ToHexStringLower(envelope.ErsdSha256)))||
+            !Accepted(original,finish)||!await Owns(lease,payload,original.Id,ct))throw new ProductionWorkBlockedException();
     }
     // The signer acted before the frozen deadline. Processing time must not discard
     // that acceptance, but later invitation issuance still requires a live deadline.
