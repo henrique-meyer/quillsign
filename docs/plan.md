@@ -65,7 +65,7 @@ Windows checkout correction: canonicalize generated retention notice newlines be
 
 ## QUILS-147: Preserve production records with authorized durable legal holds
 
-Status: backend source implementation and changed connected acceptance are complete, pending every reported exact-current-head CI result and the seven required job families. Keep PR156 draft/In Progress until those checks succeed; then ready, merge the exact reviewed head and move native Jira to Done in the same pass. This is source acceptance, not deployment or production activation. Assigned to ChatGPT Codex. Dependencies QUILS-146, QUILS-151 and QUILS-152 are merged/Done.
+Status: Done. PR156 merged after all twelve exact-current-head results and all seven required families succeeded; native Jira Done was verified in the same pass. Backend source implementation and connected acceptance are complete. This is source acceptance, not deployment or production activation. Assigned to ChatGPT Codex. Dependencies QUILS-146, QUILS-151 and QUILS-152 are merged/Done.
 
 CI closeout correction: the reviewed backend head passed all 5,451 tests and all later SQL-stack checks in the duplicate PR job, taking 37m15s overall. Both push attempts reached the existing 40-minute job limit without a reported assertion failure. Raise only the bounded local-stack CI limit to 60 minutes, retaining every test, finite-work/license/cleanup step and required current-head result. Reuse the connected backend proof; require fresh complete CI on the amended head before exact merge and native Done. Product and provider timeouts remain unchanged.
 
@@ -1998,6 +1998,8 @@ The new encrypted exact-queue carrier expires no later than the earliest origina
 CI assertion closeout: the genuine alias handlers, exact attachment pair, captured submission count, original failed-row preservation and unchanged TSA assertions now pass. Disabled alias Claim correctly throws InvalidDataException before mutation; change only the final test expectation to that exception. Preserve the guard and all earlier assertions, reuse the measured connected proof and require fresh current-head CI.
 
 Main-only integration after the checked QUILS-147 merge preserves both mappings/migrations/permissions, adds the two closeout CLR types to both exhaustive known-model and global-pilot registries, refuses direct closeout operation association before global exclusion, retains all 22 owned archive tables and verifies the combined 32-entity model. The isolated hosted candidate receives no QUILS-147 source.
+
+Combined-source verification: warning-free Release build and all 32 changed native persistence, database-permission and hold-inventory cases pass, including new direct closeout association refusal and exclusion of unrelated private accounting from all 22 owned archive tables. Production-only completion delivery explicitly retains a null alias context while the separate bounded closeout branch retains its verified alias. The previous compile mismatch is preserved in private evidence; no authorization check or retention rule was weakened. Fresh complete combined-source CI remains mandatory.
 
 ## QUILS-140: Preserve privacy-safe SES refusal diagnostics for hosted pilot
 
