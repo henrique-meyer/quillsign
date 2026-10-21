@@ -207,7 +207,7 @@ public sealed class ProductionCompletionClaimTests(SqlDatabaseFixture fixture) :
 public sealed class ProductionCompletionEffectTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
     [Theory]
-    [InlineData("success")][InlineData("wrong-request")][InlineData("unknown-request")][InlineData("other-context")][InlineData("expired")][InlineData("hold-drain")][InlineData("readonly-reconcile")]
+    [InlineData("success")][InlineData("wrong-request")][InlineData("unknown-request")][InlineData("other-context")][InlineData("expired")][InlineData("hold-drain")][InlineData("readonly-reconcile")][InlineData("backwards-observed")]
     public async Task Native_original_context_and_once_only_request_manifest_never_grant_a_repeat(string fault)
     {
         var r = await ProductionRecordOperationAdmissionTests.Run.Create(fixture);
@@ -245,6 +245,16 @@ public sealed class ProductionCompletionEffectTests(SqlDatabaseFixture fixture) 
             await Assert.ThrowsAsync<InvalidDataException>(() => gate.ConsumeCompletionEffectRequestLockedAsync(db, permit, ProductionCompletionJournalTests.Run.Hash("wrong")));
             await Assert.ThrowsAsync<InvalidDataException>(() => gate.ConsumeCompletionEffectRequestLockedAsync(db, permit, request)); return;
         }
+        if (fault == "backwards-observed")
+        {
+            r.Clock.Now = r.Clock.Now.AddMinutes(1); await gate.DemandCompletionEffectLockedAsync(db, permit);
+            var durable = (await r.Journal().ReadCompletionClockAsync(r.Id)).At;
+            r.Clock.Now = r.Clock.Now.AddSeconds(-30); Assert.True(r.Clock.Now > durable);
+            var providerCalls = 0;
+            async Task Send() { await gate.ConsumeCompletionEffectRequestLockedAsync(db, permit, request); providerCalls++; }
+            await Assert.ThrowsAsync<InvalidDataException>(Send); Assert.Equal(0, providerCalls);
+            await Assert.ThrowsAsync<InvalidDataException>(() => gate.DemandCompletionProgressLockedAsync(db, scope)); return;
+        }
         if (fault == "expired")
         {
             r.Clock.Now = r.Clock.Now.AddMinutes(5);
@@ -280,5 +290,24 @@ public sealed class ProductionCompletionEffectTests(SqlDatabaseFixture fixture) 
         await gate.RecordCompletionEffectLockedAsync(db, permit, factual);
         await Assert.ThrowsAsync<InvalidDataException>(() => gate.RecordCompletionEffectLockedAsync(db, permit, factual));
         Assert.Single((await gate.ReadCompletionRecoveryLockedAsync(db, scope)).Slots![CompletionSlot.Candidate].Receipts);
+    }
+}
+
+
+public sealed class ProductionCompletionProviderTimeTests
+{
+    [Theory]
+    [InlineData(-1, false)][InlineData(0, true)][InlineData(1, false)]
+    public void Fractional_original_clock_uses_provider_HTTP_second_precision_without_backdating_facts(int second, bool accepted)
+    {
+        var original = new DateTimeOffset(2030, 1, 1, 12, 0, 0, TimeSpan.Zero).AddMilliseconds(750);
+        var provider = DateTimeOffset.ParseExact("Tue, 01 Jan 2030 12:00:00 GMT", "R", System.Globalization.CultureInfo.InvariantCulture).AddSeconds(second);
+        Assert.Equal(accepted, ProductionCompletionProtocol.ProviderCreationMatches(original, provider, original.AddMilliseconds(100)));
+        if (!accepted) return;
+        var effect = new CompletionEffectDescriptor(CompletionEffect.PublicationExecutedFinal, Guid.NewGuid(), 20, ProductionCompletionJournalTests.Run.Hash("bytes"), 1, [ProductionCompletionJournalTests.Run.Hash("request")]);
+        var actual = new FinalStoredDocument(new(Guid.NewGuid(), FinalDocumentKind.Executed, effect.TargetId), effect.Length, Convert.FromHexString(effect.Sha256), "synthetic-version", "\"synthetic-etag\"", FinalProtection.LockedTime, original.AddDays(1), provider);
+        var fact = new CompletionEffectReceipt(effect, ProductionCompletionJournalTests.Run.Hash("receipt"), null, actual);
+        var verified = (VerifiedCompletionEffectReceipt)Activator.CreateInstance(typeof(VerifiedCompletionEffectReceipt), BindingFlags.Instance | BindingFlags.NonPublic, null, [fact], null)!;
+        Assert.Equal(provider, verified.Receipt.Final!.CreatedAt); // actual fact remains whole-second; no synthetic timestamp is substituted.
     }
 }

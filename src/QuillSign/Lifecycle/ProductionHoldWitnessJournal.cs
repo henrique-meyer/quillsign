@@ -80,6 +80,15 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
     internal async Task<HoldWitnessState> ReadAsync(Guid recordId, CancellationToken ct = default)
         => (await Read(recordId, ct)).State;
 
+    // Authenticated durable clock floor, returned by the SAME bounded read as
+    // state. No extra event, SQL connection or mutable timestamp authority.
+    internal async Task<(HoldWitnessState State, DateTimeOffset At)> ReadCompletionClockAsync(Guid recordId, CancellationToken ct = default)
+    {
+        var read = await Read(recordId, ct);
+        if (read.Events.Length == 0) throw Invalid();
+        return (read.State, read.Events[^1].At);
+    }
+
     // Conservative headroom for all remaining bounded seven-slot transitions,
     // final settlement and concurrent hold intent. No event/budget is refunded.
     internal async Task DemandCompletionHeadroomAsync(Guid recordId, CancellationToken ct = default)

@@ -98,6 +98,9 @@ internal static class ProductionCompletionProtocol
         if (!Enum.IsDefined(value.Effect) || !context.Targets.Contains(new(value.Effect, value.TargetId)) || value.Length is < 1 or > 64 * 1024 * 1024 ||
             !Hash(value.Sha256) || value.MaximumRequests is < 1 or > 64 || value.Requests.IsDefault || value.Requests.Length != value.MaximumRequests || value.Requests.Distinct().Count() != value.Requests.Length || value.Requests.Any(x => !Hash(x)) || Tsa(value.Effect) && (value.TargetId != Guid.Empty || value.MaximumRequests != 1 || value.Length > 65536)) throw Invalid();
     }
+    internal static bool ProviderCreationMatches(DateTimeOffset originalRecordedAt, DateTimeOffset providerCreatedAt, DateTimeOffset now)
+        => originalRecordedAt.Offset == TimeSpan.Zero && providerCreatedAt.Offset == TimeSpan.Zero && now.Offset == TimeSpan.Zero &&
+            providerCreatedAt >= ProductionRetentionLedger.Seconds(originalRecordedAt) && providerCreatedAt <= now;
     internal static bool FinalEffect(CompletionEffect effect) => effect is CompletionEffect.PublicationExecutedFinal or CompletionEffect.PublicationCertificateFinal;
     internal static void Receipt(CompletionEffectReceipt value)
     {
@@ -233,6 +236,7 @@ internal sealed partial class ProductionRecordOperationAdmission
         internal readonly Guid Transaction = transaction; internal readonly CompletionSlot Slot = slot; internal readonly CompletionEffectDescriptor Effect = effect;
         internal int Consumed, Recorded, Requests, Inflight;
     }
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(Guid Record, Guid Operation), long> completionClockFloors = new();
     private readonly ConditionalWeakTable<QuillSignDbContext, ClaimBinding> completionClaims = new();
     private readonly ConditionalWeakTable<QuillSignDbContext, SqlBinding> completionSql = new();
     private readonly ConditionalWeakTable<QuillSignDbContext, EffectBinding> completionEffects = new();
@@ -257,15 +261,29 @@ internal sealed partial class ProductionRecordOperationAdmission
         DemandActive(scope, state, allowOutcome: final, allowHandler: final, allowCompletion: true);
         if (!ProductionCompletionProtocol.Sealing(scope.Kind)) throw Invalid();
     }
+    private DateTimeOffset ObserveCompletionClock(ProductionRecordOperation scope, HoldWitnessState state, DateTimeOffset durableAt)
+    {
+        var until = Completion(scope, state).Claim.Until;
+        var key = (scope.RecordId, scope.OperationId);
+        while (true)
+        {
+            var now = time.GetUtcNow();
+            if (now.Offset != TimeSpan.Zero || now < durableAt || now >= until) throw Invalid();
+            var old = completionClockFloors.GetOrAdd(key, durableAt.UtcTicks);
+            if (now.UtcTicks < old) throw Invalid();
+            if (completionClockFloors.TryUpdate(key, now.UtcTicks, old)) return now;
+        }
+    }
     private async Task<HoldWitnessState> DemandCompletionHeadLocked(QuillSignDbContext db, ProductionRecordOperation scope, CancellationToken ct, bool final = false)
     {
-        _ = CompletionTransactionId(db); var state = await witness.ReadAsync(scope.RecordId, ct); DemandCompletionActive(scope, state, final);
+        _ = CompletionTransactionId(db); var clockRead = await witness.ReadCompletionClockAsync(scope.RecordId, ct); var state = clockRead.State;
+        DemandCompletionActive(scope, state, final); ObserveCompletionClock(scope, state, clockRead.At);
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests); await DemandControls(db, scope.RecordId, state, ct);
         var c = Completion(scope, state); var work = await db.WorkItems.AsNoTracking().SingleAsync(x => x.Id == c.Claim.WorkId, ct);
-        if (time.GetUtcNow().Offset != TimeSpan.Zero || time.GetUtcNow() >= c.Claim.Until || work.EnvelopeId != scope.RecordId || work.Kind != WorkKind.Sealing ||
+        if (work.EnvelopeId != scope.RecordId || work.Kind != WorkKind.Sealing ||
             work.PayloadJson is null || ProductionCompletionProtocol.Digest(work.PayloadJson) != c.Claim.PayloadSha256 || work.Attempts != c.Claim.Attempt ||
             (!final || work.Status != WorkStatus.Completed) && (work.Status != WorkStatus.Leased || work.LeaseOwner != scope.OperationId || work.LeaseExpiresAt != c.Claim.Until)) throw Invalid();
-        return state;
+        ObserveCompletionClock(scope, state, clockRead.At); return state;
     }
     private static HoldWitnessOutcome CompletionAcknowledged(HoldWitnessCompletionState value) => value.Slots!.Values.OrderBy(x => x.Context.Slot)
         .LastOrDefault(x => x.Acknowledged is not null)?.Acknowledged ?? value.ClaimAcknowledged ?? throw Invalid();
@@ -273,7 +291,8 @@ internal sealed partial class ProductionRecordOperationAdmission
     {
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests); var sql = await Capture(db, scope.RecordId, requests, ct);
         if (sql.StateSha256 != expected.SqlStateSha256 || ContentDigest(sql, keys) != expected.ContentSha256) throw Invalid();
-        var after = await witness.ReadAsync(scope.RecordId, ct); DemandCompletionActive(scope, after, final);
+        var afterClock = await witness.ReadCompletionClockAsync(scope.RecordId, ct); var after = afterClock.State;
+        DemandCompletionActive(scope, after, final); ObserveCompletionClock(scope, after, afterClock.At);
         if (ProductionCompletionProtocol.Digest(Completion(scope, state)) != ProductionCompletionProtocol.Digest(Completion(scope, after))) throw Invalid();
         return sql;
     }
@@ -295,6 +314,9 @@ internal sealed partial class ProductionRecordOperationAdmission
         var expected = c.Slots!.Values.OrderBy(x => x.Context.Slot).LastOrDefault(x => x.Expected is not null)?.Expected ?? c.ClaimExpected ?? throw Invalid();
         var requests = await Requests(db, scope.RecordId, ct); var sql = await Capture(db, scope.RecordId, requests, ct);
         if (sql.StateSha256 != expected.SqlStateSha256 || ContentDigest(sql, keys) != expected.ContentSha256) throw Invalid();
+        var after = await witness.ReadCompletionClockAsync(scope.RecordId, ct); DemandCompletionActive(scope, after.State, final: true);
+        ObserveCompletionClock(scope, after.State, after.At);
+        if (ProductionCompletionProtocol.Digest(Completion(scope, after.State)) != ProductionCompletionProtocol.Digest(c)) throw Invalid();
         return c; // No permit/provider authorization, including on consumed/unknown effects.
     }
 
@@ -386,7 +408,8 @@ internal sealed partial class ProductionRecordOperationAdmission
         var sql = await Capture(db, scope.RecordId, await Requests(db, scope.RecordId, ct), ct);
         using var plain = ProductionHoldSqlInventory.OpenAcknowledgementVerified(sql, keys);
         if (CompletionRemainder(plain.RootElement, s.Context.SqlRows) != s.Context.RemainderSha256) throw Invalid();
-        DemandCompletionActive(scope, await witness.ReadAsync(scope.RecordId, ct));
+        var after = await witness.ReadCompletionClockAsync(scope.RecordId, ct); DemandCompletionActive(scope, after.State);
+        ObserveCompletionClock(scope, after.State, after.At);
     }
     internal async Task<ProductionCompletionEffectPermit> BeginCompletionEffectLockedAsync(QuillSignDbContext db, ProductionRecordOperation scope, CompletionSlot slot, CompletionEffectDescriptor effect, CancellationToken ct = default)
     {
@@ -447,7 +470,7 @@ internal sealed partial class ProductionRecordOperationAdmission
         var output = await db.CompletionSealOutputs.AsNoTracking().SingleAsync(x => x.Id == outputId && x.EnvelopeId == scope.RecordId, ct);
         var originalAt = state.Slots![slot].Context.RecordedAt; var until = CompletionRetentionBinding.RequiredUntil(intent, originalAt);
         if (target != final.Document.ObjectId || final.Length != output.PdfLength || !final.Sha256.AsSpan().SequenceEqual(output.PdfSha256) ||
-            final.CreatedAt < originalAt || final.CreatedAt > time.GetUtcNow() ||
+            !ProductionCompletionProtocol.ProviderCreationMatches(originalAt, final.CreatedAt, time.GetUtcNow()) ||
             (until is null ? final.Protection != FinalProtection.LegalHold || final.ProtectedUntil is not null : final.Protection != FinalProtection.LockedTime || final.ProtectedUntil != until)) throw Invalid();
     }
     internal async Task ReconcileCompletionEffectLockedAsync(QuillSignDbContext db, ProductionRecordOperation scope, CompletionSlot slot,
