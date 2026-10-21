@@ -142,7 +142,7 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
         internal readonly ProductionRecordUploadAdmissionTests.Prepared Prepared=prepared;internal readonly Signals Signals=new();
         internal Envelope Original=null!;private DraftReviewSnapshot Review=null!;private DisclosureSnapshot Disclosure=null!;
         private readonly ElectronicRecordDisclosure disclosures=new(ProductionRetentionAdmissionContractTests.Policies());
-        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false,bool demo=false,bool withFields=false,bool twoSigners=false)
+        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false,bool demo=false,bool withFields=false,bool twoSigners=false,bool withRecipient=false)
         {
             var test=new Ready(fixture,await ProductionRecordUploadAdmissionTests.Prepared.Create(fixture,demo));await using var db=fixture.Open();
             var p=test.Prepared;
@@ -170,6 +170,12 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
             }
             var details=new DraftDetails(db,new(db,p.Run.Time),new(),p.Run.Time){HoldAdmission=new(p.Run.Admission)};
             Assert.Equal(DetailsError.None,(await details.ChangeAsync(p.Sender,e.PublicId,new(DetailsChangeKind.SaveDetails,Convert.ToBase64String(e.RowVersion),Title:"Synthetic NO AGREEMENT"),null,null)).Error);
+            if(withRecipient)
+            {
+                db.ChangeTracker.Clear();e=await p.Record(db);
+                Assert.Equal(DetailsError.None,(await details.ChangeAsync(p.Sender,e.PublicId,new(DetailsChangeKind.SaveRecipient,
+                    Convert.ToBase64String(e.RowVersion),Name:"Synthetic observer",Email:"observer@example.invalid"),null,null)).Error);
+            }
             if(withFields)
             {
                 var owners=await db.Signers.Where(x=>x.EnvelopeId==p.Run.Id).OrderBy(x=>x.Order).Select(x=>x.Id).ToArrayAsync();
