@@ -18,7 +18,7 @@ public sealed class EmailPilotCloseoutOperator(EmailPilotCloseoutOperatorBrowser
             Demand(s);var db=database();var w=await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==id,ct);var m=await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==id,ct);
             if(w.Status!=WorkStatus.Queued || w.Attempts!=0 || w.LeaseOwner is not null || w.LeaseExpiresAt is not null ||
                 m.Status!=EmailStatus.Queued || m.Attempts!=0 || m.SubmissionStartedAt is not null || m.Provider is not null || m.ProviderMessageId is not null)continue;
-            Demand(s);await signals().PublishAsync(id,TimeSpan.Zero,ct);Demand(s);
+            Demand(s);await signals().PutHintAsync(id,w.AvailableAt,ct);Demand(s);await signals().PublishAsync(id,TimeSpan.Zero,ct);Demand(s);
         }
         return EmailPilotOperatorNotice.EnvelopeSaved;
     }

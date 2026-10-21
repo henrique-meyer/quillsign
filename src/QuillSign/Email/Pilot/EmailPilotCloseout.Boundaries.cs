@@ -39,7 +39,7 @@ public sealed partial class EmailPilotCloseout
     {
         if(!ReferenceEquals(db,database()) || db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges())throw Invalid();
         var bound=await db.EmailPilotCloseoutOperations.AsNoTracking().AnyAsync(x=>x.WorkId==item.Id,ct);
-        var selected=options.CompletionWorkIds.Concat(options.VoidWorkIds).Any(x=>Guid.TryParseExact(x,"N",out var id)&&id==item.Id);
+        var selected=ConfiguredNotice(item.Id);
         if(!bound && !selected)return;
         var state=await ReadLockedAsync(db,ct)??throw Invalid();
         var known=state.Manifest.Queue.SingleOrDefault(x=>x.WorkId==item.Id);
