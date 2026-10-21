@@ -185,14 +185,18 @@ public sealed class ProductionSignerMutationAdmissionTests(SqlDatabaseFixture fi
     {
         internal readonly ProductionHoldArchiveReleaseTests.Provider Provider=new();
         private readonly SqlDatabaseFixture fixture;private readonly ProductionInvitationWorkerAdmissionTests.Delivered run;private readonly BlobServiceClient service;
-        internal Holds(SqlDatabaseFixture fixture,ProductionInvitationWorkerAdmissionTests.Delivered run)
+        private readonly IProductionHoldObjectSource objects;
+        private readonly IProductionCompletionInputSource? completionInputs;
+        internal Holds(SqlDatabaseFixture fixture,ProductionInvitationWorkerAdmissionTests.Delivered run,
+            IProductionHoldObjectSource? objects=null,IProductionCompletionInputSource? completionInputs=null)
         {
-            this.fixture=fixture;this.run=run;
+            this.fixture=fixture;this.run=run;this.objects=objects??run.Ready.Prepared.Blobs;this.completionInputs=completionInputs;
             foreach(var pair in run.Ready.Prepared.Blobs.Objects)Provider.SourceFiles.Add(run.Ready.Prepared.Blobs.Address(pair.Key),pair.Value.ToArray());
             var options=new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03){Transport=new HttpClientTransport(new HttpClient(Provider,false))};options.Retry.MaxRetries=0;
             service=new(new Uri("https://storage.example.invalid"),new ProductionHoldArchiveReleaseTests.Credential(),options);
         }
-        internal ProductionHoldCoordinator Coordinator()=>new(fixture.Open,run.Record.Keys,run.Record.Time,run.Record.Journal,run.Ready.Prepared.Blobs,new(service),new(service));
+        internal ProductionHoldCoordinator Coordinator()=>new(fixture.Open,run.Record.Keys,run.Record.Time,run.Record.Journal,objects,new(service),new(service),
+            reviewInputs:run.Ready.Prepared.Blobs,completionInputs:completionInputs);
         internal async Task<ProductionHoldCommand> Place(long expected)
         {
             var command=ProductionHoldWitnessJournalTests.Place(run.Record.Id,expected);
