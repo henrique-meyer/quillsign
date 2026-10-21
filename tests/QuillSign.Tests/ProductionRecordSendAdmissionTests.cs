@@ -137,7 +137,7 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
         public Task<int> RecoverAsync(DateTimeOffset now,CancellationToken ct)=>throw new InvalidOperationException();
         public Task VerifyAsync(CancellationToken ct)=>Task.CompletedTask;
     }
-    private sealed class Ready(SqlDatabaseFixture fixture,ProductionRecordUploadAdmissionTests.Prepared prepared):IAsyncDisposable
+    internal sealed class Ready(SqlDatabaseFixture fixture,ProductionRecordUploadAdmissionTests.Prepared prepared):IAsyncDisposable
     {
         internal readonly ProductionRecordUploadAdmissionTests.Prepared Prepared=prepared;internal readonly Signals Signals=new();
         internal Envelope Original=null!;private DraftReviewSnapshot Review=null!;private DisclosureSnapshot Disclosure=null!;
