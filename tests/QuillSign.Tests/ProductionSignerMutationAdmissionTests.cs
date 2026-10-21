@@ -17,6 +17,25 @@ namespace QuillSign.Tests;
 public sealed class ProductionSignerMutationAdmissionTests(SqlDatabaseFixture fixture):IClassFixture<SqlDatabaseFixture>
 {
     [Fact]
+    public async Task Same_parent_proof_gate_preserves_the_callers_transaction_and_denies_a_later_external_hold_intent()
+    {
+        await using var run=await ProductionInvitationWorkerAdmissionTests.Delivered.Create(fixture);
+        var identity=(await Redeem(run))!;var user=SignerAccessConfiguration.Principal(identity);
+        await using var db=fixture.Open();await using var tx=await db.Database.BeginTransactionAsync();
+        var context=(await Access(run,db).GetLockedContextAsync(user,run.Ready.Original.PublicId,default))!;Assert.NotNull(context);
+        using var bounded=new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await Hook(run).DemandNewProofLockedAsync(db,context,bounded.Token);
+        Assert.Same(tx,db.Database.CurrentTransaction);Assert.False(db.ChangeTracker.HasChanges());
+        var hold=Place(run.Record.Id);
+        await run.Record.Journal.IntentAsync(Authority(run.Record.Time,hold.Permission),Operators,hold,Guid.NewGuid());
+        await Assert.ThrowsAsync<DocumentRejectedException>(()=>Hook(run).DemandNewProofLockedAsync(db,context,bounded.Token));
+        Assert.Same(tx,db.Database.CurrentTransaction);Assert.False(db.ChangeTracker.HasChanges());
+        Assert.False(await db.ProductionHoldRequests.AnyAsync(x=>x.EnvelopeId==run.Record.Id));
+        await tx.RollbackAsync();
+        Assert.Equal(identity.SessionExpiresAt,context.Identity.SessionExpiresAt);
+    }
+
+    [Fact]
     public async Task Actual_invitation_Finish_redemption_exact_PDF_and_consent_form_a_complete_bundle_with_independent_holds_and_releases()
     {
         await using var run=await ProductionInvitationWorkerAdmissionTests.Delivered.Create(fixture);

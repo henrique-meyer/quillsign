@@ -44,4 +44,10 @@ internal sealed class ProductionSignerMutationAdmission(ProductionRecordOperatio
         catch(Exception error)when(error is InvalidDataException or UnauthorizedAccessException or CryptographicException)
         {throw new DocumentRejectedException("The saved signing document is unavailable.");}
     }
+    internal async Task DemandNewProofLockedAsync(QuillSignDbContext db,SignerReadContext context,CancellationToken ct)
+    {
+        try{await operations.DemandUnfrozenReadLockedAsync(db,context.Identity.EnvelopeId,context.AccessExpiresAt,ct);}
+        catch(Exception error)when(error is InvalidDataException or UnauthorizedAccessException or CryptographicException)
+        {throw new DocumentRejectedException("The saved signing document is unavailable.");}
+    }
 }
