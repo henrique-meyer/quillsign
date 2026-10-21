@@ -37,7 +37,8 @@ internal sealed record HoldWitnessEvent(string Version, Guid RecordId, long Sequ
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HoldWitnessReviewPlan? ReviewPlan = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteDescriptor? ReviewItem = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteReceipt? ReviewReceipt = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HoldWitnessCompletionTransition? Completion = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HoldWitnessCompletionTransition? Completion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HoldWitnessCompletionMailBaseline? CompletionMailBaseline = null);
 internal sealed record HoldWitnessOutcome(string ContentSha256, string SqlStateSha256, long Sequence);
 internal sealed record HoldWitnessHold(ProductionHoldCommand Placement, ProductionHoldCommand? Release,
     bool Effective, bool Released, Guid? PlanId, string? PlanSha256, string? PreservationSha256, string? ReleaseSha256,
@@ -53,7 +54,8 @@ internal sealed record HoldWitnessState(long Sequence, string? HeadHash, long Re
     IReadOnlyDictionary<Guid, HoldWitnessOutcome>? DispatchStarts = null,
     IReadOnlyDictionary<Guid, HoldWitnessPreviewWrites>? PreviewWrites = null,
     IReadOnlyDictionary<Guid, HoldWitnessReviewWrites>? ReviewWrites = null,
-    IReadOnlyDictionary<Guid, HoldWitnessCompletionState>? Completions = null)
+    IReadOnlyDictionary<Guid, HoldWitnessCompletionState>? Completions = null,
+    IReadOnlyDictionary<Guid, HoldWitnessCompletionMailBaseline>? CompletionMailBaselines = null)
 {
     internal bool Frozen => Unacknowledged is not null || OutstandingOperation is not null || Holds.Values.Any(x => !x.Released);
 }
@@ -127,6 +129,24 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         => Change(recordId, eventId, HoldWitnessKind.OperationReserved, ct, x => x with {
             OperationId = operationId, OperationKind = kind, OperationReference = reference, RequestRevision = sql.Revision,
             RequestFenceHash = sql.FenceHash, BusinessStateSha256 = contentSha256, SqlStateSha256 = sqlStateSha256, OutcomeVersion = OutcomeVersion });
+
+    internal Task<HoldWitnessState> ReserveCompletionMailOperationAsync(HoldWitnessCompletionMailBaseline baseline,
+        ProductionHoldRequestSnapshot sql,Guid eventId,CancellationToken ct=default)
+    {
+        ProductionCompletionMailBaselineContract.Demand(baseline,keys);
+        if(baseline.RequestRevision!=sql.Revision||baseline.RequestFenceHash!=sql.FenceHash)throw Invalid();
+        return Change(baseline.RecordId,eventId,HoldWitnessKind.OperationReserved,ct,x=>x with{
+            OperationId=baseline.OperationId,OperationKind=ProductionCompletionMailBaselineContract.Kind,
+            OperationReference=ProductionCompletionMailBaselineContract.Reference(baseline.WorkId,baseline.Attempt),
+            RequestRevision=sql.Revision,RequestFenceHash=sql.FenceHash,BusinessStateSha256=baseline.ContentSha256,
+            SqlStateSha256=baseline.SqlStateSha256,OutcomeVersion=OutcomeVersion,CompletionMailBaseline=baseline});
+    }
+    internal async Task DemandCompletionMailHeadroomAsync(Guid recordId,CancellationToken ct=default)
+    {
+        var prior=await Read(recordId,ct);
+        // Refusal/headroom inside the ORIGINAL caps, never another allowance.
+        if(prior.Events.Length>MaximumEvents-8||prior.Bytes>MaximumBytes-2L*MaximumPayload)throw Invalid();
+    }
 
     internal Task<HoldWitnessState> PrepareOperationOutcomeAsync(Guid recordId, HoldWitnessOperation operation,
         string contentSha256, string sqlStateSha256, Guid eventId, CancellationToken ct = default)
@@ -457,6 +477,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         var previews = new Dictionary<Guid, HoldWitnessPreviewWrites>();
         var reviews = new Dictionary<Guid, HoldWitnessReviewWrites>();
         var completions = new Dictionary<Guid, HoldWitnessCompletionState>();
+        var completionMail = new Dictionary<Guid, HoldWitnessCompletionMailBaseline>();
         Guid? operation = null; ProductionHoldCommand? pending = null; long revision = 0; string? fence = null; string? business = null;
         DateTimeOffset? lastAt = null;
         foreach (var e in events)
@@ -491,6 +512,15 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                         {
                             if (e.OutcomeVersion != OutcomeVersion) throw Invalid();
                             outcomeRequired.Add(op); canonical = canonical with { OutcomeVersion = OutcomeVersion };
+                        }
+                        if(e.CompletionMailBaseline is {} baseline)
+                        {
+                            ProductionCompletionMailBaselineContract.Demand(baseline,keys);
+                            if(e.OutcomeVersion!=OutcomeVersion||e.OperationKind!=ProductionCompletionMailBaselineContract.Kind||
+                                e.OperationReference!=ProductionCompletionMailBaselineContract.Reference(baseline.WorkId,baseline.Attempt)||
+                                baseline.RecordId!=id||baseline.OperationId!=op||baseline.RequestRevision!=revision||baseline.RequestFenceHash!=fence||
+                                baseline.ContentSha256!=business||baseline.SqlStateSha256!=sqlState||baseline.ClaimUntil<=e.At||baseline.ClaimUntil>e.At.AddHours(1))throw Invalid();
+                            completionMail.Add(op,baseline);canonical=canonical with{CompletionMailBaseline=baseline};
                         }
                     }
                     else if (initialized) throw Invalid();
@@ -765,7 +795,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
             }
             if (e.Kind == HoldWitnessKind.CompletionTransition ? !JsonSerializer.SerializeToUtf8Bytes(canonical).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(e)) : canonical != e) throw Invalid();
         }
-        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed, outcomes, handlerOutcomes, uploads, sends, dispatches, previews, reviews, completions);
+        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed, outcomes, handlerOutcomes, uploads, sends, dispatches, previews, reviews, completions,completionMail);
     }
 
     private static bool Prefix(ProductionHoldControlPrefix? value) => value is { Sequence: > 0 } && Hash(value.Hash);

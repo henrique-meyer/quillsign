@@ -38,7 +38,7 @@ internal sealed partial class ProductionRecordOperationAdmission
         Worker(scope); DemandDispatchTransaction(db);
         var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state);
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
-        await DemandControls(db, scope.RecordId, state, ct); var deadline = await DemandDispatchWorkLocked(db, scope, ct);
+        await DemandControls(db, scope.RecordId, state, ct); var deadline = await DemandDispatchWorkLocked(db, scope,state, ct);
         var sql = await Capture(db, scope.RecordId, requests, ct); var content = ContentDigest(sql, keys);
         bool fresh;
         try
@@ -97,7 +97,7 @@ internal sealed partial class ProductionRecordOperationAdmission
         var scope = binding.Scope; var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state, allowDispatch: true);
         if (state.DispatchStarts?.GetValueOrDefault(scope.OperationId) != binding.Checkpoint) throw Invalid();
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
-        await DemandControls(db, scope.RecordId, state, ct); var deadline = await DemandDispatchWorkLocked(db, scope, ct);
+        await DemandControls(db, scope.RecordId, state, ct); var deadline = await DemandDispatchWorkLocked(db, scope,state, ct);
         var current = await Capture(db, scope.RecordId, requests, ct);
         if (current.StateSha256 != binding.Checkpoint.SqlStateSha256 || ContentDigest(current, keys) != binding.Checkpoint.ContentSha256) throw Invalid();
         var after = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, after, allowDispatch: true);
@@ -107,7 +107,7 @@ internal sealed partial class ProductionRecordOperationAdmission
     // Bind the actual worker/attempt and original lease, not a caller-supplied
     // token or a later current work row. The full snapshot also binds all mail,
     // token hashes, protected payloads, policy clocks and request/control rows.
-    private async Task<DateTimeOffset> DemandDispatchWorkLocked(QuillSignDbContext db, ProductionRecordOperation scope, CancellationToken ct)
+    private async Task<DateTimeOffset> DemandDispatchWorkLocked(QuillSignDbContext db, ProductionRecordOperation scope,HoldWitnessState state, CancellationToken ct)
     {
         if (scope.Kind != "work/" + ((int)WorkKind.Email).ToString(CultureInfo.InvariantCulture)) throw Invalid();
         var parts = scope.Reference.Split("/attempt/", StringSplitOptions.None);
@@ -121,6 +121,12 @@ internal sealed partial class ProductionRecordOperationAdmission
             work.LeaseOwner != scope.OperationId || work.Attempts != attempt || work.LeaseExpiresAt is null || work.LeaseExpiresAt <= now || work.AvailableAt > now ||
             mail.EnvelopeId != scope.RecordId || mail.Status != EmailStatus.Queued || mail.Attempts != attempt ||
             mail.SubmissionStartedAt is null || mail.SubmissionStartedAt > now || mail.Provider is not null || mail.ProviderMessageId is not null) throw Invalid();
+        if(mail.Template==QuillSign.Work.CompletionNotificationJobs.Template||state.CompletionMailBaselines?.ContainsKey(scope.OperationId)==true)
+        {
+            var original=state.CompletionMailBaselines?.GetValueOrDefault(scope.OperationId)??throw Invalid();
+            DemandCompletionMailLive(scope,state);
+            if(original.WorkId!=id||original.Attempt!=attempt||work.LeaseExpiresAt!=original.ClaimUntil||mail.Template!=QuillSign.Work.CompletionNotificationJobs.Template)throw Invalid();
+        }
         return work.LeaseExpiresAt.Value;
     }
 

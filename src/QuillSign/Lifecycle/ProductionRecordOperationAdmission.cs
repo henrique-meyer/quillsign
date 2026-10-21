@@ -80,6 +80,8 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         var requests = await Requests(db, recordId, ct); ProductionHoldWitnessJournal.DemandSql(before, requests);
         var sql = await Capture(db, recordId, requests, ct); var content = ContentDigest(sql, keys);
         if (content != before.BusinessStateSha256 || before.SqlStateSha256 is not null && sql.StateSha256 != before.SqlStateSha256) throw Invalid();
+        using(var raw=ProductionHoldSqlInventory.OpenAcknowledgementVerified(sql,keys))
+            if(ProductionCompletionMailBaselineContract.IsCompletionMail(raw.RootElement,kind,reference))throw Invalid();
         await DemandControls(db, recordId, before, ct);
         var state = await witness.ReserveOperationAsync(recordId, operationId, kind, reference, requests, content, sql.StateSha256,
             Id(recordId, operationId, "reserve"), ct);
@@ -132,12 +134,14 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
         var dispatchState = await witness.ReadAsync(scope.RecordId, ct);
         DemandActive(scope, dispatchState, allowDispatch: HasDispatchReceiptPermission(db, scope, dispatchState));
+        DemandCompletionMailLive(scope,dispatchState);
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         // Pending hold intent may arrive during the read, but only this same
         // previously admitted operation may drain. Its own business edits need
         // not match the old baseline while it is executing.
         dispatchState = await witness.ReadAsync(scope.RecordId, ct);
         DemandActive(scope, dispatchState, allowDispatch: HasDispatchReceiptPermission(db, scope, dispatchState));
+        DemandCompletionMailLive(scope,dispatchState);
     }
 
     // Only before the operation's FIRST SQL mutation. Handler/provider changes
@@ -148,7 +152,14 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         var requests = await Requests(db, scope.RecordId, ct);
         var current = await Capture(db, scope.RecordId, requests, ct);
         if (current.StateSha256 != scope.SqlStateSha256 || ContentDigest(current, keys) != scope.ContentSha256) throw Invalid();
-        DemandActive(scope, await witness.ReadAsync(scope.RecordId, ct));
+        var state=await witness.ReadAsync(scope.RecordId,ct);DemandActive(scope,state);DemandCompletionMailLive(scope,state);
+        if(state.CompletionMailBaselines?.GetValueOrDefault(scope.OperationId) is {} original)
+        {
+            using var raw=ProductionHoldSqlInventory.OpenAcknowledgementVerified(current,keys);
+            if(original.MailRowJson!=ProductionCompletionMailBaselineContract.Select(raw.RootElement,"EmailOutbox",original.WorkId).GetRawText()||
+                original.WorkRowJson!=ProductionCompletionMailBaselineContract.Select(raw.RootElement,"WorkItems",original.WorkId).GetRawText()||
+                current.Control!=new ProductionHoldControlPrefix(original.ControlSequence,original.ControlHash))throw Invalid();
+        }
     }
 
     internal async Task<HoldWitnessState> CompleteAsync(ProductionRecordOperation scope, string receiptSha256, CancellationToken ct = default)
@@ -162,6 +173,8 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         { if (saved != receiptSha256) throw Invalid(); return state; }
         if (state.Completions?.ContainsKey(scope.OperationId) == true) DemandCompletionActive(scope, state, final: true);
         else DemandActive(scope, state, allowOutcome: true, allowHandler: true);
+        if (state.CompletionMailBaselines?.ContainsKey(scope.OperationId) == true &&
+            (state.HandlerOutcomes?.ContainsKey(scope.OperationId) != true || state.Outcomes?.ContainsKey(scope.OperationId) != true)) throw Invalid();
         await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         await DemandControls(db, scope.RecordId, state, ct);
@@ -173,7 +186,7 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         {
             // Without a precommit outcome only the EXACT originally reserved
             // SQL may be acknowledged. Fresh changed SQL is never authority.
-            if (state.Completions?.ContainsKey(scope.OperationId) == true || state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true || state.UploadWrites?.ContainsKey(scope.OperationId) == true ||
+            if (state.CompletionMailBaselines?.ContainsKey(scope.OperationId) == true || state.Completions?.ContainsKey(scope.OperationId) == true || state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true || state.UploadWrites?.ContainsKey(scope.OperationId) == true ||
                 state.SendWrites?.ContainsKey(scope.OperationId) == true || scope.Kind == ProductionRecordPreviewWriteContract.Kind || scope.Kind == ProductionRecordReviewWriteContract.Kind ||
                 current.StateSha256 != scope.SqlStateSha256 || content != scope.ContentSha256) throw Invalid();
             state = await witness.PrepareOperationOutcomeAsync(scope.RecordId, operation, content, current.StateSha256,
@@ -201,6 +214,8 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         var state = await witness.ReadAsync(scope.RecordId, ct);
         if (state.Completions?.ContainsKey(scope.OperationId) == true) { await PrepareCompletionWorkFinishLockedAsync(db, scope, ct); return; }
         DemandActive(scope, state, allowOutcome: true, allowHandler: true);
+        DemandCompletionMailLive(scope,state);
+        if (state.CompletionMailBaselines?.ContainsKey(scope.OperationId) == true && state.HandlerOutcomes?.ContainsKey(scope.OperationId) != true) throw Invalid();
         if (state.HandlerOutcomes?.GetValueOrDefault(scope.OperationId) is { } handler &&
             (!handlerFinalizers.TryGetValue(db, out var permit) || permit.Scope != scope ||
                 permit.TransactionId != db.Database.CurrentTransaction.TransactionId || permit.HandlerOutcome != handler)) throw Invalid();
@@ -218,6 +233,7 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         var result = await witness.PrepareOperationOutcomeAsync(scope.RecordId, state.Operations![scope.OperationId],
             ContentDigest(current, keys), current.StateSha256, Id(scope.RecordId, scope.OperationId, "outcome"), ct);
         DemandActive(scope, result, allowOutcome: true, allowHandler: true);
+        DemandCompletionMailLive(scope,result);
     }
 
     // A worker handler's final receipt transaction must checkpoint its exact
@@ -228,12 +244,15 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
         var state = await witness.ReadAsync(scope.RecordId, ct);
         if (state.Completions?.ContainsKey(scope.OperationId) == true) throw Invalid();
+        if (state.CompletionMailBaselines?.ContainsKey(scope.OperationId) == true && state.DispatchStarts?.ContainsKey(scope.OperationId) != true) throw Invalid();
         DemandActive(scope, state, allowHandler: true, allowDispatch: DemandDispatchHandlerPermission(db, scope, state));
+        DemandCompletionMailLive(scope,state);
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         await DemandControls(db, scope.RecordId, state, ct); var current = await Capture(db, scope.RecordId, requests, ct);
         var result = await witness.PrepareHandlerOutcomeAsync(scope.RecordId, state.Operations![scope.OperationId],
             ContentDigest(current, keys), current.StateSha256, Id(scope.RecordId, scope.OperationId, "handler-outcome"), ct);
         DemandActive(scope, result, allowHandler: true, allowDispatch: true);
+        DemandCompletionMailLive(scope,result);
     }
 
     internal async Task<ProductionRecordOperation> ResumeHandlerLockedAsync(QuillSignDbContext db, Guid recordId,
@@ -255,6 +274,7 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         var state = await witness.ReadAsync(scope.RecordId, ct);
         if (state.Completions?.ContainsKey(scope.OperationId) == true) DemandCompletionActive(scope, state, final: true);
         else DemandActive(scope, state, allowHandler: true);
+        DemandCompletionMailLive(scope,state);
         var handler = state.HandlerOutcomes?.GetValueOrDefault(scope.OperationId) ?? throw Invalid();
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         await DemandControls(db, scope.RecordId, state, ct); var current = await Capture(db, scope.RecordId, requests, ct);
@@ -262,6 +282,7 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         var after = await witness.ReadAsync(scope.RecordId, ct);
         if (after.Completions?.ContainsKey(scope.OperationId) == true) DemandCompletionActive(scope, after, final: true);
         else DemandActive(scope, after, allowHandler: true);
+        DemandCompletionMailLive(scope,after);
         if (after.HandlerOutcomes?.GetValueOrDefault(scope.OperationId) != handler) throw Invalid();
         handlerFinalizers.Add(db, new(scope, db.Database.CurrentTransaction.TransactionId, handler));
     }
