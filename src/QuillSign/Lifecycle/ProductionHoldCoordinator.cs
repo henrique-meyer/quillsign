@@ -11,8 +11,8 @@ using QuillSign.Work;
 
 namespace QuillSign.Lifecycle;
 
-// Connected private backend, deliberately unregistered until trusted operator
-// middleware supplies its configuration/authority. Raw provider DTOs never
+// Connected private backend, registered only by explicit complete runtime
+// configuration. Trusted operator middleware supplies authority. Raw provider DTOs never
 // establish complete preservation or authorize release/deletion.
 internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness, IProductionHoldObjectSource objects,
