@@ -12,7 +12,7 @@ using QuillSign.Work;
 namespace QuillSign.Email.Pilot;
 
 internal sealed record EmailPilotCloseoutParent(Guid Id, string Sha256);
-internal sealed record EmailPilotCloseoutQueue(EmailPilotCloseoutStep Step, Guid RecordId, Guid WorkId, string MailJson, string WorkJson);
+internal sealed record EmailPilotCloseoutQueue(EmailPilotCloseoutStep Step, Guid RecordId, Guid WorkId, string MailJson, string WorkJson, Guid OriginalId = default, string? OriginalMailJson = null, string? OriginalWorkJson = null);
 internal sealed record EmailPilotCloseoutManifest(string Version, Guid AuthorizationId, DateTimeOffset CreatedAt, DateTimeOffset Until,
     DateTimeOffset DeleteAfter, string ConfigurationSha256, EmailPilotCloseoutParent[] Parents, EmailPilotCloseoutQueue[] Queue, string PublicationSha256);
 internal sealed record EmailPilotCloseoutReceipt(string Version, Guid AuthorizationId, int Kind, EmailPilotCloseoutStep Step,
@@ -32,8 +32,8 @@ internal sealed class EmailPilotCloseoutSnapshot
     internal Guid CompletionRecord => Configuration.CompletionRecord;
     internal Guid VoidRecord => Configuration.VoidRecord;
     internal Guid DeclineRecord => Configuration.DeclineRecord;
-    internal ImmutableArray<Guid> CompletionWork => Configuration.CompletionWork;
-    internal ImmutableArray<Guid> VoidWork => Configuration.VoidWork;
+    internal ImmutableArray<Guid> CompletionWork => Manifest.Queue.Where(x=>x.Step<=EmailPilotCloseoutStep.CompletionRecipient).Select(x=>x.WorkId).ToImmutableArray();
+    internal ImmutableArray<Guid> VoidWork => Manifest.Queue.Where(x=>x.Step is EmailPilotCloseoutStep.VoidSender or EmailPilotCloseoutStep.VoidSigner).Select(x=>x.WorkId).ToImmutableArray();
     internal EmailPilotMailboxes Mailboxes => Parents[Configuration.CompletionParent].Manifest.Mailboxes;
     internal EmailPilotManifest Parent(Guid record) => Parents[record == VoidRecord ? Configuration.VoidParent :
         record == CompletionRecord || record == DeclineRecord ? Configuration.CompletionParent : throw EmailPilotProtection.Invalid()].Manifest;
@@ -48,7 +48,7 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
     internal Func<EmailPilotCloseoutLookup>? Lookup { get; init; }
     internal Func<EmailPayloadProtection>? Payloads { get; init; }
     private static readonly JsonSerializerOptions Json = new() { Converters = { new JsonStringEnumConverter() } };
-    private const string Purpose = "bounded-closeout-manifest-v1", ReceiptPurpose = "bounded-closeout-operation-v1";
+    private const string Purpose = "bounded-failed-notice-closeout-manifest-v1", ReceiptPurpose = "bounded-failed-notice-closeout-operation-v1";
     internal bool Available => options.Enabled && !email.Enabled && work.Enabled && time.GetUtcNow().Offset == TimeSpan.Zero &&
         options.StartsAt <= time.GetUtcNow() && options.Until > time.GetUtcNow();
     internal DateTimeOffset Now => time.GetUtcNow();
@@ -62,12 +62,19 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
         catch (ArgumentException) { return false; }
     }
 
-    internal async Task<EmailPilotCloseoutSnapshot> CreateAsync(string capability, CancellationToken ct = default)
+    internal async Task<EmailPilotCloseoutSnapshot> CreateAsync(string capability,CancellationToken ct=default)
+    {
+        var db=database();Clean(db);
+        try{return await CreateCoreAsync(capability,ct);}
+        catch {db.ChangeTracker.Clear();throw;}
+    }
+
+    private async Task<EmailPilotCloseoutSnapshot> CreateCoreAsync(string capability, CancellationToken ct)
     {
         if (!MatchesCapability(capability)) throw Invalid();
         var cfg = options.Capture(); var db = database(); Clean(db);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
-        await using var tx = await db.Database.BeginTransactionAsync(ct); await Lock(db, cfg.AuthorizationId, ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct); await Lock(db, Guid.Empty, ct); await Lock(db, cfg.AuthorizationId, ct);
         if (await db.EmailPilotCloseouts.AnyAsync(x => x.Id == cfg.AuthorizationId, ct))
         { var existing = await ReadLockedAsync(db, ct) ?? throw Invalid(); await tx.RollbackAsync(ct); return existing; }
         if (await db.EmailPilotCloseouts.AnyAsync(ct)) throw Invalid(); // This selected package has one authority, never a replacement allowance.
@@ -94,27 +101,35 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
         var publication = await CompletionDownloadState.ReadAsync(db, cfg.CompletionRecord, time, ct) ?? throw Invalid();
         if (publication.PurgeAfter is null || publication.PurgeAfter < cfg.Until) throw Invalid();
         var pairs = new List<EmailPilotCloseoutQueue>();
+        var createdAt=Now;
         foreach (var pair in cfg.CompletionWork.Select(x => (Id:x, Record:cfg.CompletionRecord, Template:CompletionNotificationJobs.Template))
             .Concat(cfg.VoidWork.Select(x => (Id:x, Record:cfg.VoidRecord, Template:VoidNotificationJobs.Template))))
         {
             var mail = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == pair.Id, ct);
             var item = await db.WorkItems.AsNoTracking().SingleAsync(x => x.Id == pair.Id, ct);
-            Queued(mail, item, pair.Record, pair.Template);
+            FailedBeforeProvider(mail, item, pair.Record, pair.Template);
+            if(mail.AvailableAt>createdAt||item.AvailableAt>createdAt)throw Invalid();
             var role = Role(facts.Mailboxes, mail.To); var step = pair.Record == cfg.CompletionRecord ? role switch {
                 EmailPilotRole.Sender => EmailPilotCloseoutStep.CompletionSender, EmailPilotRole.FirstSigner => EmailPilotCloseoutStep.CompletionFirstSigner,
                 EmailPilotRole.SecondSigner => EmailPilotCloseoutStep.CompletionSecondSigner, EmailPilotRole.Recipient => EmailPilotCloseoutStep.CompletionRecipient, _ => throw Invalid() } : role switch {
                 EmailPilotRole.Sender => EmailPilotCloseoutStep.VoidSender, EmailPilotRole.FirstSigner => EmailPilotCloseoutStep.VoidSigner, _ => throw Invalid() };
             if (await db.Suppressions.AnyAsync(x => x.Email == mail.To, ct)) throw Invalid();
-            pairs.Add(new(step, pair.Record, pair.Id, Raw(mail), Raw(item)));
+            pairs.Add(await InsertAliasPairLockedAsync(db,cfg.AuthorizationId,step,mail,item,createdAt,ct));
         }
         if (pairs.Select(x => x.Step).Distinct().Count() != 6) throw Invalid();
-        var value = new EmailPilotCloseoutManifest(EmailPilotCloseoutLimits.Version, cfg.AuthorizationId, Now, cfg.Until,
+        var value = new EmailPilotCloseoutManifest(EmailPilotCloseoutLimits.Version, cfg.AuthorizationId, createdAt, cfg.Until,
             parents.Values.Min(x => x.DeleteAfter), Hash(cfg), parents.Select(x => new EmailPilotCloseoutParent(x.Key, x.Value.Sha256)).OrderBy(x => x.Id).ToArray(), pairs.OrderBy(x => x.Step).ToArray(), Hash(publication));
         if (value.DeleteAfter <= cfg.Until || Encoding.UTF8.GetByteCount(Raw(value)) > 49152) throw Invalid();
         var cipher = protection().Protect(cfg.AuthorizationId, Purpose, value); if (cipher.Length > 65536) throw Invalid();
         db.EmailPilotCloseouts.Add(new() { Id=cfg.AuthorizationId,CreatedAt=value.CreatedAt,Until=value.Until,DeleteAfter=value.DeleteAfter,
             CapabilitySha256=Convert.FromHexString(cfg.CapabilitySha256),ManifestSha256=EmailPilotCanonical.Hash(value),ProtectedManifest=cipher });
-        await db.SaveChangesAsync(ct); if (!Available) throw Invalid(); await tx.CommitAsync(ct); await tx.DisposeAsync();
+        await db.SaveChangesAsync(ct);
+        foreach(var pair in value.Queue) {
+            var originalMail=JsonSerializer.Deserialize<EmailOutbox>(pair.OriginalMailJson!,Json)??throw Invalid();
+            var originalWork=JsonSerializer.Deserialize<WorkItem>(pair.OriginalWorkJson!,Json)??throw Invalid();
+            await DemandCanonicalOriginalLockedAsync(db,originalMail,originalWork,ct);
+        }
+        if (!Available) throw Invalid(); await tx.CommitAsync(ct); await tx.DisposeAsync();
         return await ReadAsync(ct) ?? throw Invalid();
     }
 
@@ -134,7 +149,10 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
             !CryptographicOperations.FixedTimeEquals(EmailPilotCanonical.Hash(value),row.ManifestSha256)||!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(cfg.CapabilitySha256),row.CapabilitySha256))throw Invalid();
         var parents=await Parents(db,cfg,ct);
         if(value.Parents.Length!=parents.Count||value.Parents.Any(x=>!parents.TryGetValue(x.Id,out var p)||p.Sha256!=x.Sha256))throw Invalid();
-        if(value.Queue.Length!=6||!value.Queue.Select(x=>x.WorkId).ToHashSet().SetEquals(cfg.CompletionWork.Concat(cfg.VoidWork)))throw Invalid();
+        if(value.Queue.Length!=6||value.Queue.Select(x=>x.Step).Distinct().Count()!=6||
+            !value.Queue.Select(x=>x.OriginalId).ToHashSet().SetEquals(cfg.CompletionWork.Concat(cfg.VoidWork))||
+            value.Queue.Any(x=>x.OriginalId==Guid.Empty||x.WorkId!=AliasId(cfg.AuthorizationId,x.OriginalId)||x.OriginalMailJson is null||x.OriginalWorkJson is null))throw Invalid();
+        foreach(var pair in value.Queue)await DemandFailedOriginalLockedAsync(db,pair,ct);
         if(!Available)throw Invalid();return new(cfg,value,parents);
     }
 

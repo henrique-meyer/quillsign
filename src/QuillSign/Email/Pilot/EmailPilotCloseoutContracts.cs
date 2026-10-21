@@ -53,7 +53,7 @@ internal enum EmailPilotCloseoutStep
 
 internal static class EmailPilotCloseoutLimits
 {
-    internal const string Version = "restricted-pilot-closeout-v1";
+    internal const string Version = "restricted-failed-notice-closeout-v1";
     internal const int ApplicationAttempts = 10;
     internal const int PriorApplicationAttempts = 12, PriorSimulatorAttempts = 4, PriorTimestampAttempts = 4;
     internal const long PriorEncodedBytes = 27918, EncodedBytes = 31429362;

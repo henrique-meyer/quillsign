@@ -23,7 +23,22 @@ public sealed class VoidNotificationDelivery(QuillSignDbContext db,VoidNotificat
         try {payload=protection.Read(email.PayloadJson);}
         catch(CryptographicException) {return new(WorkOutcome.Retry,"payload-unavailable");}
         catch(Exception e) when(e is JsonException or ArgumentException or InvalidDataException) {return new(WorkOutcome.Failed,"invalid-void-notification");}
-        if(payload.EnvelopeId!=envelopeId || VoidNotificationJobs.Id(payload)!=lease.Id)return new(WorkOutcome.Failed,"invalid-void-notification");
+        if(payload.EnvelopeId!=envelopeId)return new(WorkOutcome.Failed,"invalid-void-notification");
+        Email.Pilot.EmailPilotCloseout.AliasFact? alias=null;
+        if(VoidNotificationJobs.Id(payload)!=lease.Id)
+        {
+            if(pilot is null)return new(WorkOutcome.Failed,"invalid-void-notification");
+            try
+            {
+                await using var originalParent=await db.Database.BeginTransactionAsync(ct);
+                alias=await pilot.ReadAliasLockedAsync(db,lease,email.To,ct);
+                if(alias is null||alias.OriginalId!=VoidNotificationJobs.Id(payload)||alias.AliasId!=lease.Id||alias.RecordId!=envelopeId||alias.Template!=VoidNotificationJobs.Template)
+                    return new(WorkOutcome.Failed,"invalid-void-notification");
+                await originalParent.RollbackAsync(ct);
+            }
+            catch(Exception error)when(error is InvalidDataException or CryptographicException or JsonException or ArgumentException or InvalidOperationException)
+            {return new(WorkOutcome.Failed,"invalid-void-notification");}
+        }
         var remaining=lease.Until-time.GetUtcNow()-TimeSpan.FromSeconds(1);
         if(remaining<=TimeSpan.Zero)return new(WorkOutcome.Retry,"void-mail-lease-unavailable");
         using var deadline=new CancellationTokenSource(remaining,time);
@@ -32,10 +47,10 @@ public sealed class VoidNotificationDelivery(QuillSignDbContext db,VoidNotificat
         try {
             OutgoingEmail outgoing;
             await using(var tx=await db.Database.BeginTransactionAsync(active)) {
-                var saved=await Guard(lease,email.To,payload,false,active);
+                var saved=await Guard(lease,email.To,payload,false,alias,active);
                 if(await db.Suppressions.AnyAsync(x=>x.Email==email.To,active))return new(WorkOutcome.Failed,"recipient-suppressed");
-                outgoing=await template().RenderAsync(saved,email.To,active);
-                await Guard(lease,email.To,payload,false,active);
+                outgoing=await template().RenderAsync(saved.Scope,email.To,active);
+                await Guard(lease,email.To,payload,false,alias,active);
                 var at=time.GetUtcNow();
                 var changed=await db.EmailOutbox.Where(x=>x.Id==lease.Id && x.Status==EmailStatus.Queued && x.SubmissionStartedAt==null)
                     .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.SubmissionStartedAt,at).SetProperty(x=>x.Attempts,lease.Attempt),active);
@@ -44,18 +59,18 @@ public sealed class VoidNotificationDelivery(QuillSignDbContext db,VoidNotificat
                     version=VoidNotificationJobs.Version,notificationId=lease.Id,scopeSha256=VoidNotificationJobs.Digest(payload),templateVersion=VoidEmailTemplate.Version,
                     meaning="Submission prepared; no provider acceptance or delivery is confirmed."
                 }),PartyType.System);
-                await Guard(lease,email.To,payload,true,active);await tx.CommitAsync(active);
+                await Guard(lease,email.To,payload,true,alias,active);await tx.CommitAsync(active);
             }
             // Recheck after asynchronous rendering, verification and acknowledged commit.
             await using(var tx=await db.Database.BeginTransactionAsync(active)) {
-                await Guard(lease,email.To,payload,true,active);
+                await Guard(lease,email.To,payload,true,alias,active);
                 if(await db.Suppressions.AnyAsync(x=>x.Email==email.To,active))throw new RecipientSuppressedException();
                 await tx.CommitAsync(active);
             }
             active.ThrowIfCancellationRequested();called=true;
             var delivery=pilot is null ? await sender.SendAsync(outgoing,active) : await pilot.SendAsync(lease,outgoing,active);
             await using(var tx=await db.Database.BeginTransactionAsync(active)) {
-                await Guard(lease,email.To,payload,true,active);
+                var receiptProof=await Guard(lease,email.To,payload,true,alias,active);
                 await db.EmailOutbox.Where(x=>x.Id==lease.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Provider,delivery.Provider)
                     .SetProperty(x=>x.ProviderMessageId,delivery.MessageId).SetProperty(x=>x.Status,EmailStatus.Sent),active);
                 await audit.AppendAsync(envelopeId,"void_notification_submitted",null,null,null,active,JsonSerializer.Serialize(new {
@@ -63,20 +78,23 @@ public sealed class VoidNotificationDelivery(QuillSignDbContext db,VoidNotificat
                     provider=delivery.Provider,providerMessageId=delivery.MessageId,templateVersion=VoidEmailTemplate.Version,
                     meaning="Provider accepted the message; inbox delivery and receipt are not confirmed."
                 }),PartyType.System);
-                if(await jobs.ResolveLocked(lease.Id,email.To,payload,active) is null)throw VoidNotificationJobs.Invalid();
+                if((alias is null?await jobs.ResolveLocked(lease.Id,email.To,payload,active):await jobs.ResolveCloseoutLocked(lease.Id,email.To,payload,receiptProof.Alias!,active)) is null)throw VoidNotificationJobs.Invalid();
                 await Owned(lease,envelopeId,active);await tx.CommitAsync(active);
             }
             return new(WorkOutcome.Completed);
         }
         catch(EmailNotSubmittedException e) {
+            if(alias is not null)return new(WorkOutcome.Ambiguous,"void-closeout-submission-unresolved");
             return await ClearKnownUnsent(lease,email.To,payload) ? new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed,e.FailureCode) : new(WorkOutcome.Ambiguous,"void-submission-uncertain");
         }
         catch(Exception e) when(e is RecipientSuppressedException or EmailDisabledException or EmailAttachmentLimitException) {
+            if(alias is not null)return new(WorkOutcome.Ambiguous,"void-closeout-submission-unresolved");
             var cleared=await ClearKnownUnsent(lease,email.To,payload);
             return !cleared ? new(WorkOutcome.Ambiguous,"void-submission-uncertain") : new(e is RecipientSuppressedException ? WorkOutcome.Failed : WorkOutcome.Retry,
                 e is RecipientSuppressedException ? "recipient-suppressed" : e is EmailDisabledException ? "delivery-disabled" : "void-message-limit");
         }
         catch(Exception e) when(!called && e is not OutOfMemoryException) {
+            if(alias is not null){db.ChangeTracker.Clear();ct.ThrowIfCancellationRequested();return new(WorkOutcome.Ambiguous,"void-closeout-preparation-unresolved");}
             db.ChangeTracker.Clear();
             if(intentMayExist && !await ClearKnownUnsent(lease,email.To,payload))return new(WorkOutcome.Ambiguous,"void-preparation-uncertain");
             ct.ThrowIfCancellationRequested();
@@ -85,14 +103,23 @@ public sealed class VoidNotificationDelivery(QuillSignDbContext db,VoidNotificat
         // Unknown acceptance or receipt commit leaves intent intact. Expired-lease
         // recovery stops ambiguous submissions instead of sending another message.
     }
-    private async Task<SenderVoidScope> Guard(WorkLease lease,string to,VoidNotificationPayload p,bool submitted,CancellationToken ct)
+    private sealed record GuardedScope(SenderVoidScope Scope,Email.Pilot.EmailPilotCloseout.AliasFact? Alias);
+    private async Task<GuardedScope> Guard(WorkLease lease,string to,VoidNotificationPayload p,bool submitted,Email.Pilot.EmailPilotCloseout.AliasFact? alias,CancellationToken ct)
     {
-        var saved=await jobs.ResolveLocked(lease.Id,to,p,ct)??throw VoidNotificationJobs.Invalid();
+        SenderVoidScope saved;Email.Pilot.EmailPilotCloseout.AliasFact? verifiedAlias=null;
+        if(alias is null)saved=await jobs.ResolveLocked(lease.Id,to,p,ct)??throw VoidNotificationJobs.Invalid();
+        else
+        {
+            var current=await pilot!.ReadAliasLockedAsync(db,lease,to,ct)??throw VoidNotificationJobs.Invalid();
+            if(current.AuthorizationId!=alias.AuthorizationId||current.OriginalId!=alias.OriginalId||current.AliasId!=alias.AliasId||current.RecordId!=alias.RecordId||
+                current.Template!=alias.Template||current.Recipient!=alias.Recipient||current.Until!=alias.Until)throw VoidNotificationJobs.Invalid();
+            saved=await jobs.ResolveCloseoutLocked(lease.Id,to,p,current,ct)??throw VoidNotificationJobs.Invalid();verifiedAlias=current;
+        }
         await Owned(lease,p.EnvelopeId,ct);
         var row=await db.EmailOutbox.FromSqlInterpolated($"SELECT * FROM [EmailOutbox] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={lease.Id}").AsNoTracking().SingleAsync(ct);
         if(row.EnvelopeId!=p.EnvelopeId || row.To!=to || row.Template!=VoidNotificationJobs.Template || row.AttachmentsJson!="[]" || row.Status!=EmailStatus.Queued ||
             row.Provider is not null || row.ProviderMessageId is not null || (row.SubmissionStartedAt is not null)!=submitted || protection.Read(row.PayloadJson)!=p ||
-            submitted && row.Attempts!=lease.Attempt)throw VoidNotificationJobs.Invalid();return saved;
+            submitted && row.Attempts!=lease.Attempt)throw VoidNotificationJobs.Invalid();return new(saved,verifiedAlias);
     }
     private async Task Owned(WorkLease lease,Guid envelopeId,CancellationToken ct,bool live=true)
     {
