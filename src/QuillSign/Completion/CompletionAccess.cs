@@ -187,7 +187,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         var rows=await db.AuditEvents.FromSqlInterpolated($"SELECT TOP(2) * FROM [AuditEvents] WHERE [EnvelopeId]={envelope} AND [Event]={name} AND JSON_VALUE(CASE WHEN ISJSON([DataJson])=1 THEN [DataJson] ELSE '{{}}' END,'$.tokenId')={id}").AsNoTracking().ToArrayAsync(ct);
         return rows.Length==1 && rows[0].Ip is null && rows[0].UserAgent is null && rows[0].At<=time.GetUtcNow() && Same(rows[0].Hash,AuditHash.Compute(rows[0])) ? rows[0] : null;
     }
-    private static string Issued(AuthToken t)=>JsonSerializer.Serialize(new {version=CompletionAccessProtection.Version,tokenId=t.Id,t.EnvelopeId,purpose=t.Purpose.ToString(),
+    internal static string Issued(AuthToken t)=>JsonSerializer.Serialize(new {version=CompletionAccessProtection.Version,tokenId=t.Id,t.EnvelopeId,purpose=t.Purpose.ToString(),
         party=t.PartyType.ToString(),t.PartyId,t.Email,publicationId=t.CompletionPublicationId,recipeSha256=Hex(t.CompletionRecipeSha256!),partySha256=Hex(t.CompletionPartySha256!),
         tokenSha256=Hex(t.TokenSha256),t.ExpiresAt});
     private static string Consumed(CompletionReaderIdentity i)=>JsonSerializer.Serialize(new {version=CompletionAccessProtection.Version,tokenId=i.TokenId,i.EnvelopeId,

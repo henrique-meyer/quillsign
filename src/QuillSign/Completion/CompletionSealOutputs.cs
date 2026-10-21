@@ -277,7 +277,7 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
     {
         if(expectedLength is <16 or >MaximumBytes || hash is not {Length:32})throw Invalid();
         using var memory=new MemoryStream(); using var bounded=new BoundedDocumentStream(memory,MaximumBytes);
-        var length=await blobs.CopyToAsync(Capability(blob,AssetOperation.Read),blob,bounded,ct);
+        var length=await CompletionReadRestriction.ReadAsync(db,()=>blobs.CopyToAsync(Capability(blob,AssetOperation.Read),blob,bounded,ct));
         if(length!=expectedLength || length!=memory.Length || !Same(hash,SHA256.HashData(memory.GetBuffer().AsSpan(0,checked((int)memory.Length)))))throw Invalid();
         return memory.ToArray();
     }

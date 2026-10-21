@@ -8,7 +8,7 @@ using QuillSign.Email;
 namespace QuillSign.Work;
 
 // Submission intent is committed before the provider call. Unknown acceptance is never resent.
-public sealed class CompletionNotificationDelivery(QuillSignDbContext db,CompletionAccessState state,CompletionAccess access,
+public sealed partial class CompletionNotificationDelivery(QuillSignDbContext db,CompletionAccessState state,CompletionAccess access,
     CompletionNotificationJobs jobs,CompletionNotificationProtection protection,Func<CompletionEmailTemplate> template,IEmailSender sender,
     EmailOptions options,AuditWriter audit,TimeProvider time,Email.Pilot.EmailPilotDispatch? pilot=null)
 {

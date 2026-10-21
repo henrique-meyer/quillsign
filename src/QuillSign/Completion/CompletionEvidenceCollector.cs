@@ -242,7 +242,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
     private async Task Verify(DocumentBlob blob,byte[] expected,CancellationToken ct)
     {
         if(expected is not {Length:32})throw Invalid(); using var output=new HashSink(64*1024*1024);
-        var length=await storage.CopyToAsync(CompletionReadCapability.Create(blob,time),blob,output,ct);
+        var length=await CompletionReadRestriction.ReadAsync(db,()=>storage.CopyToAsync(CompletionReadCapability.Create(blob,time),blob,output,ct));
         if(length!=output.Length || length<16 || !Same(expected,output.Digest()))throw Invalid();
     }
     private static AuditEvent One(AuditEvent[] events,string kind,PartyType actor,Guid? id,string email)

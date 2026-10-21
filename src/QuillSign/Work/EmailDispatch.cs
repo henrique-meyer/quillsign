@@ -114,7 +114,11 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
         if(email.Template==InvitationResendProtection.Template)return await (resends?.Invoke()??throw new InvalidOperationException("Missing invitation resend delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==LookupDeliveryProtection.Template)return await (lookups?.Invoke()??throw new InvalidOperationException("Missing lookup delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==VoidNotificationJobs.Template)return await (voids?.Invoke()??throw new InvalidOperationException("Missing void notification delivery.")).ExecuteAsync(lease,cancellationToken);
-        if(email.Template==CompletionNotificationJobs.Template)return await (completions?.Invoke()??throw new InvalidOperationException("Missing completion notification delivery.")).ExecuteAsync(lease,cancellationToken);
+        if(email.Template==CompletionNotificationJobs.Template) {
+            var completion=completions?.Invoke()??throw new InvalidOperationException("Missing completion notification delivery.");
+            return admitted is null ? await completion.ExecuteAsync(lease,cancellationToken) :
+                await completion.ExecuteAdmittedAsync(lease,admitted,HoldAdmission!,cancellationToken);
+        }
         if (email.Template == "signer-invitation")
         {
             var invitation = invitations ?? throw new InvalidOperationException("Missing signer invitation delivery.");

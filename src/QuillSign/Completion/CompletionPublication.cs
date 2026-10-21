@@ -324,7 +324,7 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
         using var output=new MemoryStream(); using var bounded=new BoundedDocumentStream(output,64*1024*1024);
         var authority=CompletionRetentionBinding.FixedUntil(intent) is DateTimeOffset until
             ? CompletionFinalCapability.ReadFixed(reference,until,time) : CompletionFinalCapability.ReadBounded(reference,time,accessUntil);
-        await final.ReadAsync(authority,reference,bounded,ct);
+        await CompletionReadRestriction.ReadAsync(db,()=>final.ReadAsync(authority,reference,bounded,ct));
         if(output.Length!=reference.Length || !Same(SHA256.HashData(output.GetBuffer().AsSpan(0,checked((int)output.Length))),reference.Sha256))throw Invalid(); return output.ToArray();
     }
     private void CheckDocument(FinalStoredDocument value,CompletionPublicationIntent intent,FinalDocumentKind kind,long length,byte[] hash,DateTimeOffset? until,bool historical)

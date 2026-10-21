@@ -28,6 +28,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(cancellationToken), cancellationToken);
         var now = time.GetUtcNow();
         Guid? expectedRecord = null; WorkKind? expectedKind = null; string? expectedRow = null; var expectedAttempt = 0; var owner = Guid.NewGuid();
+        DateTimeOffset? originalCompletionMailUntil=null;
         if (admission is not null)
         {
             // Read-only preflight before taking the worker row lock. Holding that
@@ -49,7 +50,12 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
             expectedRecord = candidate.EnvelopeId; expectedKind = candidate.Kind;
             expectedRow = JsonSerializer.Serialize(candidate);
             expectedAttempt = candidate.Attempts == int.MaxValue ? int.MaxValue : candidate.Attempts + 1;
-            try { await admission.ReserveAsync(id, expectedRecord, candidate.Kind, owner, expectedAttempt, cancellationToken); }
+            try {
+                originalCompletionMailUntil=await admission.ReserveCompletionMailAsync(id,expectedRecord,candidate.Kind,owner,expectedAttempt,
+                    time.GetUtcNow().AddSeconds(options.LeaseSeconds),cancellationToken);
+                if(originalCompletionMailUntil is null)
+                    await admission.ReserveAsync(id, expectedRecord, candidate.Kind, owner, expectedAttempt, cancellationToken);
+            }
             catch (ProductionWorkBlockedException) { return new(null, time.GetUtcNow().AddMinutes(15), false); }
             now = time.GetUtcNow();
         }
@@ -115,7 +121,8 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         row.Status = WorkStatus.Leased;
         row.Attempts=row.Kind==WorkKind.Purge && row.Attempts==int.MaxValue ? int.MaxValue : row.Attempts+1;
         row.LeaseOwner = owner;
-        row.LeaseExpiresAt = now.AddSeconds(options.LeaseSeconds);
+        if(originalCompletionMailUntil<=now)throw new ProductionWorkBlockedException();
+        row.LeaseExpiresAt = originalCompletionMailUntil??now.AddSeconds(options.LeaseSeconds);
         await db.SaveChangesAsync(cancellationToken);
         if(completionClaim is not null)await admission!.PrepareCompletionClaimExpectedLockedAsync(db,completionClaim,cancellationToken);
         await transaction.CommitAsync(cancellationToken);

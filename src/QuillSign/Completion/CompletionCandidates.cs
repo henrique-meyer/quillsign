@@ -193,7 +193,7 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
     private async Task<byte[]> ReadPdf(CompletionCandidate row,CancellationToken ct)
     {
         using var memory=new MemoryStream(); using var bounded=new BoundedDocumentStream(memory,MaximumPdfBytes); var blob=Blob(row);
-        var length=await blobs.CopyToAsync(Capability(blob,AssetOperation.Read),blob,bounded,ct);
+        var length=await CompletionReadRestriction.ReadAsync(db,()=>blobs.CopyToAsync(Capability(blob,AssetOperation.Read),blob,bounded,ct));
         if(length!=row.PdfLength || length!=memory.Length || !Same(row.PdfSha256,SHA256.HashData(memory.GetBuffer().AsSpan(0,checked((int)memory.Length)))))throw Invalid();
         return memory.ToArray();
     }

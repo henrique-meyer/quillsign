@@ -10,6 +10,21 @@ internal sealed record CompletionAccessParty(PartyType Type,Guid? Id,string Emai
 
 public sealed class CompletionAccessState(QuillSignDbContext db,CompletionEvidenceCollector collector,Func<CompletionPublication> publication,TimeProvider time,Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal async Task<CompletionAccessPreparation?> PrepareLockedAsync(Guid id,Func<CancellationToken,Task> demand,Action clocks,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null || id==Guid.Empty)throw Invalid();
+        var until=time.GetUtcNow().AddMinutes(2);
+        using var restriction=CompletionReadRestriction.Enter(db,()=>{clocks();ct.ThrowIfCancellationRequested();if(until<=time.GetUtcNow())throw Invalid();});
+        await demand(ct);
+        var saved=await CompletionDownloadState.ReadAsync(db,id,time,ct);if(saved is null || saved.PurgeAfter<=time.GetUtcNow())return null;
+        until=new[]{until,saved.PurgeAfter??DateTimeOffset.MaxValue}.Min();
+        await demand(ct);
+        var verified=await publication().ReadLockedAsync(id,ct);
+        await demand(ct);
+        if(verified is null || !saved.Matches(verified) || until<=time.GetUtcNow())throw Invalid();
+        await RecheckLockedAsync(saved,ct);await demand(ct);
+        return new(saved,verified,until);
+    }
     internal async Task<CompletionAccessPreparation?> PrepareAsync(Guid id,CancellationToken ct)
     {
         if(id==Guid.Empty)return null;

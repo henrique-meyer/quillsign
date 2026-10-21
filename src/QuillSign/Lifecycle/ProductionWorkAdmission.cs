@@ -14,6 +14,8 @@ namespace QuillSign.Lifecycle;
 internal interface IProductionWorkAdmission
 {
     Task ReserveAsync(Guid workId, Guid? recordId, WorkKind kind, Guid owner, int attempt, CancellationToken ct);
+    Task<DateTimeOffset?> ReserveCompletionMailAsync(Guid workId,Guid? recordId,WorkKind kind,Guid owner,int attempt,DateTimeOffset claimUntil,CancellationToken ct)
+        =>Task.FromResult<DateTimeOffset?>(null);
     Task DemandAsync(Guid workId, Guid? recordId, WorkKind kind, Guid owner, int attempt, CancellationToken ct);
     Task DemandLockedAsync(QuillSignDbContext db, Guid workId, Guid? recordId, WorkKind kind, Guid owner, int attempt, bool starting, CancellationToken ct);
     Task CompleteAsync(WorkLease lease, Guid? recordId, CancellationToken ct);
@@ -44,6 +46,19 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
     : IProductionWorkAdmission
 {
     internal ProductionCompletionAdmission? Completion {get;init;}
+    internal ProductionCompletionMailAdmission? CompletionMail {get;init;}
+
+    public Task<DateTimeOffset?> ReserveCompletionMailAsync(Guid workId,Guid? recordId,WorkKind kind,Guid owner,int attempt,DateTimeOffset claimUntil,CancellationToken ct)
+        =>Guard<DateTimeOffset?>(async()=>{
+            if(kind!=WorkKind.Email || await Demo(recordId,ct))return null;
+            await using var db=open();
+            var mail=await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==workId,ct);
+            if(mail?.Template!=CompletionNotificationJobs.Template)return null;
+            await SupportedMail(db,workId,recordId,kind,ct);
+            _=await admission.BeginCompletionNotificationAsync(recordId!.Value,owner,workId,attempt,claimUntil,ct);
+            if(claimUntil<=admission.Clock.GetUtcNow())throw new ProductionWorkBlockedException();
+            return claimUntil;
+        });
 
     public async Task<ProductionWorkCompletionClaim?> BeginCompletionClaimLockedAsync(QuillSignDbContext db,WorkItem expectedClaim,CancellationToken ct)
     {
@@ -74,6 +89,12 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
             // installed. A later Finish refusal cannot undo an unsupported send.
             await using var db = open();
             await SupportedWork(db, workId, recordId, kind, ct);
+            if(kind==WorkKind.Email && await db.EmailOutbox.AnyAsync(x=>x.Id==workId&&x.Template==CompletionNotificationJobs.Template,ct))
+            {
+                // Original completion-mail deadlines are captured before this
+                // reservation, never manufactured by generic/manual callers.
+                throw new ProductionWorkBlockedException();
+            }
             _ = await admission.BeginAsync(recordId!.Value, owner, Kind(kind), Reference(workId, attempt), ct);
         });
 
@@ -235,8 +256,10 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
     {
         if (kind != WorkKind.Email) throw new ProductionWorkBlockedException();
         var mail = await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == workId, ct);
-        if (mail is null || mail.EnvelopeId != recordId || mail.Template is not ("sender-verification" or "signer-declined" or "signer-invitation"))
+        if (mail is null || mail.EnvelopeId != recordId || mail.Template is not ("sender-verification" or "signer-declined" or "signer-invitation" or CompletionNotificationJobs.Template))
             throw new ProductionWorkBlockedException();
+        if(mail.Template==CompletionNotificationJobs.Template)
+            await (CompletionMail??throw new ProductionWorkBlockedException()).DemandInitialAsync(db,mail,ct);
         if (mail.Template == "signer-invitation") await DemandInitialInvitationAsync(db, mail, ct,admission.Clock);
         return mail;
     }
