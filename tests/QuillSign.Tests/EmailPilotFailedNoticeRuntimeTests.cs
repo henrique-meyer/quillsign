@@ -69,6 +69,9 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         var boxes=t.Options.Mailboxes;
         var voidOptions=new EmailPilotOptions{Enabled=true,RunId=Guid.NewGuid().ToString("N"),Mailboxes=boxes};
         await using var terminal=await Shared.Create(fixture,browser:true,configure:services=>{services.AddSingleton<IDataProtectionProvider>(keys);services.AddSingleton<TimeProvider>(clock);});
+        ClaimsPrincipal? cleanupSender=null;Guid? cleanupRecordId=null;
+        try
+        {
         terminal.Clock.Advance(clock.GetUtcNow()-terminal.Clock.GetUtcNow());
         var terminalEmail=terminal.App.Services.GetRequiredService<EmailOptions>();terminalEmail.Enabled=false;
         var terminalWork=terminal.App.Services.GetRequiredService<WorkOptions>();
@@ -88,6 +91,7 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         {
             var sp=services.ServiceProvider;var verified=await sp.GetRequiredService<SenderWorkflow>().VerifyAsync(new EmailPayloadProtection(keys).Unprotect(verification.PayloadJson).Token,null,null);Assert.NotNull(verified);
             sender=SenderConfiguration.Principal(verified!);draft=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==draft.Id);
+            cleanupSender=sender;cleanupRecordId=draft.Id;
             var source=PdfFixtures.Create(text:"SYNTHETIC CLOSEOUT VOID - NO AGREEMENT");var documents=sp.GetRequiredService<DocumentWorkflow>();
             Assert.True(await documents.UploadAsync(sender,draft.PublicId,draft.RowVersion,"Synthetic.pdf",new MemoryStream(source),source.Length,null,null,default));
             draft=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==draft.Id);
@@ -180,6 +184,16 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         Assert.Equal(originals,await OriginalRows(db,originalComplete.Concat(originalVoid).Select(x=>x.Id)));Assert.Equal(failedPairRequests,t.Run.Seal.Requests);
         settings.Enabled=false;Assert.Null((await store.ClaimAsync(created.CompletionWork.Last(),default)).Lease);Assert.Equal(2,capture.Messages.Count);
         Assert.True(clockAt<clock.GetUtcNow());
+        }
+        finally
+        {
+            if(cleanupSender is {} owner&&cleanupRecordId is Guid record)
+                foreach(var blob in terminal.Blobs.Created.Where(x=>x.EnvelopeId==record).Distinct().ToArray())
+                {
+                    await terminal.Blobs.Inner.DeleteAsync(owner,blob);
+                    terminal.Blobs.Created.RemoveAll(x=>x==blob);
+                }
+        }
     }
     private static EmailPilotAdmissionOptions HashOptions()=>new(){CapabilitySha256=Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.ASCII.GetBytes(Capability)))};
     private static async Task<string> OriginalRows(QuillSignDbContext db,IEnumerable<Guid> ids)
