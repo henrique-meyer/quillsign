@@ -20,7 +20,7 @@ namespace QuillSign.Tests;
 
 public sealed class ProductionHoldArchiveReleaseTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
-    private static readonly byte[] Raw = "Synthetic retained source - NO AGREEMENT"u8.ToArray();
+    internal static readonly byte[] Raw = "Synthetic retained source - NO AGREEMENT"u8.ToArray();
     [Fact]
     public async Task Exact_historical_complete_bundle_releases_only_its_own_versions_after_independent_request_extensions_and_restart()
     {
@@ -170,14 +170,14 @@ public sealed class ProductionHoldArchiveReleaseTests(SqlDatabaseFixture fixture
         internal Task Commit() => transaction.CommitAsync();
         public async ValueTask DisposeAsync() { if (transaction is not null) await transaction.DisposeAsync(); if (Db is not null) await Db.DisposeAsync(); Provider.Dispose(); }
     }
-    private sealed class Sources(HoldObjectAddress source) : IProductionHoldObjectSource
+    internal sealed class Sources(HoldObjectAddress source) : IProductionHoldObjectSource
     {
         public Task<HoldObjectPage> ListAsync(ProductionHoldObjectScope scope, string area, string? continuation, int maximum, CancellationToken ct) => Task.FromResult(new HoldObjectPage(area == source.Area ? [source] : [], null));
         public Task<string> HashAsync(ProductionHoldObjectScope scope, HoldObjectAddress value, CancellationToken ct) => Task.FromResult(Convert.ToHexStringLower(SHA256.HashData(Raw)));
     }
-    private sealed class File(byte[] bytes, string version)
+    internal sealed class File(byte[] bytes, string version)
     { internal byte[] Bytes = bytes; internal string Version = version; internal bool Held = true; }
-    private sealed class Provider : HttpMessageHandler
+    internal sealed class Provider : HttpMessageHandler
     {
         internal readonly Dictionary<string, File> Files = []; internal readonly List<string> Calls = []; private readonly Dictionary<string, byte[]> blocks = [];
         internal string Fault = "normal"; internal int Clears, Heads; internal Action<string>? After;
@@ -242,7 +242,7 @@ public sealed class ProductionHoldArchiveReleaseTests(SqlDatabaseFixture fixture
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) { reading(); return base.ReadAsync(buffer, ct); }
         public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct) { reading(); return base.ReadAsync(buffer, offset, count, ct); }
     }
-    private sealed class Credential : TokenCredential
+    internal sealed class Credential : TokenCredential
     {
         public override AccessToken GetToken(TokenRequestContext context, CancellationToken ct) => new("synthetic-no-agreement", DateTimeOffset.UtcNow.AddHours(1));
         public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext context, CancellationToken ct) => ValueTask.FromResult(GetToken(context, ct));
