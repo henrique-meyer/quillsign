@@ -1,0 +1,27 @@
+@page "/operator/pilot-closeout"
+@model QuillSign.Pages.Operator.PilotCloseoutModel
+@{ViewData["Title"]="Restricted test closeout";}
+<section class="start-card" aria-labelledby="closeout-title">
+<p class="eyebrow">Private operator access</p><h1 id="closeout-title">Restricted test closeout</h1>
+@if(Model.Message is not null){<p class="notice" role="status">@Model.Message</p>}
+@if(!Model.Unlocked){
+    <p>Use the separately authorized closeout capability. Public email remains disabled.</p>
+    <form method="post" asp-page-handler="Unlock">
+        <label for="closeout-capability">Closeout capability</label>
+        <input id="closeout-capability" name="Capability" type="password" autocomplete="off" maxlength="43" required />
+        <button type="submit">Open closeout controls</button>
+    </form>
+}else{
+    @if(Model.Saved is {} saved){
+        <p>Fixed closeout deadline: <time datetime="@saved.Until.ToString("O")">@saved.Until.ToString("u")</time> (UTC).</p>
+        <ul><li>Existing-draft verification: @(saved.DeclineVerificationSaved?"saved":"not requested")</li><li>Selected packet lookup: @(saved.LookupSaved?"saved":"not requested")</li></ul>
+    }else{<p>The fixed closeout has not been activated. Activation verifies the selected existing records and does not renew old links.</p>}
+    <form method="post" asp-page-handler="Start"><button type="submit">Activate or inspect selected closeout</button></form>
+    <p>Use ordinary mailbox verification for the existing decline draft, then its normal preparation, consent and decline screens.</p>
+    <form method="post" asp-page-handler="Verification"><button type="submit">Request existing-draft verification</button></form>
+    <p>The lookup lists only the selected completed packet and grants no editing access.</p>
+    <form method="post" asp-page-handler="Lookup"><button type="submit">Request selected packet lookup</button></form>
+    <p><a href="/operator/pilot-closeout">Refresh saved status</a></p>
+    <form method="post" asp-page-handler="Lock"><button type="submit">Close closeout controls</button></form>
+}
+</section>

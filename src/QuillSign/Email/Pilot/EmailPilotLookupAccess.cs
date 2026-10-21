@@ -23,7 +23,7 @@ public sealed partial class EmailPilotLookupAccess(Func<QuillSignDbContext> data
         if (await db.EmailPilotLookupRequests.AsNoTracking().AnyAsync(x => x.RequestId == id, ct)) return true;
         var row = await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct);
         if (row?.Template != LookupDeliveryProtection.Template) return false;
-        try { return payloads().Read(row).PilotRunId is not null; }
+        try { var p=payloads().Read(row);return p.PilotRunId is not null || p.CloseoutId is not null; }
         catch (Exception e) when (SourceError(e)) { return false; } // The ordinary payload verifier also cannot submit this row.
     }
 
