@@ -48,13 +48,13 @@ public sealed class ProductionHoldRuntimeOptions
     }
     private static InvalidOperationException Invalid()=>new("Configure the complete default-disabled production hold runtime explicitly.");
 }
-internal static class ProductionHoldRuntime
+internal static partial class ProductionHoldRuntime
 {
     private sealed record Credential(TokenCredential Value);
     internal static IServiceCollection AddProductionHoldRuntime(this IServiceCollection services,IConfiguration config)
     {
         if(services.Any(d=>d.ServiceType==typeof(ProductionHoldRuntimeOptions)))return services;
-        var settings=config.GetSection("ProductionHolds").Get<ProductionHoldRuntimeOptions>()??new();settings.Validate(config);services.AddSingleton(settings);
+        var settings=config.GetSection("ProductionHolds").Get<ProductionHoldRuntimeOptions>()??new();settings.Validate(config);services.AddSingleton(settings);AddProductionDeletionRuntime(services,config,settings);
         if(!settings.Enabled){Closed(services,settings,config);Decorate(services);return services;}
         var credential=string.IsNullOrWhiteSpace(config["Storage:ManagedIdentityClientId"])?new ManagedIdentityCredential(ManagedIdentityId.SystemAssigned):
             new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(config["Storage:ManagedIdentityClientId"]!));services.AddSingleton(new Credential(credential));
@@ -146,7 +146,7 @@ internal static class ProductionHoldRuntime
         foreach(var hook in Hooks){var property=hook.Target.GetProperty(hook.Property,System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance);
             if(property?.PropertyType!=hook.Value||property.SetMethod is null)throw new InvalidOperationException("Production admission hook registry changed.");}
         foreach(var descriptor in services.ToArray()) {
-            if(descriptor.ServiceType==typeof(WorkStore)){services.Remove(descriptor);services.AddScoped(sp=>new WorkStore(sp.GetRequiredService<QuillSignDbContext>(),sp.GetRequiredService<WorkOptions>(),sp.GetRequiredService<TimeProvider>(),sp.GetRequiredService<IProductionWorkAdmission>()));continue;}
+            if(descriptor.ServiceType==typeof(WorkStore)){services.Remove(descriptor);services.AddScoped(sp=>new WorkStore(sp.GetRequiredService<QuillSignDbContext>(),sp.GetRequiredService<WorkOptions>(),sp.GetRequiredService<TimeProvider>(),sp.GetRequiredService<IProductionWorkAdmission>()){DeletionAdmission=sp.GetRequiredService<IProductionDeletionWorkAdmission>()});continue;}
             var mapped=Hooks.Any(h=>h.Target==descriptor.ServiceType);
             if(!mapped&&descriptor.ServiceType!=typeof(IWorkHandler))continue;
             if(descriptor.Lifetime!=ServiceLifetime.Scoped||descriptor.ImplementationInstance is not null)throw new InvalidOperationException("Production admission boundaries require their original scoped lifetime.");
