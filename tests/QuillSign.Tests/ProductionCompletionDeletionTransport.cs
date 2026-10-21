@@ -29,6 +29,8 @@ internal sealed class ProductionCompletionDeletionTransport(TimeProvider time):H
     internal readonly List<(string Path,string Version,string Match)> Deletes=[];
     private readonly Dictionary<string,byte[]> hints=[];
     private readonly HashSet<(string,bool)> attempts=[];
+    internal int HintCreates {get;private set;}
+    internal int HintPuts {get;private set;}
     internal HttpClientTransport Transport()=>new(new HttpClient(this,false));
     internal void Seed(HoldObjectAddress address,byte[] bytes,DateTimeOffset? until=null,bool held=false)
     {
@@ -47,7 +49,8 @@ internal sealed class ProductionCompletionDeletionTransport(TimeProvider time):H
             Assert.Equal(HttpMethod.Get,request.Method);
             if(Q("comp")!="list")return Reply([]);
             var prefix=Q("prefix");ListedAreas.Add(area);ListedPrefixes.Add(area+"/"+prefix);
-            Assert.Contains("versions",Q("include"));Assert.Contains("snapshots",Q("include"));Assert.Contains("deleted",Q("include"));
+            var includes=Q("include").Split(',');Assert.Equal(4,includes.Length);
+            foreach(var required in new[]{"Versions","Snapshots","Deleted","DeletedWithVersions"})Assert.Contains(required,includes,StringComparer.OrdinalIgnoreCase);
             var entries=Objects.Values.Where(x=>x.Address.Area==area&&x.Address.Name.StartsWith(prefix,StringComparison.Ordinal)).OrderBy(x=>x.Address.Name,StringComparer.Ordinal).ToArray();
             Assert.InRange(entries.Length,0,int.Parse(Q("maxresults"),CultureInfo.InvariantCulture));Assert.Empty(Q("marker"));
             var xml=new XDocument(new XElement("EnumerationResults",new XAttribute("ServiceEndpoint","https://storage.example.invalid/"),new XAttribute("ContainerName",area),
@@ -62,9 +65,12 @@ internal sealed class ProductionCompletionDeletionTransport(TimeProvider time):H
             Assert.StartsWith("/recovery-index/production-deletion-recovery/",path);
             if(request.Method==HttpMethod.Put)
             {
-                Assert.Equal("*",H("If-None-Match"));Assert.False(hints.ContainsKey(path));hints.Add(path,await request.Content!.ReadAsByteArrayAsync(ct));return Reply([],HttpStatusCode.Created);
+                Assert.Equal("*",H("If-None-Match"));HintPuts++;
+                if(hints.ContainsKey(path))return Error(HttpStatusCode.PreconditionFailed,"ConditionNotMet");
+                hints.Add(path,await request.Content!.ReadAsByteArrayAsync(ct));HintCreates++;return Reply([],HttpStatusCode.Created);
             }
             if(!hints.TryGetValue(path,out var hint))return Error();
+            if(H("If-Match").Length>0)Assert.Equal("\"recovery-hint\"",H("If-Match"));
             var response=Reply(request.Method==HttpMethod.Get?hint:[]);response.Content.Headers.ContentLength=hint.Length;
             response.Headers.TryAddWithoutValidation("ETag","\"recovery-hint\"");response.Headers.TryAddWithoutValidation("x-ms-blob-type","BlockBlob");return response;
         }
@@ -89,8 +95,8 @@ internal sealed class ProductionCompletionDeletionTransport(TimeProvider time):H
     }
     private static HttpResponseMessage Reply(byte[] bytes,HttpStatusCode status=HttpStatusCode.OK)
     {var response=new HttpResponseMessage(status){Content=new ByteArrayContent(bytes)};response.Headers.TryAddWithoutValidation("x-ms-version","2023-11-03");return response;}
-    private static HttpResponseMessage Error()
-    {var response=Reply("<Error><Code>BlobNotFound</Code><Message>Synthetic exact API absence.</Message></Error>"u8.ToArray(),HttpStatusCode.NotFound);response.Headers.TryAddWithoutValidation("x-ms-error-code","BlobNotFound");return response;}
+    private static HttpResponseMessage Error(HttpStatusCode status=HttpStatusCode.NotFound,string code="BlobNotFound")
+    {var response=Reply(Encoding.UTF8.GetBytes($"<Error><Code>{code}</Code><Message>Synthetic exact API outcome.</Message></Error>"),status);response.Headers.TryAddWithoutValidation("x-ms-error-code",code);return response;}
 }
 
 public sealed class ProductionCompletionHistoricalMemoryTests
