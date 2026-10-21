@@ -8,7 +8,7 @@ public sealed record SignerCheckpointPayload(string Version,Guid FinishId);
 public sealed class SignerCheckpointJobs(QuillSignDbContext db,Func<IWorkSignals> signals,WorkOptions options,TimeProvider time)
 {
     public const string Version="signer-checkpoint-v1";
-    internal async Task<bool> PrepareAsync(SignerFinishAcceptance finish,CancellationToken ct)
+    internal async Task<bool> PrepareAsync(SignerFinishAcceptance finish,CancellationToken ct,Func<Guid,DateTimeOffset,CancellationToken,Task>? demandHint=null)
     {
         if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A transaction is required.");
         if(!options.Enabled)throw new InvalidOperationException("Checkpoint processing is disabled.");
@@ -21,7 +21,11 @@ public sealed class SignerCheckpointJobs(QuillSignDbContext db,Func<IWorkSignals
             return false;
         }
         var row=new WorkItem { Id=finish.Id,EnvelopeId=finish.EnvelopeId,Kind=WorkKind.Rendering,PayloadJson=payload,AvailableAt=time.GetUtcNow() };
-        db.WorkItems.Add(row); await db.SaveChangesAsync(ct); await signals().PutHintAsync(row.Id,row.AvailableAt,ct); return true;
+        db.WorkItems.Add(row); await db.SaveChangesAsync(ct);
+        if(demandHint is not null)await demandHint(row.Id,row.AvailableAt,ct);
+        await signals().PutHintAsync(row.Id,row.AvailableAt,ct);
+        if(demandHint is not null)await demandHint(row.Id,row.AvailableAt,ct);
+        return true;
     }
     internal async Task PublishAsync(Guid id,CancellationToken ct)
     {

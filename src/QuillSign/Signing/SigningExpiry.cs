@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Sender;
 using QuillSign.Work;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Signing;
 
@@ -15,6 +16,8 @@ public sealed record SigningExpiryBatch(int Examined,int Expired,int AlreadyExpi
 // Trusted finite maintenance only. No public action, queue timer, email or storage authority.
 public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState checkpoints,AuditWriter audit,TimeProvider time)
 {
+    internal ProductionTerminalMutationAdmission? HoldAdmission {get;init;}
+    internal IProductionWorkAdmission? WorkHoldAdmission {get;init;}
     private sealed record Evidence(string Version,string BeforeVersion,DateTimeOffset Deadline,DateTimeOffset ExpiredAt,string SourceSha256);
     private sealed record Roster(Guid Id,int Order,string FullName,string Email,string? Role);
     public Task<SigningExpiryResult> ExpireAsync(Guid id,CancellationToken ct=default)=>ExpireCoreAsync(id,null,null,ct);
@@ -32,6 +35,7 @@ public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState ch
                 if(lease.Id!=SigningExpiryJobs.WorkId(id) || payload!=SigningExpiryJobs.Bind(e))throw Invalid();
                 _=await SenderSentStatus.ReadSentAsync(db,e,null,ct);
                 await VerifyLease(e.Id,lease,payload!,ct);
+                if(WorkHoldAdmission is not null)await WorkHoldAdmission.DemandLockedAsync(db,lease.Id,e.Id,lease.Kind,lease.Owner,lease.Attempt,false,ct);
             }
             if(e.Status is not (EnvelopeStatus.Sent or EnvelopeStatus.Expired))return new(SigningExpiryOutcome.Closed);
             if(e.ExpiresAt is not DateTimeOffset deadline || deadline>time.GetUtcNow())return new(SigningExpiryOutcome.NotDue);
@@ -54,12 +58,16 @@ public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState ch
                     row.ActorId is not null || row.ActorEmail is not null || row.Ip is not null || row.UserAgent is not null ||
                     row.DataJson!=JsonSerializer.Serialize(saved with {SourceSha256=binding}))throw Invalid();
                 if(lease is not null)await VerifyLease(e.Id,lease,payload!,ct);
+                if(lease is not null&&WorkHoldAdmission is not null)await WorkHoldAdmission.PrepareHandlerOutcomeLockedAsync(db,lease,e.Id,ct);
+                else if(HoldAdmission is not null)await HoldAdmission.DemandReadLockedAsync(db,id,DateTimeOffset.MaxValue,ct);
                 await tx.CommitAsync(ct);return new(SigningExpiryOutcome.AlreadyExpired,saved.ExpiredAt);
             }
             if(existing.Length!=0 || events.Length>=512)throw Invalid();
             if(await db.SignerFinishAcceptances.AnyAsync(x=>x.EnvelopeId==id && x.ProcessedAt==null,ct))return new(SigningExpiryOutcome.AcceptedPending);
             if(signers.All(x=>x.Status==SignerStatus.Signed))return new(SigningExpiryOutcome.AllSigned);
             var at=time.GetUtcNow().ToUniversalTime();if(deadline>at)return new(SigningExpiryOutcome.NotDue);if(at<events[^1].At)throw Invalid();
+            ProductionRecordOperation? operation=null;
+            if(lease is null&&HoldAdmission is not null)operation=await HoldAdmission.BeginLockedAsync(db,id,"expire",Convert.ToBase64String(e.RowVersion),ct);
             var changed=await db.Envelopes.Where(x=>x.Id==id && x.Status==EnvelopeStatus.Sent && x.RowVersion==e.RowVersion)
                 .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Status,EnvelopeStatus.Expired),ct);
             if(changed!=1)throw Invalid();
@@ -73,7 +81,12 @@ public sealed class SigningExpiry(QuillSignDbContext db,SignerCheckpointState ch
             // An unknown acknowledgement never claims success. A fresh explicit operation
             // verifies saved status/evidence and cannot append a second expiration.
             if(lease is not null)await VerifyLease(e.Id,lease,payload!,ct);
-            await tx.CommitAsync(ct);return new(SigningExpiryOutcome.Expired,at);
+            if(lease is not null&&WorkHoldAdmission is not null)await WorkHoldAdmission.PrepareHandlerOutcomeLockedAsync(db,lease,e.Id,ct);
+            if(operation is not null)await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+            if(lease is not null)await VerifyLease(e.Id,lease,payload!,ct);
+            await tx.CommitAsync(ct);await tx.DisposeAsync();
+            if(operation is not null)await HoldAdmission!.CompleteAsync(operation,"expired",ct);
+            return new(SigningExpiryOutcome.Expired,at);
         } finally {db.ChangeTracker.Clear();}
     }
 

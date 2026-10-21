@@ -7,6 +7,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Storage;
 using QuillSign.Work;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Signing;
 
@@ -35,9 +36,20 @@ public sealed class SignerReceiptProtection(IDataProtectionProvider provider,Tim
 // Validation output is discarded: the response is the exact hash-pinned sent document.
 public sealed class SignerPdfAccess(IBlobStore blobs,DocumentOptions options)
 {
+    internal ProductionSignerMutationAdmission? HoldAdmission {get;init;}
     private static readonly SemaphoreSlim ParseGate = new(1,1);
-    public async Task<byte[]> PrepareAsync(ClaimsPrincipal principal,SignerReadContext context,CancellationToken ct = default)
+    public Task<byte[]> PrepareAsync(ClaimsPrincipal principal,SignerReadContext context,CancellationToken ct = default)
+        =>PrepareCoreAsync(principal,context,HoldAdmission is null?null:token=>HoldAdmission.DemandNewProofAsync(context,token),ct);
+    // Explicit pre-reservation proof read. Never open a second connection under
+    // the caller's parent lock or use this to bypass an active operation.
+    internal Task<byte[]> PrepareLockedAsync(QuillSignDbContext db,ClaimsPrincipal principal,SignerReadContext context,CancellationToken ct=default)
     {
+        if(db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges())throw new InvalidDataException("A clean caller transaction is required.");
+        return PrepareCoreAsync(principal,context,HoldAdmission is null?null:token=>HoldAdmission.DemandNewProofLockedAsync(db,context,token),ct);
+    }
+    private async Task<byte[]> PrepareCoreAsync(ClaimsPrincipal principal,SignerReadContext context,Func<CancellationToken,Task>? demand,CancellationToken ct)
+    {
+        if(demand is not null)await demand(ct);
         using var memory = new MemoryStream();
         using var bounded = new BoundedDocumentStream(memory,64 * 1024 * 1024);
         var length = await blobs.CopyToAsync(principal,context.Document,bounded,ct);
@@ -51,6 +63,7 @@ public sealed class SignerPdfAccess(IBlobStore blobs,DocumentOptions options)
             new PdfValidation(new() { MaximumBytes = 64 * 1024 * 1024,MaximumPages = Math.Clamp(options.MaximumPages,1,200) }).Rewrite(memory,output);
         }
         finally { ParseGate.Release(); }
+        if(demand is not null)await demand(ct);
         return memory.ToArray();
     }
 }
@@ -59,15 +72,24 @@ public enum ConsentResult { Accepted, AlreadyAccepted, InvalidContext, InvalidEv
 public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,SignerReceiptProtection receipts,AuditWriter audit,
     DeclineNotificationWriter notifications,TimeProvider time)
 {
+    internal ProductionSignerMutationAdmission? HoldAdmission {get;init;}
     public async Task<ConsentResult> AcceptAsync(ClaimsPrincipal principal,string publicId,string? receipt,bool agreement,bool canRetain,
         string? method,string? ip,string? ua,CancellationToken ct = default)
     {
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var context = await access.GetLockedContextAsync(principal,publicId,ct); if (context is null) return ConsentResult.InvalidContext;
         if (context.ConsentAt is not null) return ConsentResult.AlreadyAccepted;
         var evidence = receipts.Read(receipt,context.Identity);
         if (evidence is null || !agreement || !canRetain || method is not ("preview" or "download")) return ConsentResult.InvalidEvidence;
+        ProductionRecordOperation? operation=null;
+        if(HoldAdmission is not null)
+        {
+            try{operation=await HoldAdmission.BeginLockedAsync(db,context.Identity.EnvelopeId,"signer/consent",context.Identity.SignerId.ToString("N")+"/receipt/"+evidence.Id.ToString("N"),ct);}
+            catch(ProductionSignerBlockedException){return ConsentResult.InvalidContext;}
+            if(receipts.Read(receipt,context.Identity)!=evidence||!access.IsLive(context))return ConsentResult.InvalidContext;
+        }
         var now = time.GetUtcNow();
         await db.Signers.Where(x => x.Id == context.Identity.SignerId).ExecuteUpdateAsync(s => s.SetProperty(x => x.ConsentAt,now)
             .SetProperty(x => x.ConsentIp,ip).SetProperty(x => x.ConsentUa,Limit(ua,2048)).SetProperty(x => x.Status,SignerStatus.Viewed),ct);
@@ -76,21 +98,35 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
                 documentSha256 = context.Identity.DocumentHash,accessReceiptId = evidence.Id,accessMethod = method,agreement,canRetain,
                 serverEvidence = "hash_verified_pdf_prepared",clientEvidence = "signer_reported_access_and_retention" }),PartyType.Signer,context.Identity.SignerId);
         if(!access.IsLive(context))return ConsentResult.InvalidContext;
-        await access.CommitAsync(transaction,ct); return ConsentResult.Accepted;
+        if(operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+            if(receipts.Read(receipt,context.Identity)!=evidence||!access.IsLive(context))return ConsentResult.InvalidContext;
+        }
+        await access.CommitAsync(transaction,ct);await transaction.DisposeAsync();
+        if(operation is not null)await HoldAdmission!.CompleteAsync(operation,context.Identity,"consent",evidence.Id,ct);
+        return operation is not null&&!access.IsLive(context)?ConsentResult.InvalidContext:ConsentResult.Accepted;
     }
     public async Task<SignerReadContext?> DeclineAsync(ClaimsPrincipal principal,string publicId,string? reason,string? ip,string? ua,CancellationToken ct = default)
     {
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         reason = reason?.Trim();
         if (reason is { Length: > 512 } || reason?.Any(c => char.IsControl(c) && c is not ('\n' or '\r' or '\t')) == true)
             throw new ArgumentException("Use a decline reason of up to 512 characters.");
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
-        Guid notification; SignerReadContext? context;
+        Guid notification; SignerReadContext? context; ProductionRecordOperation? operation=null;
         await using (var transaction = await db.Database.BeginTransactionAsync(ct))
         {
             context = await access.GetLockedContextAsync(principal,publicId,ct);
             // Current scope already rejects any accepted Finish under this parent lock.
             // Electronic-record consent does not remove the signer's choice to refuse signing.
             if (context is null) return null;
+            if(HoldAdmission is not null)
+            {
+                try{operation=await HoldAdmission.BeginLockedAsync(db,context.Identity.EnvelopeId,"signer/decline",context.Identity.SignerId.ToString("N"),ct);}
+                catch(ProductionSignerBlockedException){return null;}
+                if(!access.IsLive(context))return null;
+            }
             await db.Signers.Where(x => x.Id == context.Identity.SignerId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status,SignerStatus.Declined)
                 .SetProperty(x => x.DeclineReason,reason),ct);
             await db.Envelopes.Where(x => x.Id == context.Identity.EnvelopeId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status,EnvelopeStatus.Declined),ct);
@@ -100,8 +136,14 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
                     disclosureSha256 = context.Identity.DisclosureHash }),PartyType.Signer,context.Identity.SignerId);
             await QuillSign.Lifecycle.ProductionRecordRetentionAccess.AnchorLockedIfEnrolledAsync(db,context.Identity.EnvelopeId,time,ct);
             if(!access.IsLive(context))return null;
+            if(operation is not null)
+            {
+                await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+                if(!access.IsLive(context))return null;
+            }
             await access.CommitAsync(transaction,ct);
         }
+        if(operation is not null)await HoldAdmission!.CompleteAsync(operation,context.Identity,"decline",notification,ct);
         await notifications.PublishAsync(notification,ct); return context;
     }
     private static string? Limit(string? value,int length) => value is { Length: > 2048 } ? value[..length] : value;

@@ -27,7 +27,7 @@ public sealed class SigningExpiryJobs(QuillSignDbContext db,SignerCheckpointStat
     internal static bool Matches(Envelope e,WorkItem row)=>row.Id==WorkId(e.Id) && row.Kind==WorkKind.Expiry && row.EnvelopeId==e.Id &&
         row.PayloadJson==Bind(e) && Enum.IsDefined(row.Status) && row.AvailableAt>=e.ExpiresAt && row.Attempts>=0;
 
-    internal async Task<Guid?> PrepareAsync(Guid envelopeId,CancellationToken ct)
+    internal async Task<Guid?> PrepareAsync(Guid envelopeId,CancellationToken ct,Func<Guid,DateTimeOffset,CancellationToken,Task>? demandHint=null)
     {
         if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Expiry preparation requires its parent's transaction.");
         if(!options.Enabled)throw new InvalidOperationException("Expiry processing is disabled.");
@@ -51,7 +51,10 @@ public sealed class SigningExpiryJobs(QuillSignDbContext db,SignerCheckpointStat
         _=await new SenderVoidState(db,state,time).SourceLockedAsync(e,ct);
         if(row.Status==WorkStatus.Failed)throw new InvalidOperationException("Failed expiry work requires operator review; resume does not reset attempts.");
         if(row.Status==WorkStatus.Completed)return id;
-        await signals().PutHintAsync(id,row.Status==WorkStatus.Leased && row.LeaseExpiresAt>row.AvailableAt ? row.LeaseExpiresAt.Value : row.AvailableAt,ct);
+        var due=row.Status==WorkStatus.Leased && row.LeaseExpiresAt>row.AvailableAt ? row.LeaseExpiresAt.Value : row.AvailableAt;
+        if(demandHint is not null)await demandHint(id,due,ct);
+        await signals().PutHintAsync(id,due,ct);
+        if(demandHint is not null)await demandHint(id,due,ct);
         return id;
     }
 

@@ -201,7 +201,7 @@ internal sealed class ProductionRetentionLedger(QuillSignDbContext db, AuditWrit
     private static byte[] Origin(Envelope e) => SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { e.Id, e.PublicId, e.SenderEmail, e.CreatedAt, e.IsDemo }));
     private static string EnrollmentJson(ProductionRetentionPolicyRecord r) => JsonSerializer.Serialize(new
         { version = "production-retention-enrollment-v1", r.EnvelopeId, r.OriginalCreatedAt, r.EnrolledAt, r.PolicySha256, originSha256 = Hex(r.OriginSha256) });
-    private static string TerminalJson(ProductionRetentionTerminalRecord r) => JsonSerializer.Serialize(new
+    internal static string TerminalJson(ProductionRetentionTerminalRecord r) => JsonSerializer.Serialize(new
         { version = "production-retention-terminal-v1", r.EnvelopeId, r.Status, r.PolicySha256, r.OriginalAt, r.ClockAt, r.RecordedAt, r.SourceAuditSequence, sourceAuditHash = Hex(r.SourceAuditHash) });
     private static bool SystemEvent(AuditEvent e) => e.ActorType == PartyType.System && e.ActorId is null && e.ActorEmail is null && e.Ip is null && e.UserAgent is null;
     internal static DateTimeOffset Seconds(DateTimeOffset at) => DateTimeOffset.FromUnixTimeSeconds(at.ToUnixTimeSeconds());

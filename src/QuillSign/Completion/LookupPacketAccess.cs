@@ -11,6 +11,7 @@ namespace QuillSign.Completion;
 public sealed class LookupPacketAccess(QuillSignDbContext db, DocumentLookup lookup, CompletionAccess completion,
     CompletionAccessState state, AuditWriter audit, TimeProvider time)
 {
+    internal ProductionCompletionReadAdmission? HoldAdmission {get;init;}
     public async Task<CompletionReaderSession?> OpenAsync(ClaimsPrincipal principal, string? receipt, string publicId, CancellationToken ct = default)
     {
         if (db.Database.CurrentTransaction is not null || db.ChangeTracker.HasChanges())
@@ -26,6 +27,7 @@ public sealed class LookupPacketAccess(QuillSignDbContext db, DocumentLookup loo
 
     private async Task<CompletionReaderSession?> OpenCore(ClaimsPrincipal principal, string? receipt, string publicId, CancellationToken ct)
     {
+        if(HoldAdmission is null?(completion.HoldAdmission is not null||lookup.HoldAdmission is not null):(!ReferenceEquals(completion.HoldAdmission,HoldAdmission)||!ReferenceEquals(lookup.HoldAdmission,HoldAdmission)))throw Invalid();
         if (!Guid.TryParseExact(publicId, "N", out var parsed) || parsed == Guid.Empty || parsed.ToString("N") != publicId) return null;
         var identity = await lookup.AuthenticateAsync(principal, receipt, ct); if (identity is null) return null;
         var restriction = await lookup.RestrictionAsync(identity, ct); if (!restriction.Allowed) return null;
@@ -45,7 +47,10 @@ public sealed class LookupPacketAccess(QuillSignDbContext db, DocumentLookup loo
         var current = await lookup.AuthenticateLockedAsync(principal, receipt, ct);
         if (current != identity || prepared.Saved.PublicId != publicId || prepared.Saved.CompletedAt > identity.RedeemedAt) return null;
         var member = await Member(prepared.Saved, identity.Email, ct); if (member is null) return null;
-        var link = await completion.PrepareBoundedLockedAsync(prepared, member.Type, member.Id, ct, restriction.IsPilot ? identity.ExpiresAt : null); if (link is null) return null;
+        if(HoldAdmission is not null && (!ReferenceEquals(completion.HoldAdmission,HoldAdmission)||!ReferenceEquals(lookup.HoldAdmission,HoldAdmission)))throw Invalid();
+        var readerTokenId=Guid.NewGuid();
+        var operation=HoldAdmission is null?null:await HoldAdmission.BeginLockedAsync(db,id.Value,"completion/lookup-open",readerTokenId.ToString("N"),ct);
+        var link = await completion.PrepareBoundedLockedAsync(prepared, member.Type, member.Id, ct, restriction.IsPilot ? identity.ExpiresAt : null,readerTokenId); if (link is null) {if(operation is null)return null;throw Invalid();}
         var reader = await completion.RedeemLockedAsync(prepared, link, identity.ExpiresAt, ct); if (reader is null) return null;
         await audit.AppendAsync(id.Value, "completion_lookup_opened", member.Email, null, null, ct,
             JsonSerializer.Serialize(new
@@ -65,7 +70,10 @@ public sealed class LookupPacketAccess(QuillSignDbContext db, DocumentLookup loo
         if (prepared.Until <= time.GetUtcNow() || reader.Session.Identity.ExpiresAt <= time.GetUtcNow()) throw Invalid();
         // Unknown acknowledgement exposes no session. An explicit live lookup retry
         // may create a fresh reader; it never replays this consumed temporary link.
-        await tx.CommitAsync(ct);
+        if(HoldAdmission is not null)await HoldAdmission.OutcomeLockedAsync(db,operation,ct);
+        if(prepared.Until<=time.GetUtcNow()||identity.ExpiresAt<=time.GetUtcNow()||reader.Session.Identity.ExpiresAt<=time.GetUtcNow())throw Invalid();
+        await tx.CommitAsync(ct);await tx.DisposeAsync();
+        if(HoldAdmission is not null)await HoldAdmission.CompleteAsync(operation,ct);
         DocumentRetentionAccess.Check(reader.Deadline, time);
         if (await completion.AuthenticateAsync(CompletionAccessProtection.Principal(reader.Session.Identity), publicId, reader.Session.Receipt, ct) is null) return null;
         if (await lookup.AuthenticateAsync(principal, receipt, ct) != identity || reader.Session.Identity.ExpiresAt <= time.GetUtcNow()) return null;

@@ -9,6 +9,7 @@ using QuillSign.Email;
 using QuillSign.Legal;
 using QuillSign.Storage;
 using QuillSign.Documents;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Signing;
 
@@ -47,12 +48,14 @@ public sealed record SignerReadContext(VerifiedSigner Identity,string Title,stri
 
 public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerAccessOptions options,TimeProvider time,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal ProductionSignerMutationAdmission? HoldAdmission {get;init;}
     internal Task CommitAsync(Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction,CancellationToken ct)=>
         QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
 
     public async Task<VerifiedSigner?> RedeemAsync(string? rawToken,string? ip,string? userAgent,CancellationToken ct = default)
     {
         var hash = SignerInvitationFactory.TokenHash(rawToken); if (hash is null) return null;
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
         // Locate scope without taking a token lock before the common envelope lock.
         var located = await db.AuthTokens.AsNoTracking().SingleOrDefaultAsync(x => x.TokenSha256 == hash,ct);
@@ -74,6 +77,13 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
         if(corrected && !await new SignerContactState(db,time).TokenMatchesLockedAsync(envelope!,token,ct))return null;
         if(!corrected && token.SignerContactRevisionId is not null)return null;
         context=await RetainedAsync(context,envelope!,true,ct);if(context is null)return null;
+        ProductionRecordOperation? operation=null;
+        if(HoldAdmission is not null)
+        {
+            try{operation=await HoldAdmission.BeginLockedAsync(db,envelopeId,"signer/redeem",signerId.ToString("N")+"/token/"+token.Id.ToString("N"),ct);}
+            catch(ProductionSignerBlockedException){return null;}
+            if(token.ExpiresAt<=time.GetUtcNow()||!IsLive(context))return null;
+        }
         var consumed = await db.AuthTokens.Where(x => x.Id == token.Id && x.UsedAt == null).ExecuteUpdateAsync(
             update => update.SetProperty(x => x.UsedAt,now),ct);
         if (consumed != 1) return null;
@@ -82,7 +92,15 @@ public sealed class SignerAccess(QuillSignDbContext db,AuditWriter audit,SignerA
                 disclosureSha256 = context.Identity.DisclosureHash,authentication = "single_use_email_link" }),PartyType.Signer,signerId);
         if(corrected)await new SignerContactState(db,time).BindRedeemedSessionLockedAsync(envelope!,context.Identity,token.Id,ct);
         if(!IsLive(context))return null;
-        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct); return context.Identity;
+        if(operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+            if(token.ExpiresAt<=time.GetUtcNow()||!IsLive(context))return null;
+        }
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
+        await transaction.DisposeAsync();
+        if(operation is not null)await HoldAdmission!.CompleteAsync(operation,context.Identity,"redeem",token.Id,ct);
+        return operation is not null&&!IsLive(context)?null:context.Identity;
     }
 
     public async Task<SignerReadContext?> GetContextAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct = default,bool declinedConfirmation = false)
