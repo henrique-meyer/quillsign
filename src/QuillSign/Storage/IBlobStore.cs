@@ -3,7 +3,7 @@ using QuillSign.Signing;
 
 namespace QuillSign.Storage;
 
-public enum DocumentBlobKind { Original, Normalized, Preview, Signature, Initials, CompletionCandidate, CompletionExecutedSeal, CompletionCertificateSource, CompletionCertificateSeal, ReviewInput }
+public enum DocumentBlobKind { Original, Normalized, Preview, Signature, Initials, CompletionCandidate, CompletionExecutedSeal, CompletionCertificateSource, CompletionCertificateSeal, ReviewInput, CompletionInput }
 
 // References contain no filenames, URLs, or caller-controlled path fragments.
 public readonly record struct DocumentBlob(Guid EnvelopeId, DocumentBlobKind Kind, Guid ObjectId);
@@ -26,6 +26,8 @@ public static class EnvelopeStorageAuthorization
 
     public static void DemandRead(ClaimsPrincipal principal,DocumentBlob blob)
     {
+        if (blob.Kind == DocumentBlobKind.CompletionInput) { if (principal is CompletionInputCapability input) { input.Demand(blob, AssetOperation.Read); return; } throw new UnauthorizedAccessException("An exact internal completion input capability is required."); }
+        if (principal is CompletionInputCapability) throw new UnauthorizedAccessException("The completion input capability cannot read another object.");
         if (blob.Kind == DocumentBlobKind.ReviewInput) { if (principal is ReviewInputCapability input) { input.Demand(blob, AssetOperation.Read); return; } throw new UnauthorizedAccessException("An exact internal review input capability is required."); }
         if (principal is ReviewInputCapability) throw new UnauthorizedAccessException("The review input capability cannot read another object.");
         if(principal is CompletionSealCapability seal) {seal.Demand(blob,AssetOperation.Read); return;}
@@ -53,6 +55,8 @@ public static class EnvelopeStorageAuthorization
 
     private static void DemandMutation(ClaimsPrincipal sender,DocumentBlob blob,AssetOperation operation)
     {
+        if (blob.Kind == DocumentBlobKind.CompletionInput) { if (sender is CompletionInputCapability input) { input.Demand(blob, operation); return; } throw new UnauthorizedAccessException("An exact internal completion input capability is required."); }
+        if (sender is CompletionInputCapability) throw new UnauthorizedAccessException("The completion input capability cannot mutate another object.");
         if (blob.Kind == DocumentBlobKind.ReviewInput) { if (sender is ReviewInputCapability input) { input.Demand(blob, operation); return; } throw new UnauthorizedAccessException("An exact internal review input capability is required."); }
         if (sender is ReviewInputCapability) throw new UnauthorizedAccessException("The review input capability cannot mutate another object.");
         if(sender is CompletionSealCapability seal) {seal.Demand(blob,operation); return;}
