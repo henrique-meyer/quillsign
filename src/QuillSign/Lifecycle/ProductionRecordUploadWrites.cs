@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using QuillSign.Data;
+using QuillSign.Documents;
 using QuillSign.Storage;
 
 namespace QuillSign.Lifecycle;
@@ -61,8 +63,10 @@ internal sealed partial class ProductionRecordOperationAdmission
         await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
         await DemandStartingLockedAsync(db, scope, ct); var state = await witness.ReadAsync(scope.RecordId, ct);
         await DemandControls(db, scope.RecordId, state, ct);
+        var deadline = await UploadDeadlineLocked(db, scope.RecordId, ct);
         await witness.PrepareUploadWritesAsync(scope.RecordId, state.Operations![scope.OperationId], original, normalized,
             UploadId(scope, "plan"), ct); await tx.RollbackAsync(ct);
+        DocumentRetentionAccess.Check(deadline, time);
     }
 
     internal async Task<bool> BeginUploadWriteAsync(ProductionRecordOperation scope, ProductionRecordWriteDescriptor item, CancellationToken ct = default)
@@ -100,7 +104,20 @@ internal sealed partial class ProductionRecordOperationAdmission
         await DemandControls(db, scope.RecordId, state, ct);
         var plan = state.UploadWrites?.GetValueOrDefault(scope.OperationId) ?? throw Invalid();
         if (!ProductionRecordUploadWriteContract.Member(plan, item) || requireStarted && !plan.Begun.Contains(item.Blob)) throw Invalid();
-        DemandActive(scope, state); await tx.RollbackAsync(ct); return state;
+        DemandActive(scope, state);
+        var deadline = await UploadDeadlineLocked(db, scope.RecordId, ct);
+        await tx.RollbackAsync(ct); DocumentRetentionAccess.Check(deadline, time); return state;
+    }
+
+    private async Task<DateTimeOffset> UploadDeadlineLocked(QuillSignDbContext db, Guid recordId, CancellationToken ct)
+    {
+        // Authenticate the saved original policy under the same parent lock.
+        // Provider permits never infer a lifetime from current configuration.
+        var row = await db.Envelopes.AsNoTracking().SingleOrDefaultAsync(x => x.Id == recordId, ct) ?? throw Invalid();
+        var retention = await ProductionRecordRetentionAccess.ReadLockedAsync(db, row, time, ct);
+        if (retention.Kind != ProductionEnrollmentKind.Enrolled || retention.Stage != ProductionRecordStage.Draft ||
+            row.Status != EnvelopeStatus.Draft || retention.Deadline is not { } deadline) throw Invalid();
+        DocumentRetentionAccess.Check(deadline, time); return deadline;
     }
 
     private static Guid UploadId(ProductionRecordOperation scope, string phase, ProductionRecordWriteDescriptor? item = null)

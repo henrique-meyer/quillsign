@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using QuillSign.Documents;
 using QuillSign.Lifecycle;
 using QuillSign.Storage;
 using static QuillSign.Tests.ProductionHoldWitnessJournalTests;
@@ -10,6 +11,45 @@ namespace QuillSign.Tests;
 
 public sealed class ProductionRecordUploadWritesTests(SqlDatabaseFixture fixture) : IClassFixture<SqlDatabaseFixture>
 {
+    [Theory]
+    [InlineData("before-plan")][InlineData("before-first-intent")][InlineData("after-first-intent")]
+    public async Task Every_upload_boundary_preserves_the_authenticated_original_Draft_deadline(string phase)
+    {
+        var run = await Run.Create(fixture); var original = await run.Retention();
+        run.Record.Clock.Now = original.Deadline.AddTicks(-1);
+        if (phase != "before-plan") await run.Plan();
+        if (phase == "after-first-intent")
+        {
+            Assert.True(await run.Gate.BeginUploadWriteAsync(run.Scope, run.Original));
+            await run.Gate.DemandUploadWriteAsync(run.Scope, run.Original);
+        }
+        run.Record.Clock.Now = original.Deadline;
+        if (phase == "before-plan") await Assert.ThrowsAsync<DocumentRetentionExpiredException>(run.Plan);
+        else
+        {
+            await Assert.ThrowsAsync<DocumentRetentionExpiredException>(() => run.Gate.BeginUploadWriteAsync(run.Scope, run.Normalized));
+            await Assert.ThrowsAsync<DocumentRetentionExpiredException>(() => run.Gate.ReadUploadWriteReceiptAsync(run.Scope, run.Original));
+            if (phase == "before-first-intent")
+                await Assert.ThrowsAsync<DocumentRetentionExpiredException>(() => run.Gate.BeginUploadWriteAsync(run.Scope, run.Original));
+            else
+            {
+                // These are the uploader's subsequent stage/commit and readback
+                // boundaries after a first attempt; expiry cannot erase it.
+                await Assert.ThrowsAsync<DocumentRetentionExpiredException>(() => run.Gate.DemandUploadWriteAsync(run.Scope, run.Original));
+                await Assert.ThrowsAsync<DocumentRetentionExpiredException>(() => run.Gate.RecordUploadWriteAsync(run.Scope, Run.Receipt(run.Original)));
+            }
+        }
+        var state = await run.Record.Journal().ReadAsync(run.Record.Id);
+        Assert.Empty(state.Outcomes!); Assert.Empty(state.SettledOperations); Assert.Equal(run.Scope.OperationId, state.OutstandingOperation);
+        if (phase == "before-plan") Assert.Empty(state.UploadWrites!);
+        else
+        {
+            var plan = state.UploadWrites![run.Scope.OperationId]; Assert.Empty(plan.Receipts);
+            Assert.Equal(phase == "after-first-intent" ? 1 : 0, plan.Begun.Count);
+        }
+        Assert.Equal(original, await run.Retention());
+    }
+
     [Fact]
     public async Task Exact_two_objects_drain_pending_hold_then_only_the_bound_saved_SQL_can_complete()
     {
@@ -176,6 +216,16 @@ public sealed class ProductionRecordUploadWritesTests(SqlDatabaseFixture fixture
             run.Normalized = new(new(run.Record.Id, DocumentBlobKind.Normalized, Guid.NewGuid()), 53, new('c', 64)); return run;
         }
         internal Task Plan() => Gate.PrepareUploadWritesAsync(Scope, Original, Normalized);
+        internal async Task<(DateTimeOffset Deadline, string Policy, DateTimeOffset Created)> Retention()
+        {
+            await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
+            var row = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == Record.Id);
+            var saved = await ProductionRecordRetentionAccess.ReadLockedAsync(db, row, Record.Clock);
+            Assert.Equal(ProductionEnrollmentKind.Enrolled, saved.Kind); Assert.Equal(ProductionRecordStage.Draft, saved.Stage);
+            Assert.NotNull(saved.Deadline); Assert.NotNull(saved.Enrollment);
+            var result = (saved.Deadline.Value, JsonSerializer.Serialize(saved.Enrollment.Snapshot), saved.Enrollment.OriginalCreatedAt);
+            await tx.RollbackAsync(); return result;
+        }
         internal static ProductionRecordWriteReceipt Receipt(ProductionRecordWriteDescriptor item) => new(item, "synthetic-version-" + item.Blob.ObjectId.ToString("N"), "\"synthetic-etag\"");
         internal async Task Write(ProductionRecordWriteDescriptor item)
         {
