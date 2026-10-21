@@ -2,8 +2,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
+using System.Data.Common;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using QuillSign.Data;
 
 namespace QuillSign.Lifecycle;
@@ -24,7 +26,8 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
     TimeProvider time, ProductionHoldWitnessJournal witness)
 {
     internal TimeProvider Clock => time;
-    private sealed record HandlerFinalizationPermit(ProductionRecordOperation Scope, Guid TransactionId, HoldWitnessOutcome HandlerOutcome);
+    private sealed record HandlerFinalizationPermit(ProductionRecordOperation Scope, Guid TransactionId,
+        DbTransaction SqlTransaction, HoldWitnessOutcome HandlerOutcome);
     private readonly ConditionalWeakTable<QuillSignDbContext, HandlerFinalizationPermit> handlerFinalizers = new();
     internal async Task<bool> IsUnenrolledDemoAsync(QuillSignDbContext db, Guid recordId, CancellationToken ct = default)
     {
@@ -218,7 +221,8 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         if (state.CompletionMailBaselines?.ContainsKey(scope.OperationId) == true && state.HandlerOutcomes?.ContainsKey(scope.OperationId) != true) throw Invalid();
         if (state.HandlerOutcomes?.GetValueOrDefault(scope.OperationId) is { } handler &&
             (!handlerFinalizers.TryGetValue(db, out var permit) || permit.Scope != scope ||
-                permit.TransactionId != db.Database.CurrentTransaction.TransactionId || permit.HandlerOutcome != handler)) throw Invalid();
+                permit.TransactionId != db.Database.CurrentTransaction.TransactionId || permit.HandlerOutcome != handler ||
+                permit.SqlTransaction.Connection is null || !ReferenceEquals(permit.SqlTransaction, db.Database.CurrentTransaction.GetDbTransaction()))) throw Invalid();
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         await DemandControls(db, scope.RecordId, state, ct);
         var current = await Capture(db, scope.RecordId, requests, ct);
@@ -284,7 +288,7 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         else DemandActive(scope, after, allowHandler: true);
         DemandCompletionMailLive(scope,after);
         if (after.HandlerOutcomes?.GetValueOrDefault(scope.OperationId) != handler) throw Invalid();
-        handlerFinalizers.Add(db, new(scope, db.Database.CurrentTransaction.TransactionId, handler));
+        handlerFinalizers.Add(db, new(scope, db.Database.CurrentTransaction.TransactionId, db.Database.CurrentTransaction.GetDbTransaction(), handler));
     }
 
     internal static string ContentDigest(ProductionHoldSqlSnapshot snapshot, IDataProtectionProvider keys)

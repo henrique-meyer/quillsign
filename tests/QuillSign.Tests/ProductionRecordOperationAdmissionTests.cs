@@ -4,6 +4,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage;
 using QuillSign.Data;
 using QuillSign.Lifecycle;
 
@@ -382,6 +383,38 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
     {
         public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData data, CancellationToken ct = default)
             => throw new IOException("Synthetic lost SQL outcome commit acknowledgement");
+    }
+
+    [Fact]
+    public async Task Reusing_a_rolled_back_finalization_GUID_on_a_different_physical_transaction_cannot_publish_work_outcome()
+    {
+        // Synthetic native SQL handler checkpoint only; no provider submission.
+        // Existing legacy handler-only records remain supported by the kernel.
+        var run = await Run.Create(fixture); var gate = run.Gate(); await gate.InitializeAsync(run.Id);
+        var scope = await gate.BeginAsync(run.Id, Guid.NewGuid(), "work/" + (int)WorkKind.Email, run.Work.ToString("N") + "/attempt/1");
+        await using var db = fixture.Open();
+        await using (var tx = await db.Database.BeginTransactionAsync())
+        {
+            await db.EmailOutbox.Where(x => x.Id == run.Work).ExecuteUpdateAsync(x => x.SetProperty(m => m.Status, EmailStatus.Sent));
+            await gate.PrepareHandlerOutcomeLockedAsync(db, scope); await tx.CommitAsync();
+        }
+        Guid originalId; DbTransaction originalSql;
+        await using (var tx = await db.Database.BeginTransactionAsync())
+        {
+            await gate.DemandHandlerOutcomeLockedAsync(db, scope);
+            originalId = tx.TransactionId; originalSql = tx.GetDbTransaction(); await tx.RollbackAsync();
+        }
+        Assert.Null(originalSql.Connection);
+        await db.Database.OpenConnectionAsync();
+        await using var replacement = await db.Database.GetDbConnection().BeginTransactionAsync();
+        await using var alias = await db.Database.UseTransactionAsync(replacement, originalId);
+        Assert.Equal(originalId, db.Database.CurrentTransaction!.TransactionId);
+        Assert.NotSame(originalSql, db.Database.CurrentTransaction.GetDbTransaction());
+        await Assert.ThrowsAsync<InvalidDataException>(() => gate.PrepareOutcomeLockedAsync(db, scope));
+        var state = await run.Journal().ReadAsync(run.Id);
+        Assert.Single(state.HandlerOutcomes!); Assert.Empty(state.Outcomes!); Assert.Empty(state.SettledOperations);
+        Assert.Equal(scope.OperationId, state.OutstandingOperation);
+        Assert.Equal(WorkStatus.Queued, (await db.WorkItems.AsNoTracking().SingleAsync(x => x.Id == run.Work)).Status);
     }
 
     [Fact]
