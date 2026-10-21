@@ -6,6 +6,7 @@ using QuillSign.Data;
 using QuillSign.Email;
 using QuillSign.Sender;
 using QuillSign.Storage;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Documents;
 
@@ -21,6 +22,7 @@ public sealed record DetailsResult(DetailsError Error, string? Message = null, s
 
 public sealed class DraftDetails(QuillSignDbContext db, AuditWriter audit, PreparationOptions options,TimeProvider? time=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal ProductionSenderPreparationAdmission? HoldAdmission { get; init; }
     public async Task<DraftDetailsSnapshot?> GetAsync(ClaimsPrincipal sender, string publicId, CancellationToken ct = default)
     {
         var identity = Identity(sender, publicId); if (identity is null) return null;
@@ -40,9 +42,20 @@ public sealed class DraftDetails(QuillSignDbContext db, AuditWriter audit, Prepa
         string? ip, string? userAgent, CancellationToken ct = default)
     {
         var identity = Identity(sender, publicId); if (identity is null) return new(DetailsError.NotFound);
+        if (HoldAdmission is null) return await ChangeCoreAsync(sender, publicId, change, ip, userAgent, ct);
+        return await HoldAdmission.ExecuteAsync(db, identity.Value.Id, identity.Value.Email, publicId, "sender/details",
+            operation => ChangeCoreAsync(sender, publicId, change, ip, userAgent, ct, operation),
+            new(DetailsError.NotFound), new(DetailsError.Conflict, "This draft changed. Review the saved details and your attempted edits before trying again."), ct);
+    }
+
+    private async Task<DetailsResult> ChangeCoreAsync(ClaimsPrincipal sender, string publicId, DetailsChange change,
+        string? ip, string? userAgent, CancellationToken ct, ProductionRecordOperation? operation = null)
+    {
+        var identity = Identity(sender, publicId); if (identity is null) return new(DetailsError.NotFound);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var envelope = await Locked(identity.Value.Id).SingleOrDefaultAsync(ct);
+        if (operation is not null) await HoldAdmission!.DemandStartingLockedAsync(db, operation, ct);
         if (!Owns(envelope, identity.Value.Email, publicId)) return new(DetailsError.NotFound);
         var deadline=await SenderPreparationRetention.ReadAsync(db,envelope!,time??TimeProvider.System,ct,pilotBounds);
         if (!Confirmed(envelope!)) return new(DetailsError.PreviewRequired, "Confirm the current PDF before editing document details.");

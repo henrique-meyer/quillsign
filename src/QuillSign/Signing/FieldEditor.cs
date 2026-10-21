@@ -7,6 +7,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Sender;
 using QuillSign.Storage;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Signing;
 
@@ -25,6 +26,7 @@ public sealed record FieldSaveResult(FieldEditorError Error, string? Message = n
 
 public sealed class FieldEditor(QuillSignDbContext db, AuditWriter audit, FieldEditorOptions options, TimeProvider time,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal ProductionSenderPreparationAdmission? HoldAdmission { get; init; }
     public async Task<FieldEditorSnapshot?> GetAsync(ClaimsPrincipal sender, string publicId, CancellationToken ct = default)
     {
         var identity = SenderIdentity(sender, publicId);
@@ -53,9 +55,20 @@ public sealed class FieldEditor(QuillSignDbContext db, AuditWriter audit, FieldE
     {
         var identity = SenderIdentity(sender, publicId);
         if (identity is null) return new(FieldEditorError.NotFound);
+        if (HoldAdmission is null) return await SaveCoreAsync(sender, publicId, save, ip, userAgent, ct);
+        return await HoldAdmission.ExecuteAsync(db, identity.Value.Id, identity.Value.Email, publicId, "sender/fields",
+            operation => SaveCoreAsync(sender, publicId, save, ip, userAgent, ct, operation),
+            new(FieldEditorError.NotFound), new(FieldEditorError.Conflict, "This draft changed in another tab. Your edits are still here; copy or export them before reloading."), ct);
+    }
+
+    private async Task<FieldSaveResult> SaveCoreAsync(ClaimsPrincipal sender, string publicId, FieldSave save,
+        string? ip, string? userAgent, CancellationToken ct, ProductionRecordOperation? operation = null)
+    {
+        var identity = SenderIdentity(sender, publicId); if (identity is null) return new(FieldEditorError.NotFound);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var envelope = await LockedAsync(identity.Value.Id, ct);
+        if (operation is not null) await HoldAdmission!.DemandStartingLockedAsync(db, operation, ct);
         if (!Owns(envelope, identity.Value.Email, publicId)) return new(FieldEditorError.NotFound);
         var deadline=await SenderPreparationRetention.ReadAsync(db,envelope!,time,ct,pilotBounds);
         if (!Confirmed(envelope!)) return new(FieldEditorError.PreviewRequired, "Confirm the current PDF before placing fields.");
