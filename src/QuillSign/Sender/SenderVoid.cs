@@ -7,6 +7,7 @@ using QuillSign.Data;
 using QuillSign.Signing;
 using QuillSign.Work;
 using QuillSign.Documents;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Sender;
 
@@ -27,6 +28,7 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
     Func<VoidNotificationJobs>? notifications=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     private readonly SenderVoidState state=new(db,checkpoints,time,pilotBounds);
+    internal ProductionTerminalMutationAdmission? HoldAdmission {get;init;}
 
     public async Task<SenderVoidResult> VoidAsync(ClaimsPrincipal sender,string publicId,DateTimeOffset senderTicketExpiresAt,
         byte[]? reviewedVersion,bool confirmed,string? statementVersion,string? reason,string? ip,string? userAgent,CancellationToken ct=default)
@@ -40,6 +42,8 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         var version=Convert.ToBase64String(reviewedVersion.ToArray());
         db.ChangeTracker.Clear();
         try {var result=await Core(identity.Value.Id,identity.Value.Email,publicId,senderTicketExpiresAt,version,normalized,ip,userAgent,ct);db.ChangeTracker.Clear();return result;}
+        catch(Exception error)when(HoldAdmission is not null&&error is InvalidDataException or UnauthorizedAccessException or CryptographicException)
+        {db.ChangeTracker.Clear();return new(SenderVoidOutcome.InvalidContext);}
         catch {db.ChangeTracker.Clear();throw;}
     }
 
@@ -52,6 +56,7 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         var deadline=await SenderPreparationRetention.ReadAsync(db,envelope,time,ct,pilotBounds);
         if(envelope.Status==EnvelopeStatus.Voided) {
             var recorded=await Recorded(envelope,version,reason,ct);if(recorded is null)return new(SenderVoidOutcome.Conflict);
+            if(HoldAdmission is not null)await HoldAdmission.DemandReadLockedAsync(db,id,until,ct);
             if(until<=time.GetUtcNow())return new(SenderVoidOutcome.InvalidContext);
             DocumentRetentionAccess.Check(deadline,time);
             await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);return new(SenderVoidOutcome.AlreadyVoided,recorded);
@@ -62,6 +67,13 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         if(await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==id && x.Event=="voided",ct))throw Invalid();
         var at=time.GetUtcNow();if(until<=at)return new(SenderVoidOutcome.InvalidContext);
         if(envelope.ExpiresAt<=at)return new(SenderVoidOutcome.Closed);
+        ProductionRecordOperation? operation=null;
+        if(HoldAdmission is not null)
+        {
+            try{operation=await HoldAdmission.BeginLockedAsync(db,id,"void",version,ct);}
+            catch(Exception error)when(error is InvalidDataException or UnauthorizedAccessException or CryptographicException){return new(SenderVoidOutcome.InvalidContext);}
+            if(until<=time.GetUtcNow()||envelope.ExpiresAt<=time.GetUtcNow())return new(SenderVoidOutcome.Closed);
+        }
         var changed=await db.Envelopes.Where(x=>x.Id==id && x.Status==EnvelopeStatus.Sent && x.RowVersion==envelope.RowVersion)
             .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Status,EnvelopeStatus.Voided),ct);
         if(changed!=1)return new(SenderVoidOutcome.Conflict);
@@ -74,9 +86,15 @@ public sealed class SenderVoid(QuillSignDbContext db,SignerCheckpointState check
         if(until<=time.GetUtcNow())return new(SenderVoidOutcome.InvalidContext);
         DocumentRetentionAccess.Check(deadline,time);
         if(envelope.ExpiresAt<=time.GetUtcNow())return new(SenderVoidOutcome.Closed);
+        if(operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+            if(until<=time.GetUtcNow()||envelope.ExpiresAt<=time.GetUtcNow())return new(SenderVoidOutcome.Closed);
+        }
         // A lost acknowledgement propagates. A later explicit saved-state read/repeat
         // can verify the existing action; it cannot create a second void record.
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);await tx.DisposeAsync();
+        if(operation is not null)await HoldAdmission!.CompleteAsync(operation,"voided",ct);
         if(producer is not null)await producer.PublishAsync(jobs,ct);
         return new(SenderVoidOutcome.Voided,result);
     }

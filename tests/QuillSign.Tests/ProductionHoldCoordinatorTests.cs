@@ -92,10 +92,26 @@ public sealed class ProductionHoldCoordinatorTests(SqlDatabaseFixture fixture) :
         await Assert.ThrowsAsync<IOException>(() => Coordinator(Open).SubmitAsync(Authority(run.Time, command.Permission), Operators, command));
         var pending = await new ProductionHoldWitnessJournal(store, run.Keys, run.Time, Installation).ReadAsync(run.Id);
         Assert.True(pending.Frozen); Assert.NotNull(pending.Unacknowledged);
+        var beforeObservation=store.Rows.Count;
+        var statusPolicy=new ProductionOperatorPolicy(true,[new(Issuer,"synthetic-status",new HashSet<ProductionOperatorPermission>{ProductionOperatorPermission.Status})]);
+        var status=ProductionOperatorAuthority.FromValidatedTicket(new(new(new System.Security.Claims.ClaimsIdentity([
+            new("iss",Issuer,System.Security.Claims.ClaimValueTypes.String,Issuer),new("sub","synthetic-status",System.Security.Claims.ClaimValueTypes.String,Issuer)],ProductionOperatorAuthority.OidcScheme)),
+            new Microsoft.AspNetCore.Authentication.AuthenticationProperties{IssuedUtc=run.Time.Now,ExpiresUtc=run.Time.Now.AddMinutes(5)},ProductionOperatorAuthority.CookieScheme),statusPolicy,ProductionOperatorPermission.Status,run.Time);
+        var unresolved=await Coordinator(fixture.Open).ObserveRecoveryAsync(status,statusPolicy,run.Id);
+        Assert.Equal(ProductionHoldRecoveryState.Unresolved,unresolved.State);
+        Assert.Equal(ProductionHoldRecoveryReason.CommandAcknowledgement,unresolved.Reason);
+        Assert.True(unresolved.Frozen);Assert.False(unresolved.SqlHeadVerified);Assert.Equal(command.CommandId,unresolved.CommandId);
+        Assert.Equal(beforeObservation,store.Rows.Count);Assert.Empty(provider.Files);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(()=>Coordinator(fixture.Open).ObserveRecoveryAsync(
+            Authority(run.Time,ProductionOperatorPermission.PlaceHold),Operators,run.Id));
         await using (var db = fixture.Open()) Assert.Equal(1, await db.ProductionHoldRequests.CountAsync(x => x.EnvelopeId == run.Id));
         var recovered = await Coordinator(fixture.Open).SubmitAsync(Authority(run.Time, command.Permission), Operators, command);
         Assert.Null(recovered.Unacknowledged); Assert.Equal(1, recovered.RequestRevision); Assert.Equal(2, store.Rows.Count);
         Assert.Empty(provider.Files); Assert.True((await Coordinator(fixture.Open).ReadVerifiedAsync(run.Id)).Frozen);
+        var incomplete=await Coordinator(fixture.Open).ObserveRecoveryAsync(status,statusPolicy,run.Id);
+        Assert.Equal(ProductionHoldRecoveryState.Unresolved,incomplete.State);
+        Assert.Equal(ProductionHoldRecoveryReason.Preservation,incomplete.Reason);Assert.True(incomplete.SqlHeadVerified);
+        Assert.True(incomplete.Frozen);Assert.Empty(provider.Files);Assert.Equal(2,store.Rows.Count);
     }
 
     private sealed class LostCommit : DbTransactionInterceptor

@@ -109,20 +109,24 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
     }
     public async Task<SignerReadContext?> DeclineAsync(ClaimsPrincipal principal,string publicId,string? reason,string? ip,string? ua,CancellationToken ct = default)
     {
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         reason = reason?.Trim();
         if (reason is { Length: > 512 } || reason?.Any(c => char.IsControl(c) && c is not ('\n' or '\r' or '\t')) == true)
             throw new ArgumentException("Use a decline reason of up to 512 characters.");
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
-        Guid notification; SignerReadContext? context;
+        Guid notification; SignerReadContext? context; ProductionRecordOperation? operation=null;
         await using (var transaction = await db.Database.BeginTransactionAsync(ct))
         {
             context = await access.GetLockedContextAsync(principal,publicId,ct);
             // Current scope already rejects any accepted Finish under this parent lock.
             // Electronic-record consent does not remove the signer's choice to refuse signing.
             if (context is null) return null;
-            // Keep genuine unenrolled demos on their existing path. Production
-            // decline has no admitted notification/terminal outcome in this slice.
-            if(HoldAdmission is not null&&!await HoldAdmission.IsUnenrolledDemoAsync(db,context.Identity.EnvelopeId,ct))return null;
+            if(HoldAdmission is not null)
+            {
+                try{operation=await HoldAdmission.BeginLockedAsync(db,context.Identity.EnvelopeId,"signer/decline",context.Identity.SignerId.ToString("N"),ct);}
+                catch(ProductionSignerBlockedException){return null;}
+                if(!access.IsLive(context))return null;
+            }
             await db.Signers.Where(x => x.Id == context.Identity.SignerId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status,SignerStatus.Declined)
                 .SetProperty(x => x.DeclineReason,reason),ct);
             await db.Envelopes.Where(x => x.Id == context.Identity.EnvelopeId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status,EnvelopeStatus.Declined),ct);
@@ -132,8 +136,14 @@ public sealed class SignerConsent(QuillSignDbContext db,SignerAccess access,Sign
                     disclosureSha256 = context.Identity.DisclosureHash }),PartyType.Signer,context.Identity.SignerId);
             await QuillSign.Lifecycle.ProductionRecordRetentionAccess.AnchorLockedIfEnrolledAsync(db,context.Identity.EnvelopeId,time,ct);
             if(!access.IsLive(context))return null;
+            if(operation is not null)
+            {
+                await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+                if(!access.IsLive(context))return null;
+            }
             await access.CommitAsync(transaction,ct);
         }
+        if(operation is not null)await HoldAdmission!.CompleteAsync(operation,context.Identity,"decline",notification,ct);
         await notifications.PublishAsync(notification,ct); return context;
     }
     private static string? Limit(string? value,int length) => value is { Length: > 2048 } ? value[..length] : value;

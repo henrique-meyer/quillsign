@@ -85,7 +85,8 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
             await audit.AppendAsync(envelopeId,"signer_completed",signer.Email,f.Ip,f.UserAgent,ct,SignerCheckpointState.PublishedJson(f),PartyType.Signer,signer.Id);
             if(inviteNext)await invitations.PrepareAsync(envelopeId,next!.Id,next.Email,ct,f.NextInvitationId,
                 production?(id,due,token)=>DemandInvitationHintLocked(lease,located.PayloadJson,envelope,f,next!,id,due,token):null);
-            var reminderSchedule=production||reminders is null ? [] : await reminders.PrepareCurrentLockedAsync(envelopeId,ct);
+            var reminderSchedule=reminders is null ? [] : await reminders.PrepareCurrentLockedAsync(envelopeId,ct,
+                production?(id,due,token)=>DemandReminderHintLocked(lease,located.PayloadJson,envelopeId,id,due,token):null);
             var completionWork=next is null&&completion is not null?await completion.PrepareAsync(envelopeId,ct,
                 production?(id,due,token)=>DemandCompletionHintLocked(lease,located.PayloadJson,envelope,f,signer.Order,id,due,token):null):null;
             if(production&&next is null&&completionWork!=CompletionJobs.WorkId(envelopeId))throw new ProductionWorkBlockedException();
@@ -126,6 +127,15 @@ public sealed class SignerCheckpointHandler(QuillSignDbContext db,SignerCheckpoi
             mail.To!=next.Email||mail.Status!=EmailStatus.Queued||mail.Attempts!=0||mail.SubmissionStartedAt is not null||mail.Provider is not null||mail.ProviderMessageId is not null||
             mail.AvailableAt!=due||mail.AttachmentsJson!="[]"||current is null||current.ObjectId!=finish.PdfObjectId||current.Version!=next.Order-1||current.FinishId!=finish.Id||
             !SignerCheckpointState.Same(current.Sha256,finish.PdfSha256)||original.ExpiresAt<=time.GetUtcNow()||!await Owns(lease,payload,original.Id,ct))throw new ProductionWorkBlockedException();
+    }
+    private async Task DemandReminderHintLocked(WorkLease lease,string payload,Guid recordId,Guid id,DateTimeOffset due,CancellationToken ct)
+    {
+        await DemandWorkerLocked(lease,payload,recordId,ct);
+        var row=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id,ct)??throw new ProductionWorkBlockedException();
+        if(row.EnvelopeId!=recordId||row.Kind!=WorkKind.Reminder||row.Status!=WorkStatus.Queued||row.Attempts!=0||row.LeaseOwner is not null||
+            row.LeaseExpiresAt is not null||row.AvailableAt!=due)throw new ProductionWorkBlockedException();
+        _=await SignerReminderJobs.ReadWorkEpochLockedAsync(db,recordId,row,time,ct);
+        await DemandWorkerLocked(lease,payload,recordId,ct);
     }
     private async Task DemandCompletionHintLocked(WorkLease lease,string payload,Envelope original,SignerFinishAcceptance finish,int copyVersion,
         Guid id,DateTimeOffset due,CancellationToken ct)

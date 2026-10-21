@@ -5,6 +5,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Email;
 using QuillSign.Signing;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Work;
 
@@ -12,11 +13,19 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
     InvitationSuccessorJobs jobs, InvitationLineage lineage, SignerAccess access, SignerInvitationFactory tokens,
     SignerInvitationTemplate template, IEmailSender sender, EmailOptions email, WorkOptions work, AuditWriter audit, TimeProvider time)
 {
-    public async Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken ct)
+    public Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)=>ExecuteCoreAsync(lease,null,ct);
+    internal Task<WorkResult> ExecuteAdmittedAsync(WorkLease lease,IProductionWorkAdmission admission,CancellationToken ct)
+        =>ExecuteCoreAsync(lease,admission,ct);
+    private async Task<WorkResult> ExecuteCoreAsync(WorkLease lease,IProductionWorkAdmission? admission,CancellationToken ct)
     {
         if (!email.Enabled || !work.Enabled) return new(WorkOutcome.Retry, "delivery-disabled");
+        var remaining=lease.Until-time.GetUtcNow()-TimeSpan.FromSeconds(1);
+        if(admission is not null&&remaining<=TimeSpan.Zero)return new(WorkOutcome.Ambiguous,"successor-lease-unresolved");
+        using var deadline=admission is null?null:new CancellationTokenSource(remaining,time);
+        using var active=deadline is null?null:CancellationTokenSource.CreateLinkedTokenSource(ct,deadline.Token);
+        if(active is not null)ct=active.Token;
         InvitationSuccessorScope p; InvitationSuccessorToken issued; DateTimeOffset intent; string intentPayload; OutgoingEmail outgoing;
-        var committing = false;
+        var committing = false;ProductionRecordDispatchPermit? permit=null;
         try
         {
             var located = await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == lease.Id, ct) ?? throw Invalid();
@@ -25,6 +34,7 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
             if (policy is null || !policy.Enabled) return new(WorkOutcome.Retry, "successor-delivery-disabled");
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             var parent = await ParentAsync(p.EnvelopeId, ct);
+            if(admission is not null)await admission.DemandLockedAsync(db,lease.Id,p.EnvelopeId,lease.Kind,lease.Owner,lease.Attempt,false,ct);
             await InvitationResendRules.LockAsync(db,ct);
             await OwnedAsync(lease, p, null, null, ct);
             var context = await PolicyAsync(parent, p, ct);
@@ -50,6 +60,8 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.ExpiresAt, intent), ct);
             db.AuthTokens.Add(invitation.Record); await db.SaveChangesAsync(ct);
             if (!Enabled(p) || p.Deadline <= time.GetUtcNow() || lease.Until <= time.GetUtcNow() || issued.ExpiresAt <= time.GetUtcNow()) throw Invalid();
+            if(admission is not null)permit=await admission.PrepareDispatchLockedAsync(db,lease,p.EnvelopeId,ct)??throw Invalid();
+            if(lease.Until<=time.GetUtcNow()||p.Deadline<=time.GetUtcNow()||issued.ExpiresAt<=time.GetUtcNow())throw Invalid();
             committing = true; await tx.CommitAsync(ct);
         }
         catch (CryptographicException) when (!committing) { return new(WorkOutcome.Retry, "successor-payload-unavailable"); }
@@ -58,22 +70,34 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
         // committed intent. WorkStore never submits that intent a second time.
         if (!Enabled(p) || p.Deadline <= time.GetUtcNow() || lease.Until <= time.GetUtcNow() || issued.ExpiresAt <= time.GetUtcNow())
         {
+            if(admission is not null)return new(WorkOutcome.Ambiguous,"successor-preparation-unresolved");
             await ClearAsync(lease, p, issued, intent, intentPayload, ct);
             return new(Enabled(p) ? WorkOutcome.Failed : WorkOutcome.Retry, Enabled(p) ? "successor-expired" : "delivery-disabled");
+        }
+        if(admission is not null)
+        {
+            await using var proof=await db.Database.BeginTransactionAsync(ct);
+            var parent=await ParentAsync(p.EnvelopeId,ct);
+            await OwnedAsync(lease,p,intent,intentPayload,ct);_=await PolicyAsync(parent,p,ct);
+            await admission.ConsumeDispatchLockedAsync(db,permit!,ct);
+            if(lease.Until<=time.GetUtcNow()||p.Deadline<=time.GetUtcNow()||issued.ExpiresAt<=time.GetUtcNow())throw Invalid();
+            await proof.RollbackAsync(ct);
         }
         EmailDelivery delivered;
         try { delivered = await sender.SendAsync(outgoing, ct); }
         catch (EmailNotSubmittedException e)
         {
+            if(admission is not null)return new(WorkOutcome.Ambiguous,"successor-submission-unresolved");
             await ClearAsync(lease, p, issued, intent, intentPayload, ct);
             return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed, e.FailureCode);
         }
         catch (Exception e) when (e is RecipientSuppressedException or EmailDisabledException)
         {
+            if(admission is not null)return new(WorkOutcome.Ambiguous,"successor-submission-unresolved");
             await ClearAsync(lease, p, issued, intent, intentPayload, ct);
             return new(WorkOutcome.Failed, e is RecipientSuppressedException ? "recipient-suppressed" : "delivery-disabled");
         }
-        await ReceiptAsync(lease, p, issued, intent, intentPayload, delivered, ct);
+        await ReceiptAsync(lease, p, issued, intent, intentPayload, delivered,admission,permit,ct);
         return new(WorkOutcome.Completed);
     }
 
@@ -125,10 +149,16 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
         await tx.CommitAsync(ct);
     }
     private async Task ReceiptAsync(WorkLease lease, InvitationSuccessorScope p, InvitationSuccessorToken issued, DateTimeOffset intent,
-        string payload, EmailDelivery delivered, CancellationToken ct)
+        string payload, EmailDelivery delivered,IProductionWorkAdmission? admission,ProductionRecordDispatchPermit? permit,CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(delivered.Provider) || string.IsNullOrWhiteSpace(delivered.MessageId)) throw Invalid();
         await using var tx = await db.Database.BeginTransactionAsync(ct); _ = await ParentAsync(p.EnvelopeId, ct);
+        if(admission is not null)
+        {
+            if(delivered.Provider.Length>128||delivered.MessageId.Length>512)throw Invalid();
+            await admission.DemandDispatchReceiptLockedAsync(db,permit!,ct);
+            if(lease.Until<=time.GetUtcNow()||p.Deadline<=time.GetUtcNow()||issued.ExpiresAt<=time.GetUtcNow())throw Invalid();
+        }
         var item = await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={p.Id}").AsNoTracking().SingleOrDefaultAsync(ct);
         var row = await db.EmailOutbox.FromSqlInterpolated($"SELECT * FROM [EmailOutbox] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={p.Id}").AsNoTracking().SingleOrDefaultAsync(ct);
         if (item is null || row is null || item.Kind != WorkKind.Email || item.EnvelopeId != p.EnvelopeId || item.Attempts != lease.Attempt ||
@@ -141,6 +171,8 @@ public sealed class InvitationSuccessorDelivery(QuillSignDbContext db, Invitatio
             emailId = p.Id, tokenId = issued.Id, documentSha256 = p.DocumentSha256, disclosureSha256 = p.DisclosureSha256,
             signerId = p.SignerId, recipient = p.Recipient, contact = p.Contact, provider = delivered.Provider,
             providerMessageId = delivered.MessageId, meaning = "provider_accepted_not_proof_of_delivery" }), PartyType.System);
+        if(admission is not null)await admission.PrepareHandlerOutcomeLockedAsync(db,lease,p.EnvelopeId,ct);
+        if(admission is not null&&(lease.Until<=time.GetUtcNow()||p.Deadline<=time.GetUtcNow()||issued.ExpiresAt<=time.GetUtcNow()))throw Invalid();
         await tx.CommitAsync(ct);
     }
     private static InvalidDataException Invalid() => InvitationSuccessorProtection.Invalid();

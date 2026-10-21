@@ -167,6 +167,14 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
     }
     private async Task SupportedWork(QuillSignDbContext db,Guid workId,Guid? recordId,WorkKind kind,CancellationToken ct)
     {
+        if(kind==WorkKind.Reminder)
+        {
+            var reminder=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==workId,ct);
+            if(recordId is not {} id||reminder is null||reminder.EnvelopeId!=id||reminder.Kind!=kind||reminder.PayloadJson.Length>512||
+                reminder.AvailableAt>admission.Clock.GetUtcNow()||reminder.Status!=WorkStatus.Queued||reminder.Attempts!=0)throw new ProductionWorkBlockedException();
+            _=await SignerReminderJobs.ReadWorkEpochLockedAsync(db,id,reminder,admission.Clock,ct);return;
+        }
+        if(kind==WorkKind.Expiry){await DemandExpiryAsync(db,workId,recordId,ct);return;}
         if(kind==WorkKind.Sealing)
         {
             if(Completion is null||!Completion.Uses(admission))throw new ProductionWorkBlockedException();
@@ -174,6 +182,24 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
         }
         if(kind==WorkKind.Rendering){await DemandInitialCheckpointAsync(db,workId,recordId,ct,admission.Clock);return;}
         _=await SupportedMail(db,workId,recordId,kind,ct);
+    }
+    private async Task DemandExpiryAsync(QuillSignDbContext db,Guid workId,Guid? recordId,CancellationToken ct)
+    {
+        if(recordId is not {} id)throw new ProductionWorkBlockedException();
+        if(db.Database.CurrentTransaction is null)
+        {
+            await using var tx=await db.Database.BeginTransactionAsync(ct);
+            _=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct)
+                ??throw new ProductionWorkBlockedException();
+            await DemandExpiryAsync(db,workId,id,ct);await tx.RollbackAsync(ct);return;
+        }
+        var row=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==workId,ct);
+        var envelope=await db.Envelopes.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id,ct);
+        if(row is null||envelope is null||envelope.Status!=EnvelopeStatus.Sent||envelope.ExpiresAt is not {} deadline||
+            deadline>admission.Clock.GetUtcNow()||!SigningExpiryJobs.Matches(envelope,row)||
+            await db.SignerFinishAcceptances.AnyAsync(x=>x.EnvelopeId==id&&x.ProcessedAt==null,ct)||
+            !await db.Signers.AnyAsync(x=>x.EnvelopeId==id&&x.Status!=SignerStatus.Signed,ct)||
+            await db.Signers.AnyAsync(x=>x.EnvelopeId==id&&x.Status==SignerStatus.Declined,ct))throw new ProductionWorkBlockedException();
     }
     internal static async Task DemandInitialCheckpointAsync(QuillSignDbContext db,Guid workId,Guid? recordId,CancellationToken ct,TimeProvider? clock=null)
     {
@@ -197,16 +223,15 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
         if(work is null||finish is null||envelope is null||work.Kind!=WorkKind.Rendering||work.EnvelopeId!=id||
             work.PayloadJson!=JsonSerializer.Serialize(new SignerCheckpointPayload(SignerCheckpointJobs.Version,workId))||
             envelope.Status!=EnvelopeStatus.Sent||signers.Length is <1 or >100||
-            signers.Where((x,i)=>x.Order!=i+1).Any()||
-            await db.SignerContactRevisions.AnyAsync(x=>x.EnvelopeId==id,ct)||
-            await db.WorkItems.AnyAsync(x=>x.EnvelopeId==id&&x.Kind==WorkKind.Reminder,ct))throw new ProductionWorkBlockedException();
+            signers.Where((x,i)=>x.Order!=i+1).Any())throw new ProductionWorkBlockedException();
+        _=await new SignerContactState(db,clock).ReadHistoryLockedAsync(envelope,ct);
         var target=signers.SingleOrDefault(x=>x.Id==finish.SignerId)??throw new ProductionWorkBlockedException();
         var current=await new SignerCheckpointState(db,clock).CurrentAsync(envelope,ct)??throw new ProductionWorkBlockedException();
         if(signers.Take(target.Order-1).Any(x=>x.Status!=SignerStatus.Signed)||signers.Skip(target.Order).Any(x=>!Pending(x))||
             await db.SignerFinishAcceptances.CountAsync(x=>x.EnvelopeId==id,ct)!=target.Order)throw new ProductionWorkBlockedException();
         // The saved Send policy, rather than the mutable legacy draft array,
-        // authorizes reminder work. This finite checkpoint admits only empty.
-        if((await SenderSentStatus.ReadSentAsync(db,envelope,null,ct)).Reminders is not {} policy||!policy.Days.IsEmpty)
+        // authorizes reminder work and never mutable draft settings.
+        if((await SenderSentStatus.ReadSentAsync(db,envelope,null,ct)).Reminders is null)
             throw new ProductionWorkBlockedException();
         var candidate=await db.SignerReviewCandidates.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==finish.ReviewCandidateId&&x.EnvelopeId==id,ct);
         if(candidate is null||!SignerFinish.MatchesCandidate(finish,candidate))throw new ProductionWorkBlockedException();
@@ -256,8 +281,10 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
     {
         if (kind != WorkKind.Email) throw new ProductionWorkBlockedException();
         var mail = await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == workId, ct);
-        if (mail is null || mail.EnvelopeId != recordId || mail.Template is not ("sender-verification" or "signer-declined" or "signer-invitation" or CompletionNotificationJobs.Template))
+        if (mail is null || mail.EnvelopeId != recordId || mail.Template is not ("sender-verification" or "signer-declined" or "signer-invitation" or CompletionNotificationJobs.Template or VoidNotificationJobs.Template or InvitationResendProtection.Template or InvitationSuccessorProtection.Template))
             throw new ProductionWorkBlockedException();
+        if(mail.Template is VoidNotificationJobs.Template or InvitationResendProtection.Template or InvitationSuccessorProtection.Template &&(mail.Status!=EmailStatus.Queued||mail.SubmissionStartedAt is not null||mail.Attempts!=0||
+            mail.Provider is not null||mail.ProviderMessageId is not null||mail.AttachmentsJson!="[]"))throw new ProductionWorkBlockedException();
         if(mail.Template==CompletionNotificationJobs.Template)
             await (CompletionMail??throw new ProductionWorkBlockedException()).DemandInitialAsync(db,mail,ct);
         if (mail.Template == "signer-invitation") await DemandInitialInvitationAsync(db, mail, ct,admission.Clock);
@@ -286,7 +313,8 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
         => await Guard(async () => {
         if(db.Database.CurrentTransaction is null||mail.EnvelopeId is not {} id||mail.Template!="signer-invitation")throw new ProductionWorkBlockedException();
         var parent=await db.Envelopes.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id,ct)??throw new ProductionWorkBlockedException();
-        if(parent.Status!=EnvelopeStatus.Sent||await db.SignerContactRevisions.AnyAsync(x=>x.EnvelopeId==id,ct))throw new ProductionWorkBlockedException();
+        if(parent.Status!=EnvelopeStatus.Sent)throw new ProductionWorkBlockedException();
+        _=await new SignerContactState(db,clock).ReadHistoryLockedAsync(parent,ct);
         var sent=await SenderSentStatus.ReadSentAsync(db,parent,null,ct);
         var source=await new SignerCheckpointState(db,clock).CurrentAsync(parent,ct)??throw new ProductionWorkBlockedException();
         var signers = await db.Signers.AsNoTracking().Where(x => x.EnvelopeId == id).OrderBy(x => x.Order).Take(101).ToArrayAsync(ct);

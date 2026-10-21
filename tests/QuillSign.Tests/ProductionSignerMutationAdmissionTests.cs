@@ -150,13 +150,23 @@ public sealed class ProductionSignerMutationAdmissionTests(SqlDatabaseFixture fi
         Assert.Equal(run.TokenRecord.ExpiresAt,(await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==run.TokenRecord.Id)).ExpiresAt);
     }
     [Fact]
-    public async Task Unintegrated_decline_is_closed_in_the_opt_in_composition()
+    public async Task Production_decline_waits_for_exact_release_then_commits_one_terminal_and_notification_without_renewal()
     {
         await using var run=await ProductionInvitationWorkerAdmissionTests.Delivered.Create(fixture);var user=SignerAccessConfiguration.Principal((await Redeem(run))!);
+        using var holds=new Holds(fixture,run);var hold=await holds.Place(0);
         await using var db=fixture.Open();var before=await run.Record.Journal.ReadAsync(run.Record.Id);
-        Assert.Null(await Consent(run,db).DeclineAsync(user,run.Ready.Original.PublicId,null,null,null));
+        Assert.Null(await Consent(run,db).DeclineAsync(user,run.Ready.Original.PublicId,"Synthetic refusal",null,null));
         Assert.Equal(before.HeadHash,(await run.Record.Journal.ReadAsync(run.Record.Id)).HeadHash);
         Assert.Equal(EnvelopeStatus.Sent,(await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==run.Record.Id)).Status);
+        Assert.False(await holds.Release(hold,1));
+        Assert.NotNull(await Consent(run,db).DeclineAsync(user,run.Ready.Original.PublicId,"Synthetic refusal",null,null));
+        Assert.Equal(EnvelopeStatus.Declined,(await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==run.Record.Id)).Status);
+        Assert.Null((await run.Record.Journal.ReadAsync(run.Record.Id)).OutstandingOperation);
+        Assert.Equal(1,await db.AuditEvents.CountAsync(x=>x.EnvelopeId==run.Record.Id&&x.Event=="declined"));
+        Assert.Equal(1,await db.ProductionRetentionTerminals.CountAsync(x=>x.EnvelopeId==run.Record.Id));
+        Assert.Equal(1,await db.EmailOutbox.CountAsync(x=>x.EnvelopeId==run.Record.Id&&x.Template=="signer-declined"));
+        Assert.Equal(run.TokenRecord.ExpiresAt,(await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==run.TokenRecord.Id)).ExpiresAt);
+        Assert.Null(await Consent(run,db).DeclineAsync(user,run.Ready.Original.PublicId,"Synthetic refusal",null,null));
     }
 
     internal static ProductionSignerMutationAdmission Hook(ProductionInvitationWorkerAdmissionTests.Delivered run)=>new(run.Record.Admission);

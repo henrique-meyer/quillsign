@@ -110,10 +110,22 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
         if(pilotDecision?.Refusal is {} refusal)return refusal;
         if(pilotDecision is null && !options.Enabled)return new(WorkOutcome.Retry,"delivery-disabled");
         var email = admitted ?? await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id, cancellationToken);
-        if(email.Template==InvitationSuccessorProtection.Template)return await (successors?.Invoke()??throw new InvalidOperationException("Missing invitation successor delivery.")).ExecuteAsync(lease,cancellationToken);
-        if(email.Template==InvitationResendProtection.Template)return await (resends?.Invoke()??throw new InvalidOperationException("Missing invitation resend delivery.")).ExecuteAsync(lease,cancellationToken);
+        if(email.Template==InvitationSuccessorProtection.Template)
+        {
+            var delivery=successors?.Invoke()??throw new InvalidOperationException("Missing invitation successor delivery.");
+            return admitted is null?await delivery.ExecuteAsync(lease,cancellationToken):await delivery.ExecuteAdmittedAsync(lease,HoldAdmission!,cancellationToken);
+        }
+        if(email.Template==InvitationResendProtection.Template)
+        {
+            var delivery=resends?.Invoke()??throw new InvalidOperationException("Missing invitation resend delivery.");
+            return admitted is null?await delivery.ExecuteAsync(lease,cancellationToken):await delivery.ExecuteAdmittedAsync(lease,HoldAdmission!,cancellationToken);
+        }
         if(email.Template==LookupDeliveryProtection.Template)return await (lookups?.Invoke()??throw new InvalidOperationException("Missing lookup delivery.")).ExecuteAsync(lease,cancellationToken);
-        if(email.Template==VoidNotificationJobs.Template)return await (voids?.Invoke()??throw new InvalidOperationException("Missing void notification delivery.")).ExecuteAsync(lease,cancellationToken);
+        if(email.Template==VoidNotificationJobs.Template)
+        {
+            var delivery=voids?.Invoke()??throw new InvalidOperationException("Missing void notification delivery.");
+            return admitted is null?await delivery.ExecuteAsync(lease,cancellationToken):await delivery.ExecuteAdmittedAsync(lease,HoldAdmission!,cancellationToken);
+        }
         if(email.Template==CompletionNotificationJobs.Template) {
             var completion=completions?.Invoke()??throw new InvalidOperationException("Missing completion notification delivery.");
             return admitted is null ? await completion.ExecuteAsync(lease,cancellationToken) :

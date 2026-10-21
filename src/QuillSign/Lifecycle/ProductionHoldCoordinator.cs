@@ -227,11 +227,14 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
         ProductionHoldAdmissionAuditReferences.Demand(sql.RootElement);
         var tables = sql.RootElement.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         var status = tables["Envelopes"].EnumerateArray().Single().GetProperty("Status").GetString();
-        if (status is "Sent" or "Completed")
+        var terminal=status is "Voided" or "Declined" or "Expired";
+        if (status is "Sent" or "Completed"||terminal)
         {
             var inventory=ProductionHoldObjectInventory.OpenVerified(snapshot,keys,time);
             var inputs=await ReadReviewInputs(db,snapshot.RecordId,tables["SignerReviewCandidates"],state,inventory,ct);
-            var history=status=="Completed"
+            var history=terminal
+                ?await ProductionHoldTerminalReferences.ReadVerifiedLockedAsync(db,sql.RootElement,inventory,keys,inputs,state,time,ct)
+                :status=="Completed"
                 ?ProductionHoldCompletionStageReferences.ReadVerified(sql.RootElement,inventory,keys,inputs,
                     await ReadCompletionInputs(db,snapshot.RecordId,state,inventory,ct),state)
                 :ProductionHoldReviewCheckpointReferences.ReadVerified(sql.RootElement,inventory,keys,inputs);
@@ -240,11 +243,14 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
         else if (status != "Draft"||(state.ReviewWrites?.Count??0)!=0) throw Invalid();
         foreach (var audit in tables["AuditEvents"].EnumerateArray())
         {
-            if (status is "Sent" or "Completed" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given" or
+            if ((status is "Sent" or "Completed"||terminal) && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given" or
                 "signature_adopted" or "field_filled" or "field_cleared" or "signer_review_prepared" or "signer_finish_accepted" or "signer_completed") continue;
             if (status=="Completed"&&audit.GetProperty("Event").GetString() is "completion_prepared" or "completion_executed_sealed" or "completion_certificate_sealed" or
                 "completion_publication_prepared" or "completed" or ProductionRetentionLedger.TerminalEvent or "completion_notification_queued" or
-                "completion_access_issued" or "completion_notification_attempt" or "completion_notification_submitted") continue;
+                "completion_access_issued" or "completion_notification_attempt" or "completion_notification_submitted" or
+                "completion_access_redeemed" or "completion_lookup_opened" or "final_download_prepared") continue;
+            if(terminal&&audit.GetProperty("Event").GetString() is "voided" or "declined" or "expired" or ProductionRetentionLedger.TerminalEvent or
+                "void_notification_queued" or "void_notification_attempt" or "void_notification_submitted")continue;
             if (audit.GetProperty("Event").GetString() is not (ProductionRetentionLedger.EnrollmentEvent or
                 "draft_created" or "sender_verification_requested" or "sender_email_verified" or
                 "document_uploaded" or "document_replaced" or "preview_confirmed" or "signer_added" or "signer_updated" or "signer_removed" or
