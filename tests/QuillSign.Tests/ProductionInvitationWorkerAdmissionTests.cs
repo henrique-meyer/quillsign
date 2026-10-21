@@ -225,7 +225,8 @@ public sealed class ProductionInvitationWorkerAdmissionTests(SqlDatabaseFixture 
             if(Sender.Message is not null)
             {
                 Token=Regex.Match(Sender.Message.Text,"token=([A-Za-z0-9_-]{43})",RegexOptions.CultureInvariant).Groups[1].Value;Assert.Equal(43,Token.Length);
-                TokenRecord=await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.EnvelopeId==Record.Id && x.Purpose==TokenPurpose.SignerAccess);
+                var tokenHash=System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Token));
+                TokenRecord=await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.EnvelopeId==Record.Id && x.Purpose==TokenPurpose.SignerAccess && x.TokenSha256==tokenHash);
             }
             return result;
         }

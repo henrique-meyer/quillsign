@@ -152,12 +152,13 @@ public sealed class ProductionSignerReviewRuntimeContractTests(SqlDatabaseFixtur
                 Assert.True((await QuillSign.Sender.SenderSentStatus.ReadSentAsync(db,e,null,default)).Reminders!.Days.IsEmpty);
                 var f=await db.SignerFinishAcceptances.AsNoTracking().SingleAsync(x=>x.Id==finishId);var p=await db.SignerReviewCandidates.AsNoTracking().SingleAsync(x=>x.Id==f.ReviewCandidateId);
                 Assert.True(SignerFinish.MatchesCandidate(f,p));Assert.Null((await Record.Journal.ReadAsync(Id)).OutstandingOperation);
-                await ProductionWorkAdmission.DemandInitialCheckpointAsync(db,finishId,Id,default);
+                await ProductionWorkAdmission.DemandInitialCheckpointAsync(db,finishId,Id,default,Record.Time);
             }
             var lease=(await Work(db).ClaimAsync(finishId,default)).Lease;Assert.NotNull(lease);return lease;
         }
         internal SignerCheckpointHandler Checkpoint(QuillSignDbContext db)=>new(db,new(db,Record.Time),new(Blobs,Record.Time),
-            new(db,()=>Delivered.Ready.Signals,new(){Enabled=true},new(){Enabled=true},new(Record.Keys),Record.Time),new(db,Record.Time),Record.Time)
+            new(db,()=>Delivered.Ready.Signals,new(){Enabled=true},new(){Enabled=true},new(Record.Keys),Record.Time),new(db,Record.Time),Record.Time,
+            new(db,new(db,Record.Time),()=>Delivered.Ready.Signals,new(){Enabled=true},Record.Time){HoldAdmission=Record.Admission})
             {HoldAdmission=new ProductionWorkAdmission(fixture.Open,Record.Admission)};
         internal async Task<WorkResult> Handle(WorkLease lease,QuillSignDbContext? supplied=null)
         {await using var owned=supplied is null?fixture.Open():null;return await Checkpoint(supplied??owned!).ExecuteAsync(lease,default);}
