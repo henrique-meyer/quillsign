@@ -45,7 +45,8 @@ public sealed class TimestampAuthority(SealOptions options,IHostEnvironment envi
         var remaining=timestampContext is null ? TimeSpan.Zero : timestampContext.Until-timestampContext.Clock.GetUtcNow();
         using var scopeDeadline=timestampContext is null ? null : new CancellationTokenSource(remaining>TimeSpan.Zero ? remaining : TimeSpan.Zero,timestampContext.Clock);
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct,lease?.Token ?? CancellationToken.None,scopeDeadline?.Token ?? CancellationToken.None);
-        timeout.CancelAfter(TimeSpan.FromSeconds(options.TsaTimeoutSeconds));
+        if(admission is null)timeout.CancelAfter(TimeSpan.FromSeconds(options.TsaTimeoutSeconds));
+        var transport=admission is null ? null : new AdmittedTimestampTransportBudget(TimeSpan.FromSeconds(options.TsaTimeoutSeconds));
         try {
             using var body=new ByteArrayContent(encodedRequest); body.Headers.ContentType=new MediaTypeHeaderValue("application/timestamp-query");
             using var message=new HttpRequestMessage(HttpMethod.Post,address) { Content=body };
@@ -71,12 +72,17 @@ public sealed class TimestampAuthority(SealOptions options,IHostEnvironment envi
                 message.Headers.ConnectionClose=true;
             }
             timeout.Token.ThrowIfCancellationRequested();
-            using var response=await (timestampContext?.Work.KnownPilot==true || admission is not null ? restrictedHttp : http).SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
+            var client=timestampContext?.Work.KnownPilot==true || admission is not null ? restrictedHttp : http;
+            using var response=transport is null
+                ? await client.SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token)
+                : await transport.ExecuteAsync(token=>client.SendAsync(message,HttpCompletionOption.ResponseHeadersRead,token),timeout.Token);
             if(admission is not null)await admission.DemandAsync(timeout.Token);
             if(response.StatusCode!=System.Net.HttpStatusCode.OK || !string.Equals(response.Content.Headers.ContentType?.MediaType,"application/timestamp-reply",StringComparison.OrdinalIgnoreCase) ||
                 response.Content.Headers.ContentEncoding.Count!=0 || response.Content.Headers.ContentLength>options.TsaMaximumResponseBytes)
                 throw new SealUnavailableException("The timestamp service did not return a bounded timestamp response.");
-            await using var input=await response.Content.ReadAsStreamAsync(timeout.Token); using var memory=new MemoryStream();
+            await using var input=transport is null ? await response.Content.ReadAsStreamAsync(timeout.Token)
+                : await transport.ExecuteAsync(token=>response.Content.ReadAsStreamAsync(token),timeout.Token);
+            using var memory=new MemoryStream();
             if(admission is not null)await admission.DemandAsync(timeout.Token);
             if(admission is null)await input.CopyToAsync(new BoundedDocumentStream(memory,options.TsaMaximumResponseBytes),timeout.Token);
             else
@@ -85,7 +91,7 @@ public sealed class TimestampAuthority(SealOptions options,IHostEnvironment envi
                 while(true)
                 {
                     await admission.DemandAsync(timeout.Token);
-                    var count=await input.ReadAsync(buffer,timeout.Token);
+                    var count=await transport!.ExecuteAsync(token=>input.ReadAsync(buffer.AsMemory(),token).AsTask(),timeout.Token);
                     await admission.DemandAsync(timeout.Token);
                     if(count==0)break;
                     await bounded.WriteAsync(buffer.AsMemory(0,count),timeout.Token);

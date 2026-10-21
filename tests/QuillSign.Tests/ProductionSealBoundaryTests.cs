@@ -68,20 +68,66 @@ public sealed class ProductionSealBoundaryTests
         Assert.Equal(1,f.Requests);Assert.Equal(0,f.RedirectRequests);Assert.Equal(0,gate.Records);Assert.Null(gate.Response);
     }
 
+    [Fact]
+    public async Task Short_transport_budget_excludes_authorized_durable_waits_before_between_and_after_network_awaits()
+    {
+        await using var f=await SealFixtures.Create();f.Options.TsaTimeoutSeconds=1;
+        var source=PdfFixtures.Create();var gate=new Boundary {BeginDelay=TimeSpan.FromMilliseconds(1100),AfterSendDelay=TimeSpan.FromMilliseconds(1100),RecordDelay=TimeSpan.FromMilliseconds(1100)};
+        var result=await f.Engine.SealAdmittedAsync(source,SHA256.HashData(source),gate);
+        Assert.NotEmpty(result.Bytes);Assert.Equal(1,f.Requests);Assert.Equal(1,gate.Starts);Assert.Equal(1,gate.Sends);Assert.Equal(1,gate.Records);
+        Assert.True(gate.PausedAfterSend);
+        await Assert.ThrowsAsync<SealUnavailableException>(()=>f.Engine.SealAdmittedAsync(source,SHA256.HashData(source),gate));
+        Assert.Equal(1,f.Requests);
+    }
+
+    [Fact]
+    public async Task Actual_stalled_admitted_transport_exhausts_original_budget_without_response_receipt_or_retry()
+    {
+        await using var f=await SealFixtures.Create();f.Options.TsaTimeoutSeconds=1;f.Mode="slow";
+        var source=PdfFixtures.Create();var gate=new Boundary();
+        await Assert.ThrowsAsync<SealUnavailableException>(()=>f.Engine.SealAdmittedAsync(source,SHA256.HashData(source),gate));
+        Assert.Equal(1,f.Requests);Assert.Equal(1,gate.Sends);Assert.Equal(0,gate.Records);
+        await Assert.ThrowsAsync<SealUnavailableException>(()=>f.Engine.SealAdmittedAsync(source,SHA256.HashData(source),gate));Assert.Equal(1,f.Requests);
+    }
+
+    [Fact]
+    public async Task Cumulative_physical_await_budget_never_refunds_or_resets_across_excluded_durable_wait()
+    {
+        var budget=new AdmittedTimestampTransportBudget(TimeSpan.FromSeconds(1));var calls=0;
+        Assert.Equal(1,await budget.ExecuteAsync(async ct=>{calls++;await Task.Delay(200,ct);return 1;},default));
+        await Task.Delay(1100); // Authorized local wait is deliberately outside transport budget.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>budget.ExecuteAsync(async ct=>{calls++;await Task.Delay(950,ct);return 2;},default));
+        Assert.Equal(2,calls);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>budget.ExecuteAsync(ct=>{calls++;return Task.FromResult(3);},default));
+        Assert.Equal(2,calls);
+    }
+
+    [Fact]
+    public async Task Original_caller_cancellation_still_interrupts_durable_admission_without_a_timestamp_request()
+    {
+        await using var f=await SealFixtures.Create();f.Options.TsaTimeoutSeconds=1;
+        var source=PdfFixtures.Create();var gate=new Boundary {BeginDelay=TimeSpan.FromSeconds(2)};
+        using var stop=new CancellationTokenSource();stop.CancelAfter(100);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>f.Engine.SealAdmittedAsync(source,SHA256.HashData(source),gate,stop.Token));
+        Assert.Equal(0,f.Requests);Assert.Equal(0,gate.Records);
+    }
+
     private static string Hash(byte[] bytes)=>Convert.ToHexStringLower(SHA256.HashData(bytes));
     private sealed class Boundary:IProductionSealBoundary,IProductionTimestampPermit
     {
         internal string? Fault;internal ProductionSealIdentity? Identity;internal ProductionTimestampRequest? Request;
         internal ProductionTimestampResponse? Response;internal int Starts,Sends,Records,Demands;
-        public Task DemandAsync(CancellationToken ct)
-        {ct.ThrowIfCancellationRequested();Demands++;if(Fault=="after-response"&&Records!=0)throw new InvalidOperationException("Synthetic final fence refusal.");return Task.CompletedTask;}
+        internal TimeSpan BeginDelay,AfterSendDelay,RecordDelay;internal bool PausedAfterSend;
+        public async Task DemandAsync(CancellationToken ct)
+        {ct.ThrowIfCancellationRequested();Demands++;if(Fault=="after-response"&&Records!=0)throw new InvalidOperationException("Synthetic final fence refusal.");
+            if(Sends==1&&Records==0&&!PausedAfterSend&&AfterSendDelay>TimeSpan.Zero){PausedAfterSend=true;await Task.Delay(AfterSendDelay,ct);}}
         public Task PrepareIdentityAsync(ProductionSealIdentity identity,CancellationToken ct)
         {ct.ThrowIfCancellationRequested();if(Fault=="identity")throw new InvalidOperationException("Synthetic identity failure.");if(Identity is not null)Assert.Equal(Identity,identity);Identity=identity;return Task.CompletedTask;}
-        public Task<IProductionTimestampPermit> BeginTimestampAsync(ProductionTimestampRequest request,CancellationToken ct)
-        {ct.ThrowIfCancellationRequested();Starts++;if(Starts!=1)throw new InvalidOperationException("Synthetic consumed original request.");Request=request;if(Fault=="begin")throw new InvalidOperationException("Synthetic lost start acknowledgment.");return Task.FromResult<IProductionTimestampPermit>(this);}
+        public async Task<IProductionTimestampPermit> BeginTimestampAsync(ProductionTimestampRequest request,CancellationToken ct)
+        {ct.ThrowIfCancellationRequested();Starts++;if(Starts!=1)throw new InvalidOperationException("Synthetic consumed original request.");Request=request;if(Fault=="begin")throw new InvalidOperationException("Synthetic lost start acknowledgment.");if(BeginDelay>TimeSpan.Zero)await Task.Delay(BeginDelay,ct);return this;}
         public Task DemandSendAsync(ProductionTimestampRequest request,CancellationToken ct)
         {ct.ThrowIfCancellationRequested();Assert.Equal(Request,request);if(Fault=="send")throw new InvalidOperationException("Synthetic request fence refusal.");if(++Sends!=1)throw new InvalidOperationException("Synthetic reused request.");return Task.CompletedTask;}
-        public Task RecordVerifiedAsync(ProductionTimestampRequest request,ProductionTimestampResponse response,CancellationToken ct)
-        {ct.ThrowIfCancellationRequested();Assert.Equal(Request,request);if(Fault=="response")throw new InvalidOperationException("Synthetic lost result acknowledgment.");Response=response;Records++;return Task.CompletedTask;}
+        public async Task RecordVerifiedAsync(ProductionTimestampRequest request,ProductionTimestampResponse response,CancellationToken ct)
+        {ct.ThrowIfCancellationRequested();Assert.Equal(Request,request);if(Fault=="response")throw new InvalidOperationException("Synthetic lost result acknowledgment.");if(RecordDelay>TimeSpan.Zero)await Task.Delay(RecordDelay,ct);Response=response;Records++;}
     }
 }
