@@ -51,6 +51,25 @@ public sealed class ProductionCompletionMailRuntimeTests(SqlDatabaseFixture fixt
             CompletionNotificationDelivery.SubmittedEvidence(id,p,"Synthetic","synthetic-receipt",false,executed,certificate));
     }
 
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public void Actual_composer_mode_retains_exact_pair_or_size_only_zero_attachments_and_canonical_audit_mode(bool linkOnly)
+    {
+        var executed="%PDF-1.7\nSynthetic executed\n%%EOF"u8.ToArray();var certificate="%PDF-1.7\nSynthetic certificate\n%%EOF"u8.ToArray();
+        var verified=new PublishedCompletion(Guid.NewGuid(),DateTimeOffset.UtcNow,null!,null!,executed,certificate);
+        PdfEmailAttachment[] pair=[new("executed.pdf",executed),new("certificate.pdf",certificate)];
+        var message=new OutgoingEmail("synthetic@example.invalid","Synthetic","Text","<p>Text</p>",Attachments:linkOnly?[]:pair);
+        CompletionNotificationDelivery.DemandAttachmentMode(verified,new(message,linkOnly));
+        var p=Payload() with{LastTokenId=Guid.NewGuid()};var id=CompletionNotificationJobs.Id(p);
+        using var attempt=JsonDocument.Parse(CompletionNotificationDelivery.AttemptEvidence(id,p,DateTimeOffset.UtcNow.AddHours(1),linkOnly,executed,certificate));
+        using var submitted=JsonDocument.Parse(CompletionNotificationDelivery.SubmittedEvidence(id,p,"Synthetic","synthetic-receipt",linkOnly,executed,certificate));
+        Assert.Equal(linkOnly,attempt.RootElement.GetProperty("linkOnly").GetBoolean());Assert.Equal(linkOnly,submitted.RootElement.GetProperty("linkOnly").GetBoolean());
+        Assert.Throws<ProductionWorkBlockedException>(()=>CompletionNotificationDelivery.DemandAttachmentMode(verified,new(message with{Attachments=linkOnly?pair:[]},linkOnly)));
+        Assert.Throws<ProductionWorkBlockedException>(()=>CompletionNotificationDelivery.DemandAttachmentMode(verified,new(message with{Attachments=null},linkOnly)));
+        var wrong=new PdfEmailAttachment("wrong.pdf","%PDF-1.7\nChanged source\n%%EOF"u8.ToArray());
+        Assert.Throws<ProductionWorkBlockedException>(()=>CompletionNotificationDelivery.DemandAttachmentMode(verified,new(message with{Attachments=[pair[0],wrong]},false)));
+    }
+
     [Fact]
     public async Task Missing_opt_in_admission_refuses_before_any_query_token_or_transport()
     {

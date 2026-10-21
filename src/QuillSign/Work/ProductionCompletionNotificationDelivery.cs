@@ -38,9 +38,7 @@ public sealed partial class CompletionNotificationDelivery
             Clocks();
             outgoing=await template().RenderAsync(prepared,payload,original.To,link,ct);
             Clocks();
-            if(outgoing.LinkOnly || outgoing.Message.Attachments is not {Count:2} attachments ||
-                !attachments[0].CopyBytes().AsSpan().SequenceEqual(prepared.Verified.ExecutedBytes) ||
-                !attachments[1].CopyBytes().AsSpan().SequenceEqual(prepared.Verified.CertificateBytes))throw new ProductionWorkBlockedException();
+            DemandAttachmentMode(prepared.Verified,outgoing);
             await Guard(prepared,lease,original.To,payload,false,ct);Clocks();
             var issued=await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==link.TokenId,ct);
             tokenJson=JsonSerializer.Serialize(issued);
@@ -49,7 +47,7 @@ public sealed partial class CompletionNotificationDelivery
                 .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.SubmissionStartedAt,at).SetProperty(x=>x.Attempts,lease.Attempt)
                     .SetProperty(x=>x.PayloadJson,protection.Protect(payload)),ct)!=1)throw new ProductionWorkBlockedException();
             await audit.AppendAsync(id,"completion_notification_attempt",null,null,null,ct,
-                AttemptEvidence(lease.Id,payload,link.ExpiresAt,false,prepared.Saved.Executed.Sha256,prepared.Saved.Certificate.Sha256),PartyType.System);
+                AttemptEvidence(lease.Id,payload,link.ExpiresAt,outgoing.LinkOnly,prepared.Saved.Executed.Sha256,prepared.Saved.Certificate.Sha256),PartyType.System);
             await Guard(prepared,lease,original.To,payload,true,ct);Clocks();
             submittedMail=JsonSerializer.Serialize(await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==lease.Id,ct));
             permit=await admission.PrepareDispatchLockedAsync(db,lease,id,ct)??throw new ProductionWorkBlockedException();
@@ -77,7 +75,7 @@ public sealed partial class CompletionNotificationDelivery
                 .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Provider,delivery.Provider).SetProperty(x=>x.ProviderMessageId,delivery.MessageId)
                     .SetProperty(x=>x.Status,EmailStatus.Sent),ct)!=1)throw new ProductionWorkBlockedException();
             await audit.AppendAsync(id,"completion_notification_submitted",null,null,null,ct,
-                SubmittedEvidence(lease.Id,payload,delivery.Provider,delivery.MessageId,false,prepared.Saved.Executed.Sha256,prepared.Saved.Certificate.Sha256),PartyType.System);
+                SubmittedEvidence(lease.Id,payload,delivery.Provider,delivery.MessageId,outgoing.LinkOnly,prepared.Saved.Executed.Sha256,prepared.Saved.Certificate.Sha256),PartyType.System);
             await state.RecheckLockedAsync(prepared.Saved,ct);Clocks();
             await admission.PrepareHandlerOutcomeLockedAsync(db,lease,id,ct);Clocks();await tx.CommitAsync(ct);
         }
@@ -110,6 +108,14 @@ public sealed partial class CompletionNotificationDelivery
         void LeaseClock() {ct.ThrowIfCancellationRequested();if(lease.Until<=time.GetUtcNow())throw new ProductionWorkBlockedException();}
     }
 
+    internal static void DemandAttachmentMode(PublishedCompletion verified,PreparedCompletionEmail outgoing)
+    {
+        var attachments=outgoing.Message.Attachments;
+        if(outgoing.LinkOnly) {if(attachments is not {Count:0})throw new ProductionWorkBlockedException();return;}
+        if(attachments is not {Count:2} ||
+            !attachments[0].CopyBytes().AsSpan().SequenceEqual(verified.ExecutedBytes) ||
+            !attachments[1].CopyBytes().AsSpan().SequenceEqual(verified.CertificateBytes))throw new ProductionWorkBlockedException();
+    }
     internal static string AttemptEvidence(Guid notificationId,CompletionNotificationPayload payload,DateTimeOffset expiresAt,bool linkOnly,byte[] executed,byte[] certificate)
         =>JsonSerializer.Serialize(new {version=CompletionNotificationJobs.Version,notificationId,scopeSha256=CompletionNotificationJobs.Digest(payload),tokenId=payload.LastTokenId,
             ExpiresAt=expiresAt,templateVersion=CompletionEmailTemplate.Version,linkOnly,
