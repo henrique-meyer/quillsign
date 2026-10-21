@@ -228,7 +228,7 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
         else if (status != "Draft") throw Invalid();
         foreach (var audit in tables["AuditEvents"].EnumerateArray())
         {
-            if (status == "Sent" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent") continue;
+            if (status == "Sent" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given") continue;
             if (audit.GetProperty("Event").GetString() is not (ProductionRetentionLedger.EnrollmentEvent or
                 "draft_created" or "sender_verification_requested" or "sender_email_verified" or
                 "document_uploaded" or "document_replaced" or "preview_confirmed" or "signer_added" or "signer_updated" or "signer_removed" or

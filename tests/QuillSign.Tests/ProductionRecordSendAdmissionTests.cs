@@ -142,9 +142,9 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
         internal readonly ProductionRecordUploadAdmissionTests.Prepared Prepared=prepared;internal readonly Signals Signals=new();
         internal Envelope Original=null!;private DraftReviewSnapshot Review=null!;private DisclosureSnapshot Disclosure=null!;
         private readonly ElectronicRecordDisclosure disclosures=new(ProductionRetentionAdmissionContractTests.Policies());
-        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false)
+        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false,bool demo=false)
         {
-            var test=new Ready(fixture,await ProductionRecordUploadAdmissionTests.Prepared.Create(fixture));await using var db=fixture.Open();
+            var test=new Ready(fixture,await ProductionRecordUploadAdmissionTests.Prepared.Create(fixture,demo));await using var db=fixture.Open();
             var p=test.Prepared;
             if(requestedDeadline)
             {
@@ -167,7 +167,8 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
             Assert.Equal(DetailsError.None,(await details.ChangeAsync(p.Sender,e.PublicId,new(DetailsChangeKind.SaveDetails,Convert.ToBase64String(e.RowVersion),Title:"Synthetic NO AGREEMENT"),null,null)).Error);
             db.ChangeTracker.Clear();test.Original=await p.Record(db);
             test.Review=(await new DraftReview(db,p.Run.Time).GetAsync(p.Sender,e.PublicId))!;Assert.True(test.Review.ChecksPassed);
-            test.Disclosure=test.Review.ProductionDisclosure!.Build(test.disclosures,test.Review.Title!);return test;
+            test.Disclosure=test.Review.ProductionDisclosure is { } production?production.Build(test.disclosures,test.Review.Title!):
+                test.disclosures.Build(test.Review.PublicId,test.Review.Title!,test.Original.SenderEmail,test.Review.DemoDisclosure);return test;
         }
         internal async Task<SentDraft?> Send(QuillSignDbContext? supplied=null,bool acknowledge=true)
         {

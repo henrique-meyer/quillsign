@@ -175,7 +175,7 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
     }
     internal sealed class Blobs:IProductionRecordUploadStore,IProductionRecordSendStore,IBlobStore,IProductionHoldObjectSource
     {
-        internal readonly Dictionary<DocumentBlob,byte[]> Objects=[];internal int Deletes,UnwitnessedWrites;
+        internal readonly Dictionary<DocumentBlob,byte[]> Objects=[];internal int Deletes,UnwitnessedWrites,Copies;
         internal bool LoseFirstAcknowledgement;internal Func<int,Task>? AfterWrite;internal Func<Task>? BeforeWrite;internal Func<Task>? AfterCopy;
         public async Task<ProductionRecordWriteReceipt> WriteAsync(ProductionRecordOperation scope,ClaimsPrincipal sender,ProductionRecordWriteDescriptor item,Stream source,
             bool mayWrite,ProductionRecordWriteReceipt? saved,Func<CancellationToken,Task> demand,CancellationToken ct=default)
@@ -193,10 +193,10 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
             var receipt=new ProductionRecordWriteReceipt(item,"synthetic-version-"+item.Blob.ObjectId.ToString("N"),"\"synthetic-etag\"");
             if(saved is not null)Assert.Equal(saved,receipt);return receipt;
         }
-        public Task WriteAsync(ClaimsPrincipal sender,DocumentBlob blob,Stream source,long length,CancellationToken cancellationToken=default)
-        {UnwitnessedWrites++;throw new InvalidOperationException("Production upload must use the witnessed adapter.");}
+        public async Task WriteAsync(ClaimsPrincipal sender,DocumentBlob blob,Stream source,long length,CancellationToken cancellationToken=default)
+        {UnwitnessedWrites++;EnvelopeStorageAuthorization.Demand(sender,blob);using var copy=new MemoryStream();await source.CopyToAsync(copy,cancellationToken);Assert.Equal(length,copy.Length);Objects.Add(blob,copy.ToArray());}
         public async Task<long> CopyToAsync(ClaimsPrincipal sender,DocumentBlob blob,Stream destination,CancellationToken cancellationToken=default)
-        {EnvelopeStorageAuthorization.DemandRead(sender,blob);await destination.WriteAsync(Objects[blob],cancellationToken);if(AfterCopy is not null)await AfterCopy();return Objects[blob].Length;}
+        {EnvelopeStorageAuthorization.DemandRead(sender,blob);Copies++;await destination.WriteAsync(Objects[blob],cancellationToken);if(AfterCopy is not null)await AfterCopy();return Objects[blob].Length;}
         public Task DeleteAsync(ClaimsPrincipal sender,DocumentBlob blob,CancellationToken cancellationToken=default)
         {Deletes++;throw new InvalidOperationException("Production upload must retain historical and uncertain bytes.");}
         internal HoldObjectAddress Address(DocumentBlob blob)=>new(blob.Kind==DocumentBlobKind.Original?"originals":"normalized",
@@ -214,9 +214,9 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
             {HoldUploads=new(Run.Admission,Blobs),HoldAdmission=new(Run.Admission)};
         internal async Task<bool> Upload(QuillSignDbContext db,Envelope before)
         {var bytes=PdfFixtures.Create();using var input=new MemoryStream(bytes,false);return await Workflow(db).UploadAsync(Sender,before.PublicId,before.RowVersion,"synthetic.pdf",input,bytes.Length,null,null,default);}
-        internal static async Task<Prepared> Create(SqlDatabaseFixture fixture)
+        internal static async Task<Prepared> Create(SqlDatabaseFixture fixture,bool demo=false)
         {
-            var run=await ProductionRuntimeAdmissionTests.Run.Create(fixture);var test=new Prepared(run);await run.DeliverAndFinish(await run.Claim());
+            var run=await ProductionRuntimeAdmissionTests.Run.Create(fixture,demo);var test=new Prepared(run);await run.DeliverAndFinish(await run.Claim());
             await using var db=fixture.Open();var verified=await run.Sender(db).VerifyAsync(run.Token.Token,null,null);Assert.NotNull(verified);
             test.Sender=QuillSign.Sender.SenderConfiguration.Principal(verified);return test;
         }
