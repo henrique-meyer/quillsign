@@ -59,7 +59,13 @@ internal sealed class ProductionCompletionEffects(ProductionRecordOperationAdmis
     {
         if(until!=CompletionRetentionBinding.RequiredUntil(intent,recordedAt)||recordedAt.Ticks%TimeSpan.TicksPerSecond!=0)throw Invalid();
         var original=await ReadInput(db,scope,CompletionSlot.PublicationIntent,CompletionInputKind.PublicationIntentPlan,ct);
-        if(original.Body.Intent is not {} saved||JsonSerializer.Serialize(saved)!=JsonSerializer.Serialize(intent))throw Invalid();
+        if(original.Body.Intent is not {} saved||saved.RowVersion is not {Length:0}||intent.RowVersion is not {Length:8})throw Invalid();
+        // The protected plan precedes SQL insertion. Only SQL's generated
+        // rowversion may resolve afterward; every semantic column remains exact.
+        // Never mutate the original authenticated body to compare it.
+        var comparable=JsonSerializer.Deserialize<CompletionPublicationIntent>(JsonSerializer.Serialize(saved))??throw Invalid();
+        comparable.RowVersion=intent.RowVersion.ToArray();
+        if(JsonSerializer.Serialize(comparable)!=JsonSerializer.Serialize(intent))throw Invalid();
         var resultId=Guid.NewGuid();var cut=await Cut(db,scope,ct);
         var before=JsonSerializer.Deserialize<Envelope>(intent.BeforeEnvelopeJson)??throw Invalid();
         var members=await CompletionNotificationJobs.FreezeRosterLockedAsync(db,scope.RecordId,ct);
@@ -147,7 +153,14 @@ internal sealed class ProductionCompletionEffects(ProductionRecordOperationAdmis
         CompletionCandidateData candidate,CompletionSealKind kind,CompletionSealTargets targets,byte[] source,CompletionSealData? executed):IProductionSealBoundary
     {
         private int prepared;internal ProductionCompletionInput? Original;
-        public Task DemandAsync(CancellationToken ct)=>owner.Operations.DemandCompletionProgressLockedAsync(db,scope,ct);
+        private ProductionCompletionEffectPermit? activeTimestamp;
+        public Task DemandAsync(CancellationToken ct)=>activeTimestamp is {} permit?
+            owner.Operations.DemandCompletionEffectLockedAsync(db,permit,ct):owner.Operations.DemandCompletionProgressLockedAsync(db,scope,ct);
+        internal void TimestampRecorded(ProductionCompletionEffectPermit permit)
+        {
+            if(!ReferenceEquals(activeTimestamp,permit))throw Invalid();
+            activeTimestamp=null;
+        }
         public async Task PrepareIdentityAsync(ProductionSealIdentity identity,CancellationToken ct)
         {
             if(Interlocked.Exchange(ref prepared,1)!=0||identity.SourceSha256!=Hex(SHA256.HashData(source)))throw Invalid();
@@ -167,6 +180,7 @@ internal sealed class ProductionCompletionEffects(ProductionRecordOperationAdmis
         }
         public async Task<IProductionTimestampPermit> BeginTimestampAsync(ProductionTimestampRequest request,CancellationToken ct)
         {
+            if(activeTimestamp is not null)throw Invalid();
             var original=Original??throw Invalid();if(request.StartedAt!=original.Verified.Body.SealContext!.SigningAt)throw Invalid();
             var bytes=Convert.FromBase64String(request.Encoded);if(Hex(SHA256.HashData(bytes))!=request.Sha256)throw Invalid();
             var input=ProductionCompletionInput.OwnTimestampRequest(owner.Keys,original.Verified,bytes,request.AuthoritySha256,request.StartedAt);
@@ -175,10 +189,11 @@ internal sealed class ProductionCompletionEffects(ProductionRecordOperationAdmis
             var digest=ProductionCompletionProtocol.Digest(new{Version="completion-tsa-post-v1",Context=ProductionCompletionProtocol.Digest(context),request.AuthoritySha256,request.Sha256,request.StartedAt});
             var effect=new CompletionEffectDescriptor(e,Guid.Empty,bytes.LongLength,request.Sha256,1,[digest]);
             var permit=await owner.Operations.BeginCompletionEffectLockedAsync(db,scope,context.Slot,effect,ct);
-            return new TimestampPermit(owner,db,scope,input,request,effect,permit,digest);
+            activeTimestamp=permit;
+            return new TimestampPermit(owner,this,db,scope,input,request,effect,permit,digest);
         }
     }
-    private sealed class TimestampPermit(ProductionCompletionEffects owner,QuillSignDbContext db,ProductionRecordOperation scope,
+    private sealed class TimestampPermit(ProductionCompletionEffects owner,SealBoundary boundary,QuillSignDbContext db,ProductionRecordOperation scope,
         ProductionCompletionInput input,ProductionTimestampRequest original,CompletionEffectDescriptor effect,ProductionCompletionEffectPermit permit,string requestSha):IProductionTimestampPermit
     {
         private int sent,recorded;
@@ -192,6 +207,7 @@ internal sealed class ProductionCompletionEffects(ProductionRecordOperationAdmis
             var result=ProductionCompletionInput.OwnTimestampResponse(owner.Keys,input.Verified,raw,new(token,response.At,response.CertificateSha256,response.Policy));
             await owner.Operations.AcknowledgeCompletionEffectRequestLockedAsync(db,permit,requestSha,ct);
             await owner.Operations.RecordCompletionEffectLockedAsync(db,permit,VerifiedCompletionEffectReceipt.FromTimestamp(effect,request,response),ct);
+            boundary.TimestampRecorded(permit);
             await owner.WriteInput(db,scope,result,ct);
         }
     }
