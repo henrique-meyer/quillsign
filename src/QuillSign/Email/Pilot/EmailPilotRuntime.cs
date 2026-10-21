@@ -32,11 +32,18 @@ public static class EmailPilotRuntime
         services.AddEmailPilotSimulatorFoundation(config);
         services.AddPilotTimestampBoundaryFoundation(config);
         services.AddEmailPilotSecretCleanup();
+        var closeout=config.GetSection("EmailPilot:Closeout").Get<EmailPilotCloseoutOptions>()??new();closeout.Validate();services.AddSingleton(closeout);
+        services.AddScoped<EmailPilotCloseout>(sp=>new(closeout,sp.GetRequiredService<EmailOptions>(),sp.GetRequiredService<WorkOptions>(),
+            ()=>sp.GetRequiredService<QuillSignDbContext>(),()=>sp.GetRequiredService<EmailPilotLedger>(),()=>sp.GetRequiredService<EmailPilotProtection>(),sp.GetRequiredService<TimeProvider>()) {
+            Lookup=()=>sp.GetRequiredService<EmailPilotCloseoutLookup>(),Payloads=()=>sp.GetRequiredService<EmailPayloadProtection>(),CompletionPayloads=()=>sp.GetRequiredService<CompletionNotificationProtection>() });
+        services.AddScoped<EmailPilotCloseoutSender>(sp=>new(sp.GetRequiredService<EmailOptions>(),()=>sp.GetRequiredService<EmailPilotCloseout>(),()=>sp.GetRequiredService<QuillSignDbContext>(),
+            sp.GetRequiredService<Func<EmailPilotSesSettings,IPreparedEmailTransport>>(),sp.GetRequiredService<TimeProvider>()));
+        services.AddEmailPilotCloseoutActions();
         services.AddScoped<EmailPilotTransportFactory>();
         services.AddScoped<Func<EmailPilotSesSettings,IPreparedEmailTransport>>(sp=>settings=>sp.GetRequiredService<EmailPilotTransportFactory>().Create(settings));
         services.AddScoped<EmailPilotSender>(sp=>new(sp.GetRequiredService<EmailPilotOptions>(),sp.GetRequiredService<EmailOptions>(),sp.GetRequiredService<WorkOptions>(),
             ()=>sp.GetRequiredService<EmailPilotWorkAuthority>(),()=>sp.GetRequiredService<EmailPilotLedger>(),()=>sp.GetRequiredService<QuillSignDbContext>(),
-            sp.GetRequiredService<Func<EmailPilotSesSettings,IPreparedEmailTransport>>(),sp.GetRequiredService<TimeProvider>()));
+            sp.GetRequiredService<Func<EmailPilotSesSettings,IPreparedEmailTransport>>(),sp.GetRequiredService<TimeProvider>()) {Closeout=()=>sp.GetRequiredService<EmailPilotCloseout>(),CloseoutSender=()=>sp.GetRequiredService<EmailPilotCloseoutSender>()});
         services.AddScoped<EmailPilotDispatch>(sp=>new(sp.GetRequiredService<QuillSignDbContext>(),sp.GetRequiredService<EmailOptions>(),
             ()=>sp.GetRequiredService<EmailPilotWorkAuthority>(),(lease,message,ct)=>sp.GetRequiredService<EmailPilotSender>().SendAsync(lease,message,ct),sp.GetRequiredService<IEmailSender>()));
         services.AddScoped<EmailPilotSimulatorSender>(sp=>new(sp.GetRequiredService<EmailPilotOptions>(),sp.GetRequiredService<EmailOptions>(),sp.GetRequiredService<WorkOptions>(),

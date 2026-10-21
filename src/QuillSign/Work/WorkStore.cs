@@ -14,7 +14,7 @@ public interface IWorkHandler
     Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken cancellationToken);
 }
 
-public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimeProvider time)
+public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimeProvider time, Email.Pilot.EmailPilotCloseout? closeout=null)
 {
     public async Task<WorkClaim> ClaimAsync(Guid id, CancellationToken cancellationToken)
     {
@@ -28,6 +28,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
             .SingleOrDefaultAsync(cancellationToken);
         if (row is null || row.Status is WorkStatus.Completed or WorkStatus.Failed)
             return new(null, null, true);
+        if(closeout is not null)await closeout.DemandClaimLockedAsync(db,row,cancellationToken);
         if (row.AvailableAt > now) return new(null, row.AvailableAt, false);
         if (row.Status == WorkStatus.Leased && row.LeaseExpiresAt > now) return new(null, row.LeaseExpiresAt, false);
         if (row.Kind == WorkKind.Email)

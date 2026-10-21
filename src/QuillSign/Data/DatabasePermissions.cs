@@ -13,7 +13,7 @@ public static class DatabasePermissions
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            IF DATABASE_PRINCIPAL_ID(N'app_worker') IS NULL OR OBJECT_ID(N'dbo.RemoveExpiredEmailPilotSecrets',N'P') IS NULL
+            IF DATABASE_PRINCIPAL_ID(N'app_worker') IS NULL OR OBJECT_ID(N'dbo.RemoveExpiredEmailPilotSecrets',N'P') IS NULL OR OBJECT_ID(N'dbo.RemoveExpiredEmailPilotCloseoutSecret',N'P') IS NULL
                 THROW 50001,'Provision the worker and pilot migration before granting cleanup.',1;
             IF DATABASE_PRINCIPAL_ID(N'app_email_pilot_retention_role') IS NULL CREATE ROLE [app_email_pilot_retention_role] AUTHORIZATION [dbo];
             IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name=N'app_email_pilot_retention_role' AND type='R'
@@ -23,6 +23,7 @@ public static class DatabasePermissions
                 AND member_principal_id<>DATABASE_PRINCIPAL_ID(N'app_worker'))
                 THROW 50001,'The pilot cleanup role must contain only the worker.',1;
             GRANT EXECUTE ON OBJECT::[dbo].[RemoveExpiredEmailPilotSecrets] TO [app_email_pilot_retention_role];
+            GRANT EXECUTE ON OBJECT::[dbo].[RemoveExpiredEmailPilotCloseoutSecret] TO [app_email_pilot_retention_role];
             ALTER ROLE [app_email_pilot_retention_role] ADD MEMBER [app_worker];
             """;
         await command.ExecuteNonQueryAsync();
@@ -134,6 +135,10 @@ public static class DatabasePermissions
             GRANT SELECT, INSERT ON OBJECT::[dbo].[SignerContactSessions] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[SignerContactSessions] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotRuns] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotCloseouts] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotCloseouts] TO [app_runtime_role];
+            GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotCloseoutOperations] TO [app_runtime_role];
+            DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotCloseoutOperations] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotRuns] TO [app_runtime_role];
             GRANT SELECT, INSERT ON OBJECT::[dbo].[EmailPilotSecrets] TO [app_runtime_role];
             DENY UPDATE, DELETE ON OBJECT::[dbo].[EmailPilotSecrets] TO [app_runtime_role];
