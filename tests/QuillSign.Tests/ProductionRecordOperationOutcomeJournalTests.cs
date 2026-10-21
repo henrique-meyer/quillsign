@@ -35,6 +35,26 @@ public sealed class ProductionRecordOperationOutcomeJournalTests
         await Assert.ThrowsAsync<InvalidDataException>(() => run.Journal.ReadAsync(run.Id));
     }
 
+    [Theory]
+    [InlineData("future-version")][InlineData("missing-version")][InlineData("sender-kind")]
+    [InlineData("after-final")][InlineData("duplicate-handler")][InlineData("settlement-without-final")]
+    public async Task Handler_checkpoint_has_closed_protocol_and_cannot_replace_final_settlement(string fault)
+    {
+        var run = new History(); var reserve = run.Reserved() with { OutcomeVersion = "production-record-operation-outcome-v1" };
+        var handler = run.HandlerPrepared();
+        if (fault == "future-version") handler = handler with { HandlerOutcomeVersion = "unknown-future-handler-version" };
+        if (fault == "missing-version") handler = handler with { HandlerOutcomeVersion = null };
+        if (fault == "sender-kind") { reserve = reserve with { OperationKind = "sender/edit" }; handler = handler with { OperationKind = "sender/edit" }; }
+        HoldWitnessEvent[] events = fault switch
+        {
+            "after-final" => [run.Initialized(), reserve, run.Prepared(), handler],
+            "duplicate-handler" => [run.Initialized(), reserve, handler, handler with { EventId = Guid.NewGuid() }],
+            "settlement-without-final" => [run.Initialized(), reserve, handler, run.Settled()],
+            _ => [run.Initialized(), reserve, handler]
+        };
+        await run.Write(events); await Assert.ThrowsAsync<InvalidDataException>(() => run.Journal.ReadAsync(run.Id));
+    }
+
     private sealed class History
     {
         internal readonly Guid Id = Guid.NewGuid(), OperationId = Guid.NewGuid();
@@ -51,6 +71,8 @@ public sealed class ProductionRecordOperationOutcomeJournalTests
         internal HoldWitnessEvent Prepared() => Event(HoldWitnessKind.OperationOutcomePrepared) with {
             OperationId = OperationId, OperationKind = "work/5", OperationReference = "synthetic-owned-reference",
             BusinessStateSha256 = NewContent, SqlStateSha256 = NewSql };
+        internal HoldWitnessEvent HandlerPrepared() => Prepared() with { Kind = HoldWitnessKind.HandlerOutcomePrepared,
+            HandlerOutcomeVersion = "production-record-handler-outcome-v1" };
         internal HoldWitnessEvent Settled() => Event(HoldWitnessKind.OperationSettled) with {
             OperationId = OperationId, OperationKind = "work/5", OperationReference = "synthetic-owned-reference",
             BusinessStateSha256 = NewContent, SqlStateSha256 = NewSql, ReceiptSha256 = Hash };

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
@@ -22,6 +23,8 @@ internal sealed record ProductionRecordOperation(Guid RecordId, Guid OperationId
 internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness)
 {
+    private sealed record HandlerFinalizationPermit(ProductionRecordOperation Scope, Guid TransactionId, HoldWitnessOutcome HandlerOutcome);
+    private readonly ConditionalWeakTable<QuillSignDbContext, HandlerFinalizationPermit> handlerFinalizers = new();
     internal async Task<bool> IsUnenrolledDemoAsync(QuillSignDbContext db, Guid recordId, CancellationToken ct = default)
     {
         var record = await db.Envelopes.AsNoTracking().Where(x => x.Id == recordId).Select(x => new { x.IsDemo }).SingleOrDefaultAsync(ct)
@@ -72,7 +75,8 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
         var state = await witness.ReadAsync(recordId, ct); var scope = Scope(recordId, operationId, kind, reference, state);
         // Sealed/settled replay conveys no provider authority. CompleteAsync can
         // reconcile the exact outcome or confirm its historical receipt only.
-        if (!state.SettledOperations.ContainsKey(operationId) && state.Outcomes?.ContainsKey(operationId) != true) await DemandAsync(scope, ct);
+        if (!state.SettledOperations.ContainsKey(operationId) && state.Outcomes?.ContainsKey(operationId) != true &&
+            state.HandlerOutcomes?.ContainsKey(operationId) != true) await DemandAsync(scope, ct);
         return scope;
     }
 
@@ -124,7 +128,7 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
         // assertion and cannot advance or replace the authenticated baseline.
         if (state.SettledOperations.TryGetValue(scope.OperationId, out var saved))
         { if (saved != receiptSha256) throw Invalid(); return state; }
-        DemandActive(scope, state, allowOutcome: true);
+        DemandActive(scope, state, allowOutcome: true, allowHandler: true);
         await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         await DemandControls(db, scope.RecordId, state, ct);
@@ -136,7 +140,8 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
         {
             // Without a precommit outcome only the EXACT originally reserved
             // SQL may be acknowledged. Fresh changed SQL is never authority.
-            if (current.StateSha256 != scope.SqlStateSha256 || content != scope.ContentSha256) throw Invalid();
+            if (state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true ||
+                current.StateSha256 != scope.SqlStateSha256 || content != scope.ContentSha256) throw Invalid();
             state = await witness.PrepareOperationOutcomeAsync(scope.RecordId, operation, content, current.StateSha256,
                 Id(scope.RecordId, scope.OperationId, "outcome"), ct);
             outcome = state.Outcomes![scope.OperationId];
@@ -154,13 +159,56 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
     internal async Task PrepareOutcomeLockedAsync(QuillSignDbContext db, ProductionRecordOperation scope, CancellationToken ct = default)
     {
         if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
-        var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state, allowOutcome: true);
+        var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state, allowOutcome: true, allowHandler: true);
+        if (state.HandlerOutcomes?.GetValueOrDefault(scope.OperationId) is { } handler &&
+            (!handlerFinalizers.TryGetValue(db, out var permit) || permit.Scope != scope ||
+                permit.TransactionId != db.Database.CurrentTransaction.TransactionId || permit.HandlerOutcome != handler)) throw Invalid();
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         await DemandControls(db, scope.RecordId, state, ct);
         var current = await Capture(db, scope.RecordId, requests, ct);
         var result = await witness.PrepareOperationOutcomeAsync(scope.RecordId, state.Operations![scope.OperationId],
             ContentDigest(current, keys), current.StateSha256, Id(scope.RecordId, scope.OperationId, "outcome"), ct);
-        DemandActive(scope, result, allowOutcome: true);
+        DemandActive(scope, result, allowOutcome: true, allowHandler: true);
+    }
+
+    // A worker handler's final receipt transaction must checkpoint its exact
+    // state BEFORE commit. This is distinct from later WorkStore bookkeeping.
+    internal async Task PrepareHandlerOutcomeLockedAsync(QuillSignDbContext db, ProductionRecordOperation scope, CancellationToken ct = default)
+    {
+        Worker(scope);
+        if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
+        var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state, allowHandler: true);
+        var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
+        await DemandControls(db, scope.RecordId, state, ct); var current = await Capture(db, scope.RecordId, requests, ct);
+        var result = await witness.PrepareHandlerOutcomeAsync(scope.RecordId, state.Operations![scope.OperationId],
+            ContentDigest(current, keys), current.StateSha256, Id(scope.RecordId, scope.OperationId, "handler-outcome"), ct);
+        DemandActive(scope, result, allowHandler: true);
+    }
+
+    internal async Task<ProductionRecordOperation> ResumeHandlerLockedAsync(QuillSignDbContext db, Guid recordId,
+        Guid operationId, string kind, string reference, CancellationToken ct = default)
+    {
+        Tuple(recordId, operationId, kind, reference);
+        var scope = Scope(recordId, operationId, kind, reference, await witness.ReadAsync(recordId, ct));
+        await DemandHandlerOutcomeLockedAsync(db, scope, ct); return scope;
+    }
+
+    // Verifies the committed handler bytes under the SAME caller transaction
+    // before WorkStore changes its row. The resulting in-memory permit grants
+    // only that exact transaction permission to seal its final bookkeeping.
+    internal async Task DemandHandlerOutcomeLockedAsync(QuillSignDbContext db, ProductionRecordOperation scope, CancellationToken ct = default)
+    {
+        Worker(scope);
+        if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
+        handlerFinalizers.Remove(db);
+        var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state, allowHandler: true);
+        var handler = state.HandlerOutcomes?.GetValueOrDefault(scope.OperationId) ?? throw Invalid();
+        var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
+        await DemandControls(db, scope.RecordId, state, ct); var current = await Capture(db, scope.RecordId, requests, ct);
+        if (handler.ContentSha256 != ContentDigest(current, keys) || handler.SqlStateSha256 != current.StateSha256) throw Invalid();
+        var after = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, after, allowHandler: true);
+        if (after.HandlerOutcomes?.GetValueOrDefault(scope.OperationId) != handler) throw Invalid();
+        handlerFinalizers.Add(db, new(scope, db.Database.CurrentTransaction.TransactionId, handler));
     }
 
     internal static string ContentDigest(ProductionHoldSqlSnapshot snapshot, IDataProtectionProvider keys)
@@ -190,10 +238,11 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
         if (!state.Initialized || state.Operations is null || !state.Operations.TryGetValue(operationId, out var operation) || operation.Kind != kind || operation.Reference != reference) throw Invalid();
         return new(id, operationId, kind, reference, operation.RequestRevision, operation.RequestFenceHash, operation.ContentSha256, operation.SqlStateSha256, operation.ReservationSequence);
     }
-    private static void DemandActive(ProductionRecordOperation scope, HoldWitnessState state, bool allowOutcome = false)
+    private static void DemandActive(ProductionRecordOperation scope, HoldWitnessState state, bool allowOutcome = false, bool allowHandler = false)
     {
         if (Scope(scope.RecordId, scope.OperationId, scope.Kind, scope.Reference, state) != scope || state.OutstandingOperation != scope.OperationId ||
             state.SettledOperations.ContainsKey(scope.OperationId) || !allowOutcome && state.Outcomes?.ContainsKey(scope.OperationId) == true ||
+            !allowHandler && state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true ||
             state.RequestRevision != scope.RequestRevision || state.RequestFenceHash != scope.RequestFenceHash ||
             state.Holds.Values.Any(x => !x.Released && state.Unacknowledged?.CommandId != x.Placement.CommandId)) throw Invalid();
     }
@@ -201,6 +250,10 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
     { if (requests.Revision != scope.RequestRevision || requests.FenceHash != scope.RequestFenceHash) throw Invalid(); }
     private static void Tuple(Guid id, Guid operationId, string kind, string reference)
     { if (id == Guid.Empty || operationId == Guid.Empty || !ProductionHoldWitnessJournal.OperationText(kind, 128) || !ProductionHoldWitnessJournal.OperationText(reference, 512)) throw Invalid(); }
+    private static void Worker(ProductionRecordOperation scope)
+    {
+        if (!ProductionHoldWitnessJournal.WorkerOperationText(scope.Kind)) throw Invalid();
+    }
     private static void DemandFresh(JsonElement sql)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));

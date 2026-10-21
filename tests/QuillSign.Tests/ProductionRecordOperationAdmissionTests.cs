@@ -457,7 +457,7 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
         }
     }
 
-    private sealed class Run(SqlDatabaseFixture fixture)
+    internal sealed class Run(SqlDatabaseFixture fixture)
     {
         internal readonly IDataProtectionProvider Keys = new EphemeralDataProtectionProvider();
         internal readonly ProductionHoldWitnessJournalTests.Clock Clock = new();
