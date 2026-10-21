@@ -56,6 +56,11 @@ public sealed class ProductionTerminalMutationAdmissionTests(SqlDatabaseFixture 
         Assert.Equal(3,run.Sender.Calls);
         Assert.Null((await run.Record.Journal.ReadAsync(run.Record.Id)).OutstandingOperation);
         Assert.Equal(2,await db.AuditEvents.CountAsync(x=>x.EnvelopeId==run.Record.Id&&x.Event=="void_notification_submitted"));
+        // Reuse this exact runtime record after both provider/Finish receipts;
+        // the connected coordinator must accept the complete terminal history.
+        var terminalHold=await holds.Place(2);
+        Assert.True((await holds.Coordinator().ReadVerifiedAsync(run.Record.Id)).Holds[terminalHold.HoldId].Effective);
+        Assert.False(await holds.Release(terminalHold,3));
     }
 
     [Fact]
