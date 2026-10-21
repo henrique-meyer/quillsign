@@ -245,20 +245,20 @@ public sealed class ProductionSignaturePreviewAdmissionTests(SqlDatabaseFixture 
         public override async Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData eventData,CancellationToken ct=default)
         {if(!Published){Published=true;await publish();}}
     }
-    private sealed class Flow(SqlDatabaseFixture fixture,ProductionInvitationWorkerAdmissionTests.Delivered delivered,VerifiedSigner identity):IAsyncDisposable
+    internal sealed class Flow(SqlDatabaseFixture fixture,ProductionInvitationWorkerAdmissionTests.Delivered delivered,VerifiedSigner identity):IAsyncDisposable
     {
         internal readonly ProductionInvitationWorkerAdmissionTests.Delivered Delivered=delivered;internal readonly VerifiedSigner Identity=identity;
         internal ProductionRuntimeAdmissionTests.Run Record=>Delivered.Record;internal Guid Id=>Record.Id;
         internal ProductionRecordUploadAdmissionTests.Blobs Blobs=>Delivered.Ready.Prepared.Blobs;
         internal ClaimsPrincipal Principal=>SignerAccessConfiguration.Principal(Identity);
-        internal static async Task<Flow> Create(SqlDatabaseFixture fixture,bool demo=false)
+        internal static async Task<Flow> Create(SqlDatabaseFixture fixture,bool demo=false,bool twoSigners=false)
         {
-            var delivered=await ProductionInvitationWorkerAdmissionTests.Delivered.Create(fixture,demo:demo,withFields:true);
+            var delivered=await ProductionInvitationWorkerAdmissionTests.Delivered.Create(fixture,demo:demo,withFields:true,twoSigners:twoSigners);
             var steps=new ProductionSignerMutationAdmissionTests(fixture);var identity=(await steps.Redeem(delivered))!;Assert.NotNull(identity);
             var principal=SignerAccessConfiguration.Principal(identity);var receipt=(await steps.Preview(delivered,principal)).Receipt;
             Assert.Equal(ConsentResult.Accepted,await steps.Accept(delivered,principal,receipt));return new(fixture,delivered,identity);
         }
-        private SignatureAdoption Adoption(QuillSignDbContext db)=>new(db,ProductionSignerMutationAdmissionTests.Access(Delivered,db),Blobs,
+        internal SignatureAdoption Adoption(QuillSignDbContext db)=>new(db,ProductionSignerMutationAdmissionTests.Access(Delivered,db),Blobs,
             new(Record.Keys,Record.Time),new(db,Record.Time),Record.Time){HoldAdmission=new(Record.Admission),HoldPreviews=new(Record.Admission,Blobs,Record.Time)};
         private SignerFields Fields(QuillSignDbContext db)=>new(db,ProductionSignerMutationAdmissionTests.Access(Delivered,db),Adoption(db),new(db,Record.Time),Record.Time)
             {HoldAdmission=new(Record.Admission)};

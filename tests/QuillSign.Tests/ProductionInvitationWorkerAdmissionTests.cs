@@ -204,10 +204,10 @@ public sealed class ProductionInvitationWorkerAdmissionTests(SqlDatabaseFixture 
         internal readonly Capture Sender=new();internal Guid WorkId;internal WorkLease Lease=null!;internal string Token="";internal AuthToken TokenRecord=null!;
         private readonly WorkOptions work=new(){Enabled=true};
         private readonly EmailOptions email=new(){Enabled=true,BaseUrl="https://example.invalid",FromEmail="noreply@example.invalid"};
-        internal static async Task<Delivered> Pending(SqlDatabaseFixture fixture,bool demo=false,bool withFields=false)
-        {var run=new Delivered(fixture,await ProductionRecordSendAdmissionTests.Ready.Create(fixture,demo:demo,withFields:withFields));run.WorkId=(await run.Ready.Send())!.InvitationWorkId;return run;}
-        internal static async Task<Delivered> Create(SqlDatabaseFixture fixture,bool demo=false,bool withFields=false)
-        {var run=await Pending(fixture,demo,withFields);await run.ClaimAsync();Assert.Equal(WorkOutcome.Completed,(await run.ExecuteAsync()).Outcome);await run.FinishAsync();return run;}
+        internal static async Task<Delivered> Pending(SqlDatabaseFixture fixture,bool demo=false,bool withFields=false,bool twoSigners=false)
+        {var run=new Delivered(fixture,await ProductionRecordSendAdmissionTests.Ready.Create(fixture,demo:demo,withFields:withFields,twoSigners:twoSigners));run.WorkId=(await run.Ready.Send())!.InvitationWorkId;return run;}
+        internal static async Task<Delivered> Create(SqlDatabaseFixture fixture,bool demo=false,bool withFields=false,bool twoSigners=false)
+        {var run=await Pending(fixture,demo,withFields,twoSigners);await run.ClaimAsync();Assert.Equal(WorkOutcome.Completed,(await run.ExecuteAsync()).Outcome);await run.FinishAsync();return run;}
         internal WorkStore Store(QuillSignDbContext db)=>new(db,work,Record.Time,new ProductionWorkAdmission(fixture.Open,Record.Admission));
         internal async Task<WorkLease> ClaimAsync()
         {await using var db=fixture.Open();Lease=(await Store(db).ClaimAsync(WorkId,default)).Lease!;Assert.NotNull(Lease);return Lease;}
