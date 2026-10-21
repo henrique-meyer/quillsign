@@ -129,12 +129,14 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
     internal async Task DemandLockedAsync(QuillSignDbContext db, ProductionRecordOperation scope, CancellationToken ct = default)
     {
         if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
-        DemandActive(scope, await witness.ReadAsync(scope.RecordId, ct));
+        var dispatchState = await witness.ReadAsync(scope.RecordId, ct);
+        DemandActive(scope, dispatchState, allowDispatch: HasDispatchReceiptPermission(db, scope, dispatchState));
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         // Pending hold intent may arrive during the read, but only this same
         // previously admitted operation may drain. Its own business edits need
         // not match the old baseline while it is executing.
-        DemandActive(scope, await witness.ReadAsync(scope.RecordId, ct));
+        dispatchState = await witness.ReadAsync(scope.RecordId, ct);
+        DemandActive(scope, dispatchState, allowDispatch: HasDispatchReceiptPermission(db, scope, dispatchState));
     }
 
     // Only before the operation's FIRST SQL mutation. Handler/provider changes
@@ -211,12 +213,13 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
     {
         Worker(scope);
         if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
-        var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state, allowHandler: true);
+        var state = await witness.ReadAsync(scope.RecordId, ct);
+        DemandActive(scope, state, allowHandler: true, allowDispatch: DemandDispatchHandlerPermission(db, scope, state));
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         await DemandControls(db, scope.RecordId, state, ct); var current = await Capture(db, scope.RecordId, requests, ct);
         var result = await witness.PrepareHandlerOutcomeAsync(scope.RecordId, state.Operations![scope.OperationId],
             ContentDigest(current, keys), current.StateSha256, Id(scope.RecordId, scope.OperationId, "handler-outcome"), ct);
-        DemandActive(scope, result, allowHandler: true);
+        DemandActive(scope, result, allowHandler: true, allowDispatch: true);
     }
 
     internal async Task<ProductionRecordOperation> ResumeHandlerLockedAsync(QuillSignDbContext db, Guid recordId,
@@ -272,11 +275,14 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         if (!state.Initialized || state.Operations is null || !state.Operations.TryGetValue(operationId, out var operation) || operation.Kind != kind || operation.Reference != reference) throw Invalid();
         return new(id, operationId, kind, reference, operation.RequestRevision, operation.RequestFenceHash, operation.ContentSha256, operation.SqlStateSha256, operation.ReservationSequence);
     }
-    private static void DemandActive(ProductionRecordOperation scope, HoldWitnessState state, bool allowOutcome = false, bool allowHandler = false)
+    private static void DemandActive(ProductionRecordOperation scope, HoldWitnessState state, bool allowOutcome = false, bool allowHandler = false, bool allowDispatch = false)
     {
         if (Scope(scope.RecordId, scope.OperationId, scope.Kind, scope.Reference, state) != scope || state.OutstandingOperation != scope.OperationId ||
             state.SettledOperations.ContainsKey(scope.OperationId) || !allowOutcome && state.Outcomes?.ContainsKey(scope.OperationId) == true ||
             !allowHandler && state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true ||
+            !allowDispatch && state.DispatchStarts?.ContainsKey(scope.OperationId) == true &&
+                !(allowHandler && state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true) &&
+                !(allowOutcome && state.Outcomes?.ContainsKey(scope.OperationId) == true) ||
             state.RequestRevision != scope.RequestRevision || state.RequestFenceHash != scope.RequestFenceHash ||
             state.Holds.Values.Any(x => !x.Released && state.Unacknowledged?.CommandId != x.Placement.CommandId)) throw Invalid();
     }
