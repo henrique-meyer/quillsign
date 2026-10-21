@@ -82,7 +82,8 @@ public sealed class ProductionSignerReviewAdmissionTests(SqlDatabaseFixture fixt
     public async Task Old_admitted_review_drains_a_new_hold_without_exposing_a_fresh_receipt()
     {
         await using var run=await ProductionSignerReviewRuntimeContractTests.Flow.Create(fixture,store:b=>b);var place=Place(run.Id);
-        run.Blobs.AfterReviewWrite=async n=>{if(n==1)await run.Record.Journal.IntentAsync(Authority(run.Record.Time,place.Permission),Operators,place,Guid.NewGuid());};
+        run.Blobs.AfterReviewWrite=async n=>{if(n==1){using var pending=new ProductionSignerMutationAdmissionTests.Holds(fixture,run.Delivered);
+            await pending.Coordinator().SubmitAsync(Authority(run.Record.Time,place.Permission),Operators,place);}};
         await Assert.ThrowsAsync<DocumentRejectedException>(()=>run.Prepare());Assert.Equal(2,run.Blobs.ReviewWrites);
         var state=await run.Record.Journal.ReadAsync(run.Id);Assert.Equal(place,state.Unacknowledged);Assert.Null(state.OutstandingOperation);
         await using(var db=fixture.Open())Assert.Single(await db.SignerReviewCandidates.AsNoTracking().Where(x=>x.EnvelopeId==run.Id).ToArrayAsync());
@@ -143,10 +144,11 @@ public sealed class ProductionSignerReviewAdmissionTests(SqlDatabaseFixture fixt
         await using var run=await ProductionSignerReviewRuntimeContractTests.Flow.Create(fixture,store:b=>b);
         var candidate=(await run.Prepare())!;var accepted=await run.Finish(candidate.Receipt);Assert.Equal(SignerFinishOutcome.Accepted,accepted.Outcome);
         var lease=await run.Claim(accepted.Acceptance!.Id);var place=Place(run.Id);
-        await run.Record.Journal.IntentAsync(Authority(run.Record.Time,place.Permission),Operators,place,Guid.NewGuid());
+        using var holds=new ProductionSignerMutationAdmissionTests.Holds(fixture,run.Delivered);
+        await holds.Coordinator().SubmitAsync(Authority(run.Record.Time,place.Permission),Operators,place);
         Assert.Equal(WorkOutcome.Completed,(await run.Handle(lease)).Outcome);Assert.NotNull((await run.Record.Journal.ReadAsync(run.Id)).OutstandingOperation);
         await run.FinishWork(lease);Assert.Null((await run.Record.Journal.ReadAsync(run.Id)).OutstandingOperation);
-        using var holds=new ProductionSignerMutationAdmissionTests.Holds(fixture,run.Delivered);await holds.Preserve(place);
+        await holds.Preserve(place);
         Assert.Equal(9,holds.Provider.Files.Count);Assert.False(await holds.Release(place,1));
         await using var db=fixture.Open();Assert.Equal(1,(await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==run.Id)).CurrentCopyVersion);
         Assert.Equal(1,run.Delivered.Sender.Calls);Assert.Equal(2,run.Blobs.ReviewWrites);Assert.Equal(0,run.Blobs.Deletes);
