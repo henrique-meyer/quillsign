@@ -115,7 +115,12 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
         if(email.Template==LookupDeliveryProtection.Template)return await (lookups?.Invoke()??throw new InvalidOperationException("Missing lookup delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==VoidNotificationJobs.Template)return await (voids?.Invoke()??throw new InvalidOperationException("Missing void notification delivery.")).ExecuteAsync(lease,cancellationToken);
         if(email.Template==CompletionNotificationJobs.Template)return await (completions?.Invoke()??throw new InvalidOperationException("Missing completion notification delivery.")).ExecuteAsync(lease,cancellationToken);
-        if (email.Template == "signer-invitation") return await (invitations ?? throw new InvalidOperationException("Missing signer invitation delivery.")).ExecuteAsync(lease,cancellationToken);
+        if (email.Template == "signer-invitation")
+        {
+            var invitation = invitations ?? throw new InvalidOperationException("Missing signer invitation delivery.");
+            return admitted is null ? await invitation.ExecuteAsync(lease,cancellationToken) :
+                await invitation.ExecuteAdmittedAsync(lease,admitted,HoldAdmission!,cancellationToken);
+        }
         if (email.Template is not ("sender-verification" or "signer-declined")) return new(WorkOutcome.Failed, "unsupported-template");
         var isDecline = email.Template == "signer-declined";
         VerificationPayload payload;
@@ -142,6 +147,7 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
         if (await db.Suppressions.AnyAsync(x => x.Email == email.To, cancellationToken)) return new(WorkOutcome.Failed, "recipient-suppressed");
         var at = time.GetUtcNow();
         DateTimeOffset? retentionDeadline=null;
+        ProductionRecordDispatchPermit? dispatchPermit=null;
         await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
         {
             // Common parent-before-work order also fences expiry cleanup. No new
@@ -189,35 +195,65 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
                 }
             }
             if(retentionDeadline<=time.GetUtcNow())return new(WorkOutcome.Failed,"email-retention-expired");
+            if(HoldAdmission is not null)
+            {
+                dispatchPermit=await HoldAdmission.PrepareDispatchLockedAsync(db,lease,email.EnvelopeId,cancellationToken);
+                if(admitted is not null && dispatchPermit is null)throw new ProductionWorkBlockedException();
+                DemandDispatchClocks(lease,email,Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision,at.AddMinutes(15)),retentionDeadline);
+            }
             if(pilotDecision?.Scope?.RunExpiresAt<=time.GetUtcNow())throw new EmailDisabledException();
             if(lease.Until<=time.GetUtcNow())throw new InvalidOperationException("Work lease is no longer owned.");
             await transaction.CommitAsync(cancellationToken);
         }
         if(retentionDeadline<=time.GetUtcNow()) {
-            await ClearSubmissionAsync(email.Id,payload.TokenId,cancellationToken);
+            if(dispatchPermit is null)await ClearSubmissionAsync(email.Id,payload.TokenId,cancellationToken);
+            // An externally prepared dispatch which never reached the provider
+            // remains parked; expiry is not a cancellation/absence proof.
             return new(WorkOutcome.Failed,"email-retention-expired");
         }
         try
         {
+            if(dispatchPermit is not null)
+            {
+                await using var proof=await db.Database.BeginTransactionAsync(cancellationToken);
+                await DemandWitnessedIntentLockedAsync(lease,email,payload,at,Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision,at.AddMinutes(15)),cancellationToken);
+                DocumentRetentionAccess.Check(retentionDeadline,time);
+                await HoldAdmission!.ConsumeDispatchLockedAsync(db,dispatchPermit,cancellationToken);
+                DemandDispatchClocks(lease,email,Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision,at.AddMinutes(15)),retentionDeadline);await proof.RollbackAsync(cancellationToken);
+            }
+            if(dispatchPermit is not null)DemandDispatchClocks(lease,email,Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision,at.AddMinutes(15)),retentionDeadline);
             var delivery = pilot is null ? await sender.SendAsync(outgoing, cancellationToken) : await pilot.SendAsync(lease,outgoing, cancellationToken);
             // Late feedback can advance status; preserve it while recording the receipt.
             if (HoldAdmission is null)
                 await SaveReceiptAsync(lease.Id, delivery, cancellationToken);
-            else await SaveWitnessedReceiptAsync(lease, email, payload, at, Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision, at.AddMinutes(15)), delivery, cancellationToken);
+            else await SaveWitnessedReceiptAsync(lease, email, payload, at, Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision, at.AddMinutes(15)), delivery,dispatchPermit,retentionDeadline,cancellationToken);
             return new(WorkOutcome.Completed);
         }
         catch (EmailNotSubmittedException e)
         {
-            await ClearSubmissionAsync(email.Id, payload.TokenId, cancellationToken);
+            await ClearOwnedSubmissionAsync();
             return new(e.Retryable ? WorkOutcome.Retry : WorkOutcome.Failed, e.FailureCode);
         }
         catch (Exception e) when (e is RecipientSuppressedException or EmailDisabledException)
         {
-            await ClearSubmissionAsync(email.Id, payload.TokenId, cancellationToken);
+            await ClearOwnedSubmissionAsync();
             return new(WorkOutcome.Failed, e is RecipientSuppressedException ? "recipient-suppressed" : "delivery-disabled");
         }
         // Any other exception might follow provider acceptance. Leave submission intent
         // intact; expiry recovery marks it ambiguous without another provider call.
+
+        async Task ClearOwnedSubmissionAsync()
+        {
+            if(dispatchPermit is null){await ClearSubmissionAsync(email.Id,payload.TokenId,cancellationToken);return;}
+            await using var tx=await db.Database.BeginTransactionAsync(cancellationToken);
+            await DemandWitnessedIntentLockedAsync(lease,email,payload,at,Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision,at.AddMinutes(15)),cancellationToken);
+            await HoldAdmission!.DemandDispatchReceiptLockedAsync(db,dispatchPermit,cancellationToken);
+            DemandDispatchClocks(lease,email,Email.Pilot.EmailPilotDispatch.Clamp(pilotDecision,at.AddMinutes(15)),retentionDeadline);
+            await db.EmailOutbox.Where(x=>x.Id==email.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.SubmissionStartedAt,(DateTimeOffset?)null),cancellationToken);
+            if(payload.TokenId!=Guid.Empty)await db.AuthTokens.Where(x=>x.Id==payload.TokenId && x.UsedAt==null)
+                .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.ExpiresAt,time.GetUtcNow()),cancellationToken);
+            await tx.CommitAsync(cancellationToken); // Retain the external reservation for explicit noncompleted reconciliation.
+        }
     }
 
     private Task<int> SaveReceiptAsync(Guid id, EmailDelivery delivery, CancellationToken ct)
@@ -226,23 +262,37 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
             .SetProperty(x => x.Status, x => x.Status == EmailStatus.Queued ? EmailStatus.Sent : x.Status), ct);
 
     private async Task SaveWitnessedReceiptAsync(WorkLease lease, EmailOutbox original, VerificationPayload payload,
-        DateTimeOffset intentAt, DateTimeOffset tokenExpiry, EmailDelivery delivery, CancellationToken ct)
+        DateTimeOffset intentAt, DateTimeOffset tokenExpiry, EmailDelivery delivery,ProductionRecordDispatchPermit? dispatchPermit,DateTimeOffset? deadline,CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await DemandWitnessedIntentLockedAsync(lease,original,payload,intentAt,tokenExpiry,ct);
+        if(dispatchPermit is not null)await HoldAdmission!.DemandDispatchReceiptLockedAsync(db,dispatchPermit,ct);
+        else await HoldAdmission!.DemandLockedAsync(db,lease.Id,original.EnvelopeId,lease.Kind,lease.Owner,lease.Attempt,false,ct);
+        DemandDispatchClocks(lease,original,tokenExpiry,deadline);
+        if(string.IsNullOrWhiteSpace(delivery.Provider) || delivery.Provider.Length>128 || string.IsNullOrWhiteSpace(delivery.MessageId) || delivery.MessageId.Length>1024)
+            throw new ProductionWorkBlockedException();
+        if (await SaveReceiptAsync(lease.Id, delivery, ct) != 1) throw new ProductionWorkBlockedException();
+        await HoldAdmission.PrepareHandlerOutcomeLockedAsync(db, lease, original.EnvelopeId, ct);
+        DemandDispatchClocks(lease,original,tokenExpiry,deadline);
+        await tx.CommitAsync(ct);
+    }
+
+    private async Task DemandWitnessedIntentLockedAsync(WorkLease lease,EmailOutbox original,VerificationPayload payload,
+        DateTimeOffset intentAt,DateTimeOffset tokenExpiry,CancellationToken ct)
+    {
         _ = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={original.EnvelopeId}")
             .AsNoTracking().SingleAsync(ct);
-        await HoldAdmission!.DemandLockedAsync(db, lease.Id, original.EnvelopeId, lease.Kind, lease.Owner, lease.Attempt, false, ct);
         var work = await db.WorkItems.AsNoTracking().SingleAsync(x => x.Id == lease.Id, ct);
         var current = await db.EmailOutbox.AsNoTracking().SingleAsync(x => x.Id == lease.Id, ct);
         if (work.EnvelopeId != original.EnvelopeId || work.Kind != lease.Kind || work.Status != WorkStatus.Leased ||
-            work.LeaseOwner != lease.Owner || work.LeaseExpiresAt != lease.Until || work.Attempts != lease.Attempt ||
+            work.LeaseOwner != lease.Owner || work.LeaseExpiresAt != lease.Until || work.Attempts != lease.Attempt || lease.Until<=time.GetUtcNow() ||
             current.EnvelopeId != original.EnvelopeId || current.Template != original.Template || current.To != original.To ||
             current.PayloadJson != original.PayloadJson || current.AttachmentsJson != original.AttachmentsJson ||
             current.SubmissionStartedAt != intentAt || current.Attempts != lease.Attempt || current.Provider is not null || current.ProviderMessageId is not null ||
-            current.Status is not (EmailStatus.Queued or EmailStatus.Bounced or EmailStatus.Complained) ||
-            string.IsNullOrWhiteSpace(delivery.Provider) || string.IsNullOrWhiteSpace(delivery.MessageId)) throw new ProductionWorkBlockedException();
+            current.Status is not (EmailStatus.Queued or EmailStatus.Bounced or EmailStatus.Complained)) throw new ProductionWorkBlockedException();
         if (original.Template == "sender-verification")
         {
+            if(tokenExpiry<=time.GetUtcNow())throw new ProductionWorkBlockedException();
             var token = await db.AuthTokens.AsNoTracking().SingleOrDefaultAsync(x => x.Id == payload.TokenId, ct);
             if (token is null || token.EnvelopeId != original.EnvelopeId || token.Purpose != TokenPurpose.SenderVerify ||
                 token.PartyType != PartyType.Sender || token.PartyId is not null || token.Email != original.To || token.UsedAt is not null ||
@@ -252,9 +302,12 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
                 token.ExpiresAt != tokenExpiry || !token.TokenSha256.AsSpan().SequenceEqual(SHA256.HashData(Encoding.UTF8.GetBytes(payload.Token))))
                 throw new ProductionWorkBlockedException();
         }
-        if (await SaveReceiptAsync(lease.Id, delivery, ct) != 1) throw new ProductionWorkBlockedException();
-        await HoldAdmission.PrepareHandlerOutcomeLockedAsync(db, lease, original.EnvelopeId, ct);
-        await tx.CommitAsync(ct);
+    }
+
+    private void DemandDispatchClocks(WorkLease lease,EmailOutbox original,DateTimeOffset tokenExpiry,DateTimeOffset? deadline)
+    {
+        if(lease.Until<=time.GetUtcNow() || original.Template=="sender-verification" && tokenExpiry<=time.GetUtcNow())throw new ProductionWorkBlockedException();
+        DocumentRetentionAccess.Check(deadline,time);
     }
 
     private async Task ClearSubmissionAsync(Guid id, Guid tokenId, CancellationToken cancellationToken)

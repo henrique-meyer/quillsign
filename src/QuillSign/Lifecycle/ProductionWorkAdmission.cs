@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Documents;
+using QuillSign.Sender;
 using QuillSign.Work;
 
 namespace QuillSign.Lifecycle;
@@ -18,6 +19,9 @@ internal interface IProductionWorkAdmission
     Task PrepareHandlerOutcomeLockedAsync(QuillSignDbContext db, WorkLease lease, Guid? recordId, CancellationToken ct);
     Task DemandHandlerOutcomeLockedAsync(QuillSignDbContext db, WorkLease lease, Guid? recordId, CancellationToken ct);
     Task<EmailOutbox?> ReadDispatchAsync(QuillSignDbContext db, WorkLease lease, CancellationToken ct);
+    Task<ProductionRecordDispatchPermit?> PrepareDispatchLockedAsync(QuillSignDbContext db, WorkLease lease, Guid? recordId, CancellationToken ct);
+    Task ConsumeDispatchLockedAsync(QuillSignDbContext db, ProductionRecordDispatchPermit permit, CancellationToken ct);
+    Task DemandDispatchReceiptLockedAsync(QuillSignDbContext db, ProductionRecordDispatchPermit permit, CancellationToken ct);
 }
 
 internal sealed class ProductionWorkBlockedException : Exception
@@ -80,6 +84,7 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
         EmailOutbox? result = null;
         await Guard(async () =>
         {
+            if (db.Database.CurrentTransaction is not null || db.ChangeTracker.HasChanges()) throw new ProductionWorkBlockedException();
             var work = await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x => x.Id == lease.Id, ct) ?? throw new ProductionWorkBlockedException();
             var recordId = work.EnvelopeId;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -102,9 +107,27 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
     {
         if (kind != WorkKind.Email) throw new ProductionWorkBlockedException();
         var mail = await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == workId, ct);
-        if (mail is null || mail.EnvelopeId != recordId || mail.Template is not ("sender-verification" or "signer-declined"))
+        if (mail is null || mail.EnvelopeId != recordId || mail.Template is not ("sender-verification" or "signer-declined" or "signer-invitation"))
             throw new ProductionWorkBlockedException();
+        if (mail.Template == "signer-invitation") await DemandInitialInvitationAsync(db, mail, ct);
         return mail;
+    }
+
+    internal static async Task DemandInitialInvitationAsync(QuillSignDbContext db, EmailOutbox mail, CancellationToken ct)
+    {
+        if (mail.EnvelopeId is not { } id || mail.Template != "signer-invitation" || mail.Status != EmailStatus.Queued ||
+            mail.Attempts != 0 || mail.SubmissionStartedAt is not null || mail.Provider is not null || mail.ProviderMessageId is not null ||
+            mail.AttachmentsJson != "[]" || mail.LastError is not null) throw new ProductionWorkBlockedException();
+        var parent = await db.Envelopes.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw new ProductionWorkBlockedException();
+        if (parent.Status != EnvelopeStatus.Sent || parent.CurrentCopyVersion != 0 || parent.CurrentFinishId is not null ||
+            (await SenderSentStatus.ReadSentAsync(db, parent, null, ct)).InvitationWorkId != mail.Id ||
+            await db.SignerFinishAcceptances.AnyAsync(x => x.EnvelopeId == id, ct) ||
+            await db.SignerContactRevisions.AnyAsync(x => x.EnvelopeId == id, ct) ||
+            await db.AuthTokens.AnyAsync(x => x.EnvelopeId == id && x.Purpose == TokenPurpose.SignerAccess, ct)) throw new ProductionWorkBlockedException();
+        var signers = await db.Signers.AsNoTracking().Where(x => x.EnvelopeId == id).OrderBy(x => x.Order).Take(101).ToArrayAsync(ct);
+        if (signers.Length is < 1 or > 100 || signers[0].Email != mail.To || signers.Where((x, i) => x.Order != i + 1 ||
+            x.Status != SignerStatus.Pending || x.ConsentAt is not null || x.SignedAt is not null || x.SignatureAdoptionId is not null).Any())
+            throw new ProductionWorkBlockedException();
     }
 
     public Task PrepareOutcomeLockedAsync(QuillSignDbContext db, WorkLease lease, Guid? recordId, CancellationToken ct)
@@ -114,6 +137,22 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
             var scope = await admission.ResumeAsync(recordId!.Value, lease.Owner, Kind(lease.Kind), Reference(lease.Id, lease.Attempt), ct);
             await admission.PrepareOutcomeLockedAsync(db, scope, ct);
         });
+
+    public async Task<ProductionRecordDispatchPermit?> PrepareDispatchLockedAsync(QuillSignDbContext db, WorkLease lease, Guid? recordId, CancellationToken ct)
+    {
+        ProductionRecordDispatchPermit? result = null;
+        await Guard(async () => {
+            if (await Demo(db, recordId, ct)) return;
+            var scope = await admission.ResumeLockedAsync(db, recordId!.Value, lease.Owner, Kind(lease.Kind), Reference(lease.Id, lease.Attempt), ct);
+            result = await admission.PrepareDispatchLockedAsync(db, scope, ct);
+        }); return result;
+    }
+
+    public Task ConsumeDispatchLockedAsync(QuillSignDbContext db, ProductionRecordDispatchPermit permit, CancellationToken ct)
+        => Guard(() => admission.ConsumeDispatchLockedAsync(db, permit, ct));
+
+    public Task DemandDispatchReceiptLockedAsync(QuillSignDbContext db, ProductionRecordDispatchPermit permit, CancellationToken ct)
+        => Guard(() => admission.DemandDispatchReceiptLockedAsync(db, permit, ct));
 
     public Task PrepareHandlerOutcomeLockedAsync(QuillSignDbContext db, WorkLease lease, Guid? recordId, CancellationToken ct)
         => Guard(async () =>
