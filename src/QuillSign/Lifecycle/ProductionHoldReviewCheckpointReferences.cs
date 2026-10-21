@@ -1,3 +1,4 @@
+using System.Data.SqlTypes;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -106,6 +107,7 @@ internal static class ProductionHoldReviewCheckpointReferences
             using var snapshot = JsonDocument.Parse(input.OriginalSnapshotJson);
             var saved = snapshot.RootElement.GetProperty("fields").Deserialize<DocumentField[]>() ?? throw Invalid();
             if (saved.Length is < 1 or > 200 || saved.Any(x => x.EnvelopeId != id || x.SignerId != first.Id) ||
+                !saved.Select(x => x.Id).SequenceEqual(saved.OrderBy(x => new SqlGuid(x.Id)).Select(x => x.Id)) ||
                 !saved.Any(x => x.Type == FieldType.Signature && x.Value is not null && x.FilledAt is not null && x.FilledBy == PartyType.Signer) ||
                 saved.Select(x => x.Id).Distinct().Count() != saved.Length || snapshot.RootElement.GetProperty("FullName").GetString() != first.FullName ||
                 snapshot.RootElement.GetProperty("ConsentAt").GetDateTimeOffset() != first.ConsentAt || snapshot.RootElement.GetProperty("PageCount").GetInt32() != e.PageCount ||
@@ -155,7 +157,8 @@ internal static class ProductionHoldReviewCheckpointReferences
             using var snapshot = JsonDocument.Parse(proof.OriginalSnapshotJson);
             restore = snapshot.RootElement.GetProperty("fields").Deserialize<DocumentField[]>() ?? throw Invalid();
             var frozen = ProductionHoldObjectReferences.ReadFinishFields(JsonSerializer.SerializeToElement(finish));
-            if (frozen.Length != restore.Length || JsonSerializer.Serialize(frozen.OrderBy(x => x.Id)) != JsonSerializer.Serialize(fields.Where(x => x.SignerId == first.Id).OrderBy(x => x.Id))) throw Invalid();
+            if (!frozen.Select(x => x.Id).SequenceEqual(frozen.OrderBy(x => new SqlGuid(x.Id)).Select(x => x.Id)) ||
+                frozen.Length != restore.Length || JsonSerializer.Serialize(frozen.OrderBy(x => x.Id)) != JsonSerializer.Serialize(fields.Where(x => x.SignerId == first.Id).OrderBy(x => x.Id))) throw Invalid();
             foreach (var old in restore)
             {
                 var current = Clone(frozen.Single(x => x.Id == old.Id));

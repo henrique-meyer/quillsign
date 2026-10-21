@@ -1,3 +1,4 @@
+using System.Data.SqlTypes;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -38,6 +39,31 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
     public void Three_live_candidates_cannot_borrow_a_later_accepted_time_to_excuse_the_original_active_bound()
     {
         var f = new Frame(); f.Review(); f.Review(); f.Review(); f.Accept();
+        Assert.Throws<InvalidDataException>(() => f.Demand());
+    }
+
+    [Fact]
+    public void Actual_SQL_uniqueidentifier_field_order_differs_from_Guid_order_and_remains_exact_through_Finish()
+    {
+        var f = new Frame(craftedOrder: true); f.Review(); f.Accept(); f.Process();
+        var body = f.Demand().Reviews.Single().Input.Snapshot;
+        Assert.False(body.fields.Select(x => x.Id).SequenceEqual(body.fields.OrderBy(x => x.Id).Select(x => x.Id)));
+        Assert.True(body.fields.Select(x => x.Id).SequenceEqual(body.fields.OrderBy(x => new SqlGuid(x.Id)).Select(x => x.Id)));
+    }
+
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public void Rebound_snapshot_or_accepted_field_array_order_is_not_the_original_SQL_producer(bool accepted)
+    {
+        var f = new Frame(craftedOrder: true); f.Review(reverseSnapshot: !accepted);
+        if (accepted)
+        {
+            f.Accept(); f.Process(); var a = f.Acceptance!;
+            a.FieldsJson = JsonSerializer.Serialize(JsonSerializer.Deserialize<DocumentField[]>(a.FieldsJson)!.OrderBy(x => x.Id));
+            a.FieldsSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(a.FieldsJson));
+            f.F.Audits.Single(x => x.Event == "signer_finish_accepted").DataJson = SignerFinish.EvidenceJson(a);
+            f.F.Audits.Single(x => x.Event == "signer_completed").DataJson = SignerCheckpointState.PublishedJson(a); f.Sync();
+        }
         Assert.Throws<InvalidDataException>(() => f.Demand());
     }
 
@@ -119,7 +145,7 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
             case "second-token": f.F.Tokens.Add(new() { EnvelopeId = f.F.Envelope.Id, PartyType = PartyType.Signer, PartyId = f.F.Signers[1].Id, Purpose = TokenPurpose.SignerAccess }); break;
             case "rebound-field-time":
                 f.M.Signature.FilledAt = f.M.Signature.FilledAt!.Value.AddTicks(1);
-                a.FieldsJson = JsonSerializer.Serialize(f.F.Fields.Where(x => x.SignerId == c.SignerId).OrderBy(x => x.Id));
+                a.FieldsJson = JsonSerializer.Serialize(f.F.Fields.Where(x => x.SignerId == c.SignerId).OrderBy(x => new SqlGuid(x.Id)));
                 a.FieldsSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(a.FieldsJson));
                 accepted.DataJson = SignerFinish.EvidenceJson(a); completed.DataJson = SignerCheckpointState.PublishedJson(a); break;
         }
@@ -133,7 +159,7 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
         internal readonly List<SignerReviewCandidate> Candidates = []; internal readonly List<VerifiedReviewInput> Inputs = [];
         internal SignerFinishAcceptance? Acceptance;
         private readonly VerifiedSigner identity;
-        internal Frame(bool large = false)
+        internal Frame(bool large = false, bool craftedOrder = false)
         {
             var first = F.Signers[0]; var e = F.Envelope;
             F.Signers.Add(new() { EnvelopeId = e.Id, Order = 2, FullName = "Synthetic later signer", Email = "second@example.invalid", RowVersion = new byte[8] });
@@ -142,10 +168,20 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
                     signers = F.Signers.Select(x => new SignerListItem(x.Id, x.Order, x.FullName, x.Email, x.Role)).ToArray() }) };
             F.Audits.Insert(F.Audits.FindIndex(x => x.Event == "recipient_added"), roster);
             e.PageSizesJson = JsonSerializer.Serialize(new[] { new PageGeometry(612, 792, 0, 1, [0, 0, 612, 792], [0, 0, 612, 792]) });
+            if (craftedOrder)
+            {
+                var owned = F.Fields.Where(x => x.SignerId == first.Id).ToArray();
+                owned[0].Id = Guid.Parse("00000001-0000-0000-0000-000000000000");
+                owned[1].Id = Guid.Parse("00000000-0000-0000-0000-000000000001");
+                for (var n = 2; n < owned.Length; n++) owned[n].Id = Guid.Parse($"0000000{n}-0000-0000-0000-000000000000");
+            }
             if (large)
             {
                 for (var n = 0; n < 194; n++) F.Fields.Add(new() { EnvelopeId = e.Id, SignerId = first.Id, Type = FieldType.Text, Page = 1,
                     X = .10000000m, Y = .20000000m, Width = .30000000m, Height = .10000000m, RowVersion = new byte[8] });
+            }
+            if (large || craftedOrder)
+            {
                 F.Audits.Single(x => x.Event == "fields_saved").DataJson = JsonSerializer.Serialize(new { documentId = e.PdfBlob,
                     fields = F.Fields.Select(x => new FieldInput(x.Id, x.SignerId, x.Type.ToString(), x.Page, x.X, x.Y, x.Width, x.Height, x.Required, x.Label, x.Value)).ToArray() });
                 F.FreezeFields();
@@ -163,10 +199,11 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
             identity = new(e.Id, e.PublicId, first.Id, first.Email, Guid.Parse(e.SentPdfBlob!), Hex(e.SentPdfSha256!), Hex(e.ErsdSha256!), F.Audits.Last().At.AddHours(2));
             Sync();
         }
-        internal void Review()
+        internal void Review(bool reverseSnapshot = false)
         {
             var e = F.Envelope; var s = F.Signers[0]; var mark = M.P; var at = F.Audits.Last().At.AddSeconds(1); var cut = F.Audits.Last();
-            var fields = F.Fields.Where(x => x.SignerId == s.Id).OrderBy(x => x.Id).Select(Clone).ToArray();
+            var fields = F.Fields.Where(x => x.SignerId == s.Id).OrderBy(x => new SqlGuid(x.Id)).Select(Clone).ToArray();
+            if (reverseSnapshot) fields = fields.OrderBy(x => x.Id).ToArray();
             var snapshot = JsonSerializer.Serialize(new { version = "signer-review-v1", identity.EnvelopeId, identity.SignerId, identity.DocumentId,
                 identity.DocumentHash, identity.DisclosureHash, e.RowVersion, e.PageCount, e.PageSizesJson, s.FullName, s.ConsentAt, signerVersion = s.RowVersion,
                 adoptionId = mark.Id, mark.SignatureSha256, mark.InitialsSha256, mark.NormalizationVersion, fields });
@@ -204,7 +241,7 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
         {
             var c = Candidates[^1]; var at = F.Audits.Last().At.AddSeconds(1); var date = M.Date;
             date.Value = c.ProspectiveDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture); date.FilledAt = at; date.FilledBy = PartyType.Signer; date.RowVersion = Enumerable.Repeat((byte)20, 8).ToArray();
-            var json = JsonSerializer.Serialize(F.Fields.Where(x => x.SignerId == c.SignerId).OrderBy(x => x.Id).ToArray()); c.UsedAt = at;
+            var json = JsonSerializer.Serialize(F.Fields.Where(x => x.SignerId == c.SignerId).OrderBy(x => new SqlGuid(x.Id)).ToArray()); c.UsedAt = at;
             Acceptance = new() { EnvelopeId = c.EnvelopeId, SignerId = c.SignerId, ReviewCandidateId = c.Id, AdoptionId = c.AdoptionId, SourceObjectId = c.SourceObjectId,
                 PdfObjectId = c.PdfObjectId, PdfLength = c.PdfLength, SourceSha256 = c.SourceSha256, DisclosureSha256 = c.DisclosureSha256, SessionSha256 = c.SessionSha256,
                 SnapshotSha256 = c.SnapshotSha256, PdfSha256 = c.PdfSha256, RecipeSha256 = c.RecipeSha256, FieldsJson = json, FieldsSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(json)),
