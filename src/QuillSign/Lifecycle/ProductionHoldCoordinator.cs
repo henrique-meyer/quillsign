@@ -254,6 +254,7 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
     {
         var plans=state.ReviewWrites;
         if(rows.GetArrayLength()>4096||rows.GetArrayLength()!=(plans?.Count??0)||rows.EnumerateArray().GroupBy(x=>x.GetProperty("SignerId").GetGuid()).Any(x=>x.Count()>SignerReviewCandidates.MaximumCandidatesPerSigner))throw Invalid();
+        DemandReviewInputBudget(plans?.Values.Select(x=>x.Plan.Input.Length)??Enumerable.Empty<long>());
         if(rows.GetArrayLength()==0)return [];
         var source=reviewInputs??objects as IProductionReviewInputSource??throw Invalid();
         var current=await new ProductionHoldSqlInventory(db,keys,time).CaptureLockedAsync(recordId,state.RequestRevision,state.RequestFenceHash!,ct:ct);
@@ -286,6 +287,20 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
             result.Add(ProductionReviewInputCodec.OpenVerified(keys,plan,bytes));
         }
         return result;
+    }
+
+    // Preserve the ORIGINAL record-wide worst-case owned ciphertext budget,
+    // while allowing many smaller per-party candidates. Metadata is checked
+    // before resolving a sidecar reader, provider IO or sidecar decryption.
+    internal static void DemandReviewInputBudget(IEnumerable<long> lengths)
+    {
+        var maximum=(long)SignerReviewCandidates.MaximumCandidatesPerSigner*ProductionReviewInputCodec.MaximumCipherBytes;
+        long total=0;
+        foreach(var length in lengths)
+        {
+            if(length<1||length>ProductionReviewInputCodec.MaximumCipherBytes||length>maximum-total)throw Invalid();
+            total=checked(total+length);
+        }
     }
 
     // Historical SQL and hashes alone cannot attest to normalized mark output.
