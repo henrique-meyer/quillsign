@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -37,6 +38,18 @@ internal static class ProductionDeletionBrowserProof
         var privateRoot=Environment.GetEnvironmentVariable("QUILLSIGN_PRIVATE_DATA");
         if(string.IsNullOrWhiteSpace(privateRoot)||!Path.IsPathFullyQualified(privateRoot))throw new InvalidOperationException("Explicit private browser evidence directory is required.");
         var output=Path.Combine(privateRoot,"QUILS-149-browser-proof");Directory.CreateDirectory(output);
+        var runId=Guid.NewGuid();var diagnostics=Path.Combine(output,"runs",recordId.ToString("N"),runId.ToString("N"));Directory.CreateDirectory(diagnostics);
+        var testAssemblySha256=Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(typeof(ProductionDeletionBrowserProof).Assembly.Location)));
+        var appAssemblySha256=Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(typeof(ProductionDeletionCoordinator).Assembly.Location)));
+        async Task Phase(string phase,string? errorType=null)
+        {
+            if(phase is not ("worker-start" or "worker-return" or "worker-error" or "finish" or "observer-timeout" or "host-stop-start" or "host-stop")||
+                errorType is {Length:>256}||errorType is not null&&phase!="worker-error")throw new InvalidOperationException("Invalid synthetic QA diagnostic phase.");
+            var bytes=JsonSerializer.SerializeToUtf8Bytes(new{phase,recordId,runId,actualUtc=DateTimeOffset.UtcNow,testAssemblySha256,appAssemblySha256,errorType});
+            if(bytes.Length>4096)throw new InvalidOperationException("Synthetic QA diagnostic exceeds its bound.");
+            await using var marker=new FileStream(Path.Combine(diagnostics,phase+".private.json"),FileMode.CreateNew,FileAccess.Write,FileShare.None);
+            await marker.WriteAsync(bytes);await marker.FlushAsync();
+        }
         using var certificate=Certificate();using var idp=new ProductionOperatorOidcTests.FakeIdp();
         const string origin="https://localhost:18150";
         await using var db=fixture.Open();var connection=db.Database.GetConnectionString()!;
@@ -78,7 +91,7 @@ internal static class ProductionDeletionBrowserProof
         app.Use(async(_,next)=>{synchronizeBrowserClock();await next();});
         app.UseProductionOperatorPrivacy();app.UseStaticFiles();app.UseRouting();app.UseRateLimiter();app.UseAuthentication();app.UseAuthorization();
         app.MapRazorPages().WithProductionOperatorRateLimit();
-        var done=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var workStarted=0;var workDone=false;
+        var done=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var workStarted=0;var finishStarted=0;var workDone=false;
         app.MapGet("/__fixture/idp",(HttpContext c)=>{
             string Field(string name)=>"<input type=hidden name=\""+name+"\" value=\""+HtmlEncoder.Default.Encode(c.Request.Query[name].ToString())+"\">";
             return Results.Content("<!doctype html><title>Synthetic identity provider</title><h1>Synthetic identity provider</h1><form method=post>"+
@@ -94,15 +107,21 @@ internal static class ProductionDeletionBrowserProof
         app.MapGet("/__fixture/control",()=>Results.Content("<!doctype html><title>Synthetic worker control</title><h1>Synthetic worker control</h1><p>Only this disposable acceptance fixture.</p><form method=post action=/__fixture/run-work><button>Run the prepared synthetic worker</button></form><form method=post action=/__fixture/finish><button>Finish browser acceptance</button></form>","text/html"));
         app.MapPost("/__fixture/run-work",async()=>{
             if((await journal.ReadAsync(recordId)).Deletion?.Disposition is null||Interlocked.Exchange(ref workStarted,1)!=0)return Results.BadRequest();
-            try{await performWork();workDone=true;return Results.Content("<!doctype html><h1>Synthetic worker completed</h1><a href=/operator/retention>Read recorded status</a>","text/html");}
-            catch(Exception e){done.TrySetException(e);throw;}
+            try{await Phase("worker-start");await performWork();await Phase("worker-return");workDone=true;
+                return Results.Content("<!doctype html><h1>Synthetic worker completed</h1><a href=/operator/retention>Read recorded status</a>","text/html");}
+            catch(Exception e){try{await Phase("worker-error",e.GetType().Name);}finally{done.TrySetException(e);}throw;}
         });
-        app.MapPost("/__fixture/finish",()=>{if(!workDone||!idp.PkceVerified)return Results.BadRequest();done.TrySetResult();return Results.Content("Browser acceptance finished.","text/plain");});
+        app.MapPost("/__fixture/finish",async()=>{if(!workDone||!idp.PkceVerified||Interlocked.Exchange(ref finishStarted,1)!=0)return Results.BadRequest();
+            try{await Phase("finish");done.TrySetResult();return Results.Content("Browser acceptance finished.","text/plain");}
+            catch(Exception e){done.TrySetException(e);throw;}});
         await app.StartAsync();
-        await File.WriteAllTextAsync(Path.Combine(output,"ready.private.json"),JsonSerializer.Serialize(new{recordId=recordId.ToString("N"),origin,at=DateTimeOffset.UtcNow,statement=Statement,fixtureClock=time.GetUtcNow()}));
-        // Local observation bound only; all actual authority deadlines stay intact.
-        try{await done.Task.WaitAsync(TimeSpan.FromMinutes(30));Assert.True(workDone);Assert.True(idp.PkceVerified);return true;}
-        finally{await app.StopAsync();}
+        await File.WriteAllTextAsync(Path.Combine(output,"ready.private.json"),JsonSerializer.Serialize(new{recordId=recordId.ToString("N"),runId,diagnostics,
+            testAssemblySha256,appAssemblySha256,origin,at=DateTimeOffset.UtcNow,statement=Statement,fixtureClock=time.GetUtcNow()}));
+        // Local observation bound only; phase markers diagnose ordering and never
+        // replace the unchanged post-helper SQL/Terminal/WorkFinished assertions.
+        try{await done.Task.WaitAsync(TimeSpan.FromMinutes(45));Assert.True(workDone);Assert.True(idp.PkceVerified);return true;}
+        catch(TimeoutException)when(!done.Task.IsFaulted){await Phase("observer-timeout");throw;}
+        finally{try{await Phase("host-stop-start");}finally{try{await app.StopAsync();}finally{await Phase("host-stop");}}}
     }
     private static X509Certificate2 Certificate()
     {
