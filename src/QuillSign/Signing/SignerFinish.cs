@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Work;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Signing;
 
@@ -23,15 +24,24 @@ public sealed record SignerFinishResult(SignerFinishOutcome Outcome,SignerFinish
 public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,SignerReviewCandidates reviews,
     SignerReviewProtection protection,AuditWriter audit,TimeProvider time,SignerCheckpointJobs jobs)
 {
+    internal ProductionSignerReviewAdmission? HoldAdmission {get;init;}
     public const string SnapshotVersion="signer-finish-snapshot-v1";
     public async Task<SignerFinishResult> AcceptAsync(ClaimsPrincipal principal,string publicId,string? receipt,bool affirm,string? statementVersion,
         string? ip=null,string? ua=null,CancellationToken ct=default)
     {
         if(!affirm || statementVersion!=SignerFinishStatement.Version)return new(SignerFinishOutcome.InvalidIntent);
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
         var context=await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true);
         if(context?.ConsentAt is null)return new(SignerFinishOutcome.InvalidContext);
+        // A partial opted-in composition must not fall back to unwitnessed SQL.
+        if(HoldAdmission is null&&(access.HoldAdmission is not null||reviews.HoldAdmission is not null))
+        {
+            var demo=access.HoldAdmission is not null?await access.HoldAdmission.IsUnenrolledDemoAsync(db,context.Identity.EnvelopeId,ct):
+                await reviews.HoldAdmission!.IsUnenrolledDemoLockedAsync(db,context.Identity.EnvelopeId,ct);
+            if(!demo)return new(SignerFinishOutcome.InvalidContext);
+        }
         var token=protection.ReadAccepted(receipt,context.Identity); if(token is null)return new(SignerFinishOutcome.InvalidReview);
         var existing=await db.SignerFinishAcceptances.AsNoTracking().SingleOrDefaultAsync(x=>x.EnvelopeId==context.Identity.EnvelopeId && x.SignerId==context.Identity.SignerId,ct);
         if(existing is not null)
@@ -44,8 +54,22 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
             if(await state.CurrentAsync(envelope,ct) is null || await state.AcceptanceAsync(existing,signer,ct) is null)return new(SignerFinishOutcome.InvalidReview);
             _=await reviews.ReadPdf(candidate,context.Identity,ct);
             if((await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true))?.ConsentAt is null)return new(SignerFinishOutcome.InvalidContext);
-            var created=existing.ProcessedAt is null && await jobs.PrepareAsync(existing,ct);
+            ProductionRecordOperation? repair=null;var missing=existing.ProcessedAt is null&&!await db.WorkItems.AnyAsync(x=>x.Id==existing.Id,ct);
+            if(missing&&HoldAdmission is not null)
+            {
+                try{repair=await HoldAdmission.BeginMutationLockedAsync(db,context,"signer/finish-repair",existing.Id.ToString("N"),ct);}
+                catch(ProductionSignerBlockedException){return new(SignerFinishOutcome.InvalidContext);}
+                if(!access.IsLive(context))return new(SignerFinishOutcome.InvalidContext);
+            }
+            var created=existing.ProcessedAt is null && await jobs.PrepareAsync(existing,ct,repair is null?null:
+                (id,due,token)=>DemandHintLocked(repair,context,existing.Id,id,due,null,token));
+            if(repair is not null)
+            {
+                await HoldAdmission!.PrepareOutcomeLockedAsync(db,repair,ct);
+                if(!access.IsLive(context))return new(SignerFinishOutcome.InvalidContext);
+            }
             await access.CommitAsync(transaction,ct); await transaction.DisposeAsync();
+            if(repair is not null)await HoldAdmission!.CompleteAsync(repair,context.Identity,"finish-repair",existing.Id,ct);
             if(created)await jobs.PublishAsync(existing.Id,ct);
             return new(SignerFinishOutcome.AlreadyAccepted,Result(existing));
         }
@@ -54,6 +78,14 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
         var p=review.Candidate; var now=time.GetUtcNow();
         if(!Live(p,context.Identity,now))return new(SignerFinishOutcome.InvalidReview);
         if((await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null)return new(SignerFinishOutcome.InvalidContext);
+        ProductionRecordOperation? operation=null;
+        if(HoldAdmission is not null)
+        {
+            try{operation=await HoldAdmission.BeginMutationLockedAsync(db,context,"signer/finish",p.Id.ToString("N"),ct);}
+            catch(ProductionSignerBlockedException){return new(SignerFinishOutcome.InvalidContext);}
+            if(!Live(p,context.Identity,time.GetUtcNow())||!access.IsLive(context))return new(SignerFinishOutcome.InvalidReview);
+        }
+        now=time.GetUtcNow();
         // The review snapshot was verified before this server-only Date Signed update.
         await db.Fields.Where(x=>x.EnvelopeId==p.EnvelopeId && x.SignerId==p.SignerId && x.Type==FieldType.DateSigned)
             .ExecuteUpdateAsync(s=>s.SetProperty(x=>x.Value,p.ProspectiveDate.ToString("yyyy-MM-dd",CultureInfo.InvariantCulture))
@@ -77,11 +109,30 @@ public sealed class SignerFinish(QuillSignDbContext db,SignerAccess access,Signe
         if(!Live(p,context.Identity,time.GetUtcNow()))return new(SignerFinishOutcome.InvalidReview);
         if((await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true))?.ConsentAt is null)return new(SignerFinishOutcome.InvalidContext);
         if(!Live(p,context.Identity,time.GetUtcNow()))return new(SignerFinishOutcome.InvalidReview);
-        await jobs.PrepareAsync(accepted,ct);
+        await jobs.PrepareAsync(accepted,ct,operation is null?null:
+            (id,due,token)=>DemandHintLocked(operation,context,accepted.Id,id,due,p,token));
         if(!Live(p,context.Identity,time.GetUtcNow()))return new(SignerFinishOutcome.InvalidReview);
         if(!access.IsLive(context))return new(SignerFinishOutcome.InvalidContext);
-        await access.CommitAsync(transaction,ct); await transaction.DisposeAsync(); await jobs.PublishAsync(accepted.Id,ct);
+        if(operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+            if(!Live(p,context.Identity,time.GetUtcNow())||!access.IsLive(context))return new(SignerFinishOutcome.InvalidReview);
+        }
+        await access.CommitAsync(transaction,ct); await transaction.DisposeAsync();
+        if(operation is not null)await HoldAdmission!.CompleteAsync(operation,context.Identity,"finish",accepted.Id,ct);
+        await jobs.PublishAsync(accepted.Id,ct);
         return new(SignerFinishOutcome.Accepted,Result(accepted));
+    }
+    private async Task DemandHintLocked(ProductionRecordOperation scope,SignerReadContext context,Guid expectedId,Guid id,
+        DateTimeOffset due,SignerReviewCandidate? originalReview,CancellationToken ct)
+    {
+        if(id!=expectedId||!access.IsLive(context)||originalReview is not null&&!Live(originalReview,context.Identity,time.GetUtcNow()))throw new InvalidDataException("The original Finish authority is unavailable.");
+        await HoldAdmission!.DemandMutationLockedAsync(db,scope,ct);
+        var work=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id,ct);
+        if(work is null||work.EnvelopeId!=scope.RecordId||work.Kind!=WorkKind.Rendering||work.Status!=WorkStatus.Queued||work.Attempts!=0||
+            work.LeaseOwner is not null||work.LeaseExpiresAt is not null||work.AvailableAt!=due||
+            work.PayloadJson!=JsonSerializer.Serialize(new SignerCheckpointPayload(SignerCheckpointJobs.Version,expectedId))||
+            !access.IsLive(context)||originalReview is not null&&!Live(originalReview,context.Identity,time.GetUtcNow()))throw new InvalidDataException("The exact Finish scheduling hint is unavailable.");
     }
     private static bool Live(SignerReviewCandidate p,VerifiedSigner identity,DateTimeOffset now)=>p.PreparedAt<=now && p.ExpiresAt>now &&
         identity.SessionExpiresAt>now && p.ProspectiveDate==DateOnly.FromDateTime(now.UtcDateTime);

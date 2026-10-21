@@ -38,9 +38,18 @@ public sealed class SignerPdfAccess(IBlobStore blobs,DocumentOptions options)
 {
     internal ProductionSignerMutationAdmission? HoldAdmission {get;init;}
     private static readonly SemaphoreSlim ParseGate = new(1,1);
-    public async Task<byte[]> PrepareAsync(ClaimsPrincipal principal,SignerReadContext context,CancellationToken ct = default)
+    public Task<byte[]> PrepareAsync(ClaimsPrincipal principal,SignerReadContext context,CancellationToken ct = default)
+        =>PrepareCoreAsync(principal,context,HoldAdmission is null?null:token=>HoldAdmission.DemandNewProofAsync(context,token),ct);
+    // Explicit pre-reservation proof read. Never open a second connection under
+    // the caller's parent lock or use this to bypass an active operation.
+    internal Task<byte[]> PrepareLockedAsync(QuillSignDbContext db,ClaimsPrincipal principal,SignerReadContext context,CancellationToken ct=default)
     {
-        if(HoldAdmission is not null)await HoldAdmission.DemandNewProofAsync(context,ct);
+        if(db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges())throw new InvalidDataException("A clean caller transaction is required.");
+        return PrepareCoreAsync(principal,context,HoldAdmission is null?null:token=>HoldAdmission.DemandNewProofLockedAsync(db,context,token),ct);
+    }
+    private async Task<byte[]> PrepareCoreAsync(ClaimsPrincipal principal,SignerReadContext context,Func<CancellationToken,Task>? demand,CancellationToken ct)
+    {
+        if(demand is not null)await demand(ct);
         using var memory = new MemoryStream();
         using var bounded = new BoundedDocumentStream(memory,64 * 1024 * 1024);
         var length = await blobs.CopyToAsync(principal,context.Document,bounded,ct);
@@ -54,7 +63,7 @@ public sealed class SignerPdfAccess(IBlobStore blobs,DocumentOptions options)
             new PdfValidation(new() { MaximumBytes = 64 * 1024 * 1024,MaximumPages = Math.Clamp(options.MaximumPages,1,200) }).Rewrite(memory,output);
         }
         finally { ParseGate.Release(); }
-        if(HoldAdmission is not null)await HoldAdmission.DemandNewProofAsync(context,ct);
+        if(demand is not null)await demand(ct);
         return memory.ToArray();
     }
 }

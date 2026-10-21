@@ -6,6 +6,8 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Storage;
+using QuillSign.Lifecycle;
+using System.Text;
 
 namespace QuillSign.Signing;
 
@@ -44,91 +46,128 @@ public sealed class SignerReviewProtection(IDataProtectionProvider provider,Time
 public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess access,SignatureAdoption adoption,SignerPdfAccess pdf,
     SignerPdfRenderer renderer,IBlobStore blobs,SignerReviewProtection protection,AuditWriter audit,TimeProvider time)
 {
+    internal ProductionSignerReviewAdmission? HoldAdmission {get;init;}
     public const string SnapshotVersion="signer-review-v1";
     public const int MaximumCandidatesPerSigner=20,MaximumActiveCandidates=2;
     private const long MaximumPdfBytes=64*1024*1024;
     private sealed record State(SignerReadContext Context,Envelope Envelope,Signer Signer,DocumentField[] Fields,
-        CurrentSignatureAssets Assets,byte[] SnapshotHash,PageGeometry[] Pages);
+        CurrentSignatureAssets Assets,byte[] SnapshotHash,string SnapshotJson,PageGeometry[] Pages);
 
     public async Task<SignerReviewPrepared?> PrepareAsync(ClaimsPrincipal principal,string publicId,string? ip=null,string? ua=null,CancellationToken ct=default)
     {
-        var committed=false; var commitStarted=false; DocumentBlob? attempted=null; VerifiedSigner? identity=null;
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
+        var committed=false;var commitStarted=false;var retainAttempted=false;DocumentBlob? attempted=null;VerifiedSigner? identity=null;
         try
         {
             await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
             await using var transaction=await db.Database.BeginTransactionAsync(ct);
-            var state=await Current(principal,publicId,ct); if(state is null)return null; identity=state.Context.Identity;
-            var source=await pdf.PrepareAsync(principal,state.Context,ct); var now=time.GetUtcNow();
-            var existing=await db.SignerReviewCandidates.AsNoTracking().Where(x=>x.EnvelopeId==identity.EnvelopeId && x.SignerId==identity.SignerId &&
-                x.UsedAt==null && x.SupersededAt==null && x.ExpiresAt>now && x.SessionSha256==SessionHash(identity) && x.SnapshotSha256==state.SnapshotHash)
+            var state=await Current(principal,publicId,ct);if(state is null)return null;identity=state.Context.Identity;
+            if(!await CompositionAllowedLocked(state.Context,ct))return null;
+            retainAttempted=HoldAdmission is not null&&!await HoldAdmission.IsUnenrolledDemoLockedAsync(db,identity.EnvelopeId,ct);
+            if(HoldAdmission is not null)await HoldAdmission.DemandNewProofLockedAsync(db,state.Context,ct);
+            var source=await pdf.PrepareLockedAsync(db,principal,state.Context,ct);var now=time.GetUtcNow();
+            if(HoldAdmission is not null)await HoldAdmission.DemandNewProofLockedAsync(db,state.Context,ct);
+            var existing=await db.SignerReviewCandidates.AsNoTracking().Where(x=>x.EnvelopeId==identity.EnvelopeId&&x.SignerId==identity.SignerId&&
+                x.UsedAt==null&&x.SupersededAt==null&&x.ExpiresAt>now&&x.SessionSha256==SessionHash(identity)&&x.SnapshotSha256==state.SnapshotHash)
                 .OrderByDescending(x=>x.PreparedAt).FirstOrDefaultAsync(ct);
             if(existing is not null)
             {
-                if(!Matches(existing,state) || !await Evidence(existing,identity,ct))return null;
+                if(!Matches(existing,state)||!await Evidence(existing,identity,ct))return null;
                 _=await ReadPdf(existing,identity,ct);
                 if(!await Live(existing,principal,publicId,ct))return null;
-                await access.CommitAsync(transaction,ct); committed=true; return Data(existing,identity);
+                if(HoldAdmission is not null)await HoldAdmission.DemandNewProofLockedAsync(db,state.Context,ct);
+                await access.CommitAsync(transaction,ct);committed=true;
+                if(HoldAdmission is not null){await transaction.DisposeAsync();await HoldAdmission.DemandNewProofAsync(state.Context,ct);if(!OriginalLive(existing,state.Context))return null;}
+                return Data(existing,identity);
             }
-            if(await db.SignerReviewCandidates.CountAsync(x=>x.EnvelopeId==identity.EnvelopeId && x.SignerId==identity.SignerId,ct)>=MaximumCandidatesPerSigner)
+            if(await db.SignerReviewCandidates.CountAsync(x=>x.EnvelopeId==identity.EnvelopeId&&x.SignerId==identity.SignerId,ct)>=MaximumCandidatesPerSigner)
                 throw new InvalidOperationException("This request reached its signer review limit. Contact the sender.");
-            await db.SignerReviewCandidates.Where(x=>x.EnvelopeId==identity.EnvelopeId && x.SignerId==identity.SignerId && x.UsedAt==null &&
-                x.SupersededAt==null && x.ExpiresAt>now && x.SnapshotSha256!=state.SnapshotHash).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.SupersededAt,now),ct);
-            if(await db.SignerReviewCandidates.CountAsync(x=>x.EnvelopeId==identity.EnvelopeId && x.SignerId==identity.SignerId && x.UsedAt==null && x.SupersededAt==null && x.ExpiresAt>now,ct)>=MaximumActiveCandidates)
+            // Obsolete candidates will be superseded only AFTER pure validation/render
+            // and the exact operation has been externally reserved.
+            if(await db.SignerReviewCandidates.CountAsync(x=>x.EnvelopeId==identity.EnvelopeId&&x.SignerId==identity.SignerId&&x.UsedAt==null&&
+                x.SupersededAt==null&&x.ExpiresAt>now&&x.SnapshotSha256==state.SnapshotHash,ct)>=MaximumActiveCandidates)
                 throw new InvalidOperationException("Reuse a current review copy or wait for another review session to expire.");
             var midnight=new DateTimeOffset(now.UtcDateTime.Date.AddDays(1),TimeSpan.Zero);
-            var expires=new[]{now.AddMinutes(10),state.Context.AccessExpiresAt,state.Envelope.ExpiresAt??DateTimeOffset.MaxValue,midnight}.Min();
-            if(expires<=now)return null;
-            var a=state.Assets; var marks=new SignerPdfMarks(a.Preview.Id,a.Preview.SignatureObjectId,a.Preview.InitialsObjectId,
-                a.Signature,a.Initials,a.Preview.SignatureSha256,a.Preview.InitialsSha256,a.Preview.NormalizationVersion);
+            var expires=new[]{now.AddMinutes(10),state.Context.AccessExpiresAt,state.Envelope.ExpiresAt??DateTimeOffset.MaxValue,midnight}.Min();if(expires<=now)return null;
+            var a=state.Assets;var marks=new SignerPdfMarks(a.Preview.Id,a.Preview.SignatureObjectId,a.Preview.InitialsObjectId,a.Signature,a.Initials,
+                a.Preview.SignatureSha256,a.Preview.InitialsSha256,a.Preview.NormalizationVersion);
             var request=new SignerPdfRequest(identity.EnvelopeId,identity.SignerId,state.Signer.FullName,now,a.Preview.Id,
                 state.Fields.Select(f=>new SignerPdfField(f.Id,f.EnvelopeId,f.SignerId,f.RowVersion,f.Type,f.Page,f.X,f.Y,f.Width,f.Height,
                     f.Required,f.Value,f.FilledAt,f.FilledBy,f.SignatureAdoptionId,f.ImageSha256)).ToArray(),marks);
             var rendered=renderer.Render(source,state.Context.DocumentSha256,state.Pages,request);
-            var candidate=new SignerReviewCandidate { EnvelopeId=identity.EnvelopeId,SignerId=identity.SignerId,AdoptionId=a.Preview.Id,
-                SourceObjectId=identity.DocumentId,PdfObjectId=Guid.NewGuid(),PdfLength=rendered.Bytes.LongLength,
-                SourceSha256=rendered.SourceSha256,DisclosureSha256=Convert.FromHexString(identity.DisclosureHash),SessionSha256=SessionHash(identity),
-                SnapshotSha256=state.SnapshotHash,PdfSha256=rendered.Sha256,RecipeSha256=rendered.BindingSha256,RendererVersion=rendered.RendererVersion,
-                SnapshotVersion=SnapshotVersion,PreparedAt=now,ExpiresAt=expires,ProspectiveDate=DateOnly.FromDateTime(now.UtcDateTime) };
-            attempted=Blob(candidate); using(var input=new MemoryStream(rendered.Bytes,false))
+            var candidate=new SignerReviewCandidate {EnvelopeId=identity.EnvelopeId,SignerId=identity.SignerId,AdoptionId=a.Preview.Id,
+                SourceObjectId=identity.DocumentId,PdfObjectId=Guid.NewGuid(),PdfLength=rendered.Bytes.LongLength,SourceSha256=rendered.SourceSha256,
+                DisclosureSha256=Convert.FromHexString(identity.DisclosureHash),SessionSha256=SessionHash(identity),SnapshotSha256=state.SnapshotHash,
+                PdfSha256=rendered.Sha256,RecipeSha256=rendered.BindingSha256,RendererVersion=rendered.RendererVersion,SnapshotVersion=SnapshotVersion,
+                PreparedAt=now,ExpiresAt=expires,ProspectiveDate=DateOnly.FromDateTime(now.UtcDateTime)};
+            var latest=await Current(principal,publicId,ct);
+            if(latest is null||!Same(latest.SnapshotHash,state.SnapshotHash)||!OriginalLive(candidate,state.Context))return null;
+            ProductionRecordOperation? operation=null;ProductionSignerReviewWrite? write=null;
+            if(retainAttempted)
+            {
+                var cut=await db.AuditEvents.AsNoTracking().Where(x=>x.EnvelopeId==identity.EnvelopeId).OrderByDescending(x=>x.Sequence).FirstAsync(ct);
+                write=HoldAdmission!.Own(candidate,identity,state.Context.AccessExpiresAt,state.SnapshotJson,request,state.Pages,rendered,cut.Id,checked((int)cut.Sequence),cut.Hash,ip,ua);
+                try{operation=await HoldAdmission!.BeginReviewLockedAsync(db,write,ct);}catch(ProductionSignerBlockedException){return null;}
+                if(operation is null)throw new InvalidDataException("The production review reservation is unavailable.");
+            }
+            attempted=Blob(candidate);
+            if(operation is not null)
+            {
+                await HoldAdmission!.WriteLockedAsync(db,operation,write!,DocumentBlobKind.ReviewInput,ct);
+                await HoldAdmission.WriteLockedAsync(db,operation,write!,DocumentBlobKind.Normalized,ct);
+            }
+            else
+            {
+                using var input=new MemoryStream(rendered.Bytes,false);
                 await blobs.WriteAsync(Capability(identity,attempted.Value,AssetOperation.Write),attempted.Value,input,input.Length,ct);
-            _=await ReadPdf(candidate,identity,ct);
+            }
+            _=await ReadPdf(candidate,identity,ct);if(!await Live(candidate,principal,publicId,ct))return null;
+            await db.SignerReviewCandidates.Where(x=>x.EnvelopeId==identity.EnvelopeId&&x.SignerId==identity.SignerId&&x.UsedAt==null&&
+                x.SupersededAt==null&&x.ExpiresAt>now&&x.SnapshotSha256!=state.SnapshotHash).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.SupersededAt,now),ct);
+            db.SignerReviewCandidates.Add(candidate);await db.SaveChangesAsync(ct);
+            await audit.AppendAsync(identity.EnvelopeId,"signer_review_prepared",identity.Email,ip,ua,ct,PreparedEvidenceJson(candidate),PartyType.Signer,identity.SignerId);
             if(!await Live(candidate,principal,publicId,ct))return null;
-            db.SignerReviewCandidates.Add(candidate); await db.SaveChangesAsync(ct);
-            await audit.AppendAsync(identity.EnvelopeId,"signer_review_prepared",identity.Email,ip,ua,ct,JsonSerializer.Serialize(new {
-                candidateId=candidate.Id,candidate.PdfObjectId,candidate.SourceObjectId,candidate.PdfLength,candidate.AdoptionId,
-                sourceSha256=Hex(candidate.SourceSha256),disclosureSha256=Hex(candidate.DisclosureSha256),sessionSha256=Hex(candidate.SessionSha256),
-                snapshotSha256=Hex(candidate.SnapshotSha256),pdfSha256=Hex(candidate.PdfSha256),recipeSha256=Hex(candidate.RecipeSha256),
-                candidate.RendererVersion,candidate.SnapshotVersion,candidate.ProspectiveDate,candidate.PreparedAt,candidate.ExpiresAt,
-                serverEvidence="exact_review_pdf_prepared_not_user_review_or_finish" }),PartyType.Signer,identity.SignerId);
-            if(!await Live(candidate,principal,publicId,ct))return null;
-            commitStarted=true; await access.CommitAsync(transaction,ct); committed=true; return Data(candidate,identity);
+            if(operation is not null){await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);HoldAdmission.DemandTime(write!);if(!OriginalLive(candidate,state.Context))return null;}
+            commitStarted=true;await access.CommitAsync(transaction,ct);committed=true;
+            if(operation is not null)
+            {
+                await transaction.DisposeAsync();await HoldAdmission!.CompleteAsync(operation,identity,"review-prepare",candidate.Id,ct);
+                await HoldAdmission.DemandNewProofAsync(state.Context,ct);if(!OriginalLive(candidate,state.Context))return null;
+            }
+            return Data(candidate,identity);
         }
         finally
         {
-            if(!committed && !commitStarted && attempted is DocumentBlob blob && identity is not null)
-                try { await blobs.DeleteAsync(Capability(identity,blob,AssetOperation.Delete),blob,CancellationToken.None); }
-                catch(Exception e) when(e is not OutOfMemoryException) { /* Unreachable bytes remain for envelope purge. */ }
+            if(!retainAttempted&&!committed&&!commitStarted&&attempted is DocumentBlob blob&&identity is not null)
+                try{await blobs.DeleteAsync(Capability(identity,blob,AssetOperation.Delete),blob,CancellationToken.None);}
+                catch(Exception e)when(e is not OutOfMemoryException){/* Existing demo cleanup only. */}
         }
     }
 
     public async Task<SignerReviewData?> ReadAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct=default)
     {
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
         var review=await ReadLockedAsync(principal,publicId,receipt,ct); if(review is null)return null;
-        await access.CommitAsync(transaction,ct); return new(Data(review.Candidate,review.Identity),review.Pdf);
+        await access.CommitAsync(transaction,ct);
+        if(HoldAdmission is not null){await transaction.DisposeAsync();await HoldAdmission.DemandNewProofAsync(review.Context,ct);if(!OriginalLive(review.Candidate,review.Context))return null;}
+        return new(Data(review.Candidate,review.Identity),review.Pdf);
     }
-    internal sealed record LockedReview(SignerReviewCandidate Candidate,VerifiedSigner Identity,byte[] Pdf);
+    internal sealed record LockedReview(SignerReviewCandidate Candidate,VerifiedSigner Identity,byte[] Pdf,SignerReadContext Context);
     internal async Task<LockedReview?> ReadLockedAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct)
     {
         if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A transaction is required.");
         var context=await access.GetLockedContextAsync(principal,publicId,ct); if(context?.ConsentAt is null)return null;
+        if(!await CompositionAllowedLocked(context,ct))return null;
         var token=protection.Read(receipt,context.Identity); if(token is null)return null;
         var candidate=await db.SignerReviewCandidates.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==token.Id && x.EnvelopeId==context.Identity.EnvelopeId && x.SignerId==context.Identity.SignerId,ct);
         if(candidate is null || !TokenMatches(candidate,token))return null;
         var state=await Current(principal,publicId,ct); if(state is null || !Matches(candidate,state) || !await Evidence(candidate,context.Identity,ct))return null;
-        var bytes=await ReadPdf(candidate,context.Identity,ct); if(!await Live(candidate,principal,publicId,ct))return null;
-        return new(candidate,context.Identity,bytes);
+        if(HoldAdmission is not null)await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);
+        var bytes=await ReadPdf(candidate,context.Identity,ct);if(!await Live(candidate,principal,publicId,ct))return null;
+        if(HoldAdmission is not null){await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);if(!OriginalLive(candidate,context))return null;}
+        return new(candidate,context.Identity,bytes,context);
     }
     internal static bool TokenMatches(SignerReviewCandidate candidate,SignerReviewReceipt token)=>candidate.Id==token.Id &&
         candidate.EnvelopeId==token.Identity.EnvelopeId && candidate.SignerId==token.Identity.SignerId && candidate.AdoptionId==token.AdoptionId &&
@@ -138,7 +177,11 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
     internal async Task<bool> VerifySourceLockedAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct)
     {
         var context=await access.GetLockedContextAsync(principal,publicId,ct); if(context?.ConsentAt is null)return false;
-        _=await pdf.PrepareAsync(principal,context,ct); return true;
+        if(!await CompositionAllowedLocked(context,ct))return false;
+        if(HoldAdmission is not null)await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);
+        _=await pdf.PrepareLockedAsync(db,principal,context,ct);
+        if(HoldAdmission is not null){await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);if(!access.IsLive(context))return false;}
+        return true;
     }
 
     private async Task<State?> Current(ClaimsPrincipal principal,string publicId,CancellationToken ct)
@@ -155,11 +198,28 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
         PageGeometry[]? pages;
         try { pages=JsonSerializer.Deserialize<PageGeometry[]>(envelope.PageSizesJson??"null"); } catch(JsonException) { return null; }
         if(pages?.Length!=envelope.PageCount)return null;
-        var hash=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { version=SnapshotVersion,identity.EnvelopeId,identity.SignerId,identity.DocumentId,
+        var snapshot=OriginalSnapshotJson(identity,envelope,signer,assets.Preview,fields);
+        var hash=SHA256.HashData(Encoding.UTF8.GetBytes(snapshot));
+        return new(context,envelope,signer,fields,assets,hash,snapshot,pages!);
+    }
+    internal static string OriginalSnapshotJson(VerifiedSigner identity,Envelope envelope,Signer signer,SignaturePreview preview,IReadOnlyList<DocumentField> fields)
+        =>JsonSerializer.Serialize(new {version=SnapshotVersion,identity.EnvelopeId,identity.SignerId,identity.DocumentId,
             identity.DocumentHash,identity.DisclosureHash,envelope.RowVersion,envelope.PageCount,envelope.PageSizesJson,
-            signer.FullName,signer.ConsentAt,signerVersion=signer.RowVersion,adoptionId=assets.Preview.Id,
-            assets.Preview.SignatureSha256,assets.Preview.InitialsSha256,assets.Preview.NormalizationVersion,fields }));
-        return new(context,envelope,signer,fields,assets,hash,pages!);
+            signer.FullName,signer.ConsentAt,signerVersion=signer.RowVersion,adoptionId=preview.Id,
+            preview.SignatureSha256,preview.InitialsSha256,preview.NormalizationVersion,fields});
+    internal static string PreparedEvidenceJson(SignerReviewCandidate candidate)=>JsonSerializer.Serialize(new {
+        candidateId=candidate.Id,candidate.PdfObjectId,candidate.SourceObjectId,candidate.PdfLength,candidate.AdoptionId,
+        sourceSha256=Hex(candidate.SourceSha256),disclosureSha256=Hex(candidate.DisclosureSha256),sessionSha256=Hex(candidate.SessionSha256),
+        snapshotSha256=Hex(candidate.SnapshotSha256),pdfSha256=Hex(candidate.PdfSha256),recipeSha256=Hex(candidate.RecipeSha256),
+        candidate.RendererVersion,candidate.SnapshotVersion,candidate.ProspectiveDate,candidate.PreparedAt,candidate.ExpiresAt,
+        serverEvidence="exact_review_pdf_prepared_not_user_review_or_finish"});
+    private bool OriginalLive(SignerReviewCandidate candidate,SignerReadContext context)=>candidate.PreparedAt<=time.GetUtcNow()&&candidate.ExpiresAt>time.GetUtcNow()&&
+        candidate.ProspectiveDate==DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime)&&access.IsLive(context);
+    private async Task<bool> CompositionAllowedLocked(SignerReadContext context,CancellationToken ct)
+    {
+        if(HoldAdmission is not null)return true;
+        var partial=access.HoldAdmission??pdf.HoldAdmission??adoption.HoldAdmission;
+        return partial is null||await partial.IsUnenrolledDemoAsync(db,context.Identity.EnvelopeId,ct);
     }
     private bool Matches(SignerReviewCandidate p,State s)=>p.UsedAt is null && p.SupersededAt is null && p.ExpiresAt>time.GetUtcNow() && p.PreparedAt<=time.GetUtcNow() &&
         p.ProspectiveDate==DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime) && p.EnvelopeId==s.Context.Identity.EnvelopeId && p.SignerId==s.Context.Identity.SignerId &&
