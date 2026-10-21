@@ -13,7 +13,7 @@ namespace QuillSign.Lifecycle;
 // Connected private source implementation, deliberately unregistered. Runtime
 // admission/worker drains and the remaining evidence schemas must be completed
 // before exposing placement. No caller may turn a raw provider DTO into a hold.
-internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
+internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness, IProductionHoldObjectSource objects,
     AzureProductionHoldArchiveWriter archive, AzureProductionHoldArchiveReleaseStore releases,
     IProductionReviewInputSource? reviewInputs=null) : IProductionHoldReleaseFence
