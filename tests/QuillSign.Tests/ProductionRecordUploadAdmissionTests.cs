@@ -10,6 +10,7 @@ using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Lifecycle;
 using QuillSign.Storage;
+using QuillSign.Signing;
 using static QuillSign.Tests.ProductionHoldWitnessJournalTests;
 
 namespace QuillSign.Tests;
@@ -173,10 +174,30 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
         public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData eventData,CancellationToken cancellationToken=default)
             =>throw new IOException("Synthetic lost production upload SQL acknowledgement.");
     }
-    internal sealed class Blobs:IProductionRecordUploadStore,IProductionRecordSendStore,IBlobStore,IProductionHoldObjectSource
+    internal sealed class Blobs:IProductionRecordUploadStore,IProductionRecordSendStore,IProductionSignaturePreviewStore,IBlobStore,IProductionHoldObjectSource
     {
         internal readonly Dictionary<DocumentBlob,byte[]> Objects=[];internal int Deletes,UnwitnessedWrites,Copies;
         internal bool LoseFirstAcknowledgement;internal Func<int,Task>? AfterWrite;internal Func<Task>? BeforeWrite;internal Func<Task>? AfterCopy;
+        internal int MarkWrites,LoseMarkAcknowledgementAt;internal Func<int,Task>? AfterMarkWrite;internal Func<Task>? BeforeMarkWrite;
+        internal string MarkVersionSuffix="";
+        public async Task<ProductionRecordWriteReceipt> WriteAsync(ProductionRecordOperation scope,VerifiedSigner identity,ProductionRecordWriteDescriptor item,Stream source,
+            bool mayWrite,ProductionRecordWriteReceipt? saved,Func<CancellationToken,Task> demand,CancellationToken ct=default)
+        {
+            Assert.Equal(scope.RecordId,identity.EnvelopeId);Assert.True(ProductionRecordPreviewWriteContract.Item(scope.RecordId,item));
+            if(BeforeMarkWrite is not null)await BeforeMarkWrite();await demand(ct);
+            if(mayWrite)
+            {
+                using var bytes=new MemoryStream();await source.CopyToAsync(bytes,ct);await demand(ct);
+                Assert.Equal(item.Length,bytes.Length);Assert.Equal(item.Sha256,Convert.ToHexStringLower(SHA256.HashData(bytes.ToArray())));
+                Objects.Add(item.Blob,bytes.ToArray());MarkWrites++;
+                if(AfterMarkWrite is not null)await AfterMarkWrite(MarkWrites);
+                if(LoseMarkAcknowledgementAt==MarkWrites)throw new IOException("Synthetic unknown signature mark write acknowledgement.");
+            }
+            await demand(ct);var actual=Objects[item.Blob];Assert.Equal(item.Length,actual.LongLength);
+            Assert.Equal(item.Sha256,Convert.ToHexStringLower(SHA256.HashData(actual)));
+            var receipt=new ProductionRecordWriteReceipt(item,"synthetic-version-"+item.Blob.ObjectId.ToString("N"),"\"synthetic-etag\"");
+            if(saved is not null)Assert.Equal(saved,receipt);return receipt;
+        }
         public async Task<ProductionRecordWriteReceipt> WriteAsync(ProductionRecordOperation scope,ClaimsPrincipal sender,ProductionRecordWriteDescriptor item,Stream source,
             bool mayWrite,ProductionRecordWriteReceipt? saved,Func<CancellationToken,Task> demand,CancellationToken ct=default)
         {
@@ -200,7 +221,8 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
         public Task DeleteAsync(ClaimsPrincipal sender,DocumentBlob blob,CancellationToken cancellationToken=default)
         {Deletes++;throw new InvalidOperationException("Production upload must retain historical and uncertain bytes.");}
         internal HoldObjectAddress Address(DocumentBlob blob)=>new(blob.Kind==DocumentBlobKind.Original?"originals":"normalized",
-            $"{blob.EnvelopeId:N}/{blob.ObjectId:N}","synthetic-version-"+blob.ObjectId.ToString("N"),"","\"synthetic-etag\"",Objects[blob].LongLength);
+            $"{blob.EnvelopeId:N}/{blob.ObjectId:N}","synthetic-version-"+blob.ObjectId.ToString("N")+
+            (blob.Kind is DocumentBlobKind.Signature or DocumentBlobKind.Initials?MarkVersionSuffix:""),"","\"synthetic-etag\"",Objects[blob].LongLength);
         public Task<HoldObjectPage> ListAsync(ProductionHoldObjectScope scope,string area,string? continuation,int maximum,CancellationToken ct)
         {scope.Demand(ct);Assert.Null(continuation);return Task.FromResult(new HoldObjectPage(Objects.Keys.Select(Address).Where(x=>x.Area==area).ToArray(),null));}
         public Task<string> HashAsync(ProductionHoldObjectScope scope,HoldObjectAddress address,CancellationToken ct)

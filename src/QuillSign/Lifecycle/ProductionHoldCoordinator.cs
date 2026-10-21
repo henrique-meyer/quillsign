@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
@@ -15,6 +16,7 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
     TimeProvider time, ProductionHoldWitnessJournal witness, IProductionHoldObjectSource objects,
     AzureProductionHoldArchiveWriter archive, AzureProductionHoldArchiveReleaseStore releases) : IProductionHoldReleaseFence
 {
+    private static readonly JsonSerializerOptions PreviewRows=new(){Converters={new JsonStringEnumConverter()}};
     internal async Task<HoldWitnessState> SubmitAsync(ProductionOperatorAuthority authority, ProductionOperatorPolicy operators,
         ProductionHoldCommand command, CancellationToken ct = default)
     {
@@ -74,11 +76,11 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
             {
                 var snapshot = await new ProductionHoldObjectInventory(db, keys, time, objects)
                     .CaptureLockedAsync(recordId, requests.Revision, requests.FenceHash!, ct: ct);
-                DemandCompleteSchemas(snapshot);
+                DemandCompleteSchemas(snapshot,state);
                 plan = await ProductionHoldBundlePlan.FreezeLockedAsync(db, keys, time, holdId, planId, snapshot, ct);
                 plan = await controls.SavePlanLockedAsync(plan, ct);
             }
-            DemandCompleteSchemas(ProductionHoldBundlePlan.OpenVerified(plan, keys, time).Snapshot);
+            DemandCompleteSchemas(ProductionHoldBundlePlan.OpenVerified(plan, keys, time).Snapshot,state);
             frozenPrefix = hold.PlanSha256 is not null ? hold.Control! : (await controls.ReadLockedAsync(recordId, ct)).Prefix;
             await tx.CommitAsync(ct);
         }
@@ -214,7 +216,7 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
             body.Snapshot.SqlStateSha256, body.Snapshot.ManifestSha256, Items = receipts });
     }
 
-    private void DemandCompleteSchemas(ProductionHoldObjectSnapshot snapshot)
+    private void DemandCompleteSchemas(ProductionHoldObjectSnapshot snapshot,HoldWitnessState state)
     {
         // Fail closed while the remaining sent/review/Finish/publication graph is
         // being connected. Existing per-schema codecs have already run in the
@@ -224,15 +226,53 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
         var tables = sql.RootElement.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         var status = tables["Envelopes"].EnumerateArray().Single().GetProperty("Status").GetString();
         if (status == "Sent")
-            ProductionHoldSentAuditReferences.Demand(sql.RootElement, ProductionHoldObjectInventory.OpenVerified(snapshot, keys, time), keys);
+        {
+            var inventory=ProductionHoldObjectInventory.OpenVerified(snapshot,keys,time);
+            var previews=ProductionHoldSentAuditReferences.ReadVerified(sql.RootElement,inventory,keys);
+            DemandPreviewPlans(tables["SignaturePreviews"],previews,state,inventory);
+        }
         else if (status != "Draft") throw Invalid();
         foreach (var audit in tables["AuditEvents"].EnumerateArray())
         {
-            if (status == "Sent" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given") continue;
+            if (status == "Sent" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given" or
+                "signature_adopted" or "field_filled" or "field_cleared") continue;
             if (audit.GetProperty("Event").GetString() is not (ProductionRetentionLedger.EnrollmentEvent or
                 "draft_created" or "sender_verification_requested" or "sender_email_verified" or
                 "document_uploaded" or "document_replaced" or "preview_confirmed" or "signer_added" or "signer_updated" or "signer_removed" or
                 "signers_reordered" or "recipient_added" or "recipient_updated" or "recipient_removed" or "envelope_details_updated" or "fields_saved")) throw Invalid();
+        }
+    }
+
+    // Historical SQL and hashes alone cannot attest to normalized mark output.
+    // Bind every saved preview to its complete externally retained original pair,
+    // committed outcome and exact inventoried provider versions. UsedAt may only
+    // advance through the separately verified adoption history above.
+    private static void DemandPreviewPlans(JsonElement rows,IReadOnlyList<HoldVerifiedSignaturePreview> verified,
+        HoldWitnessState state,IReadOnlyList<HoldObjectEvidence> inventory)
+    {
+        var plans=state.PreviewWrites;
+        if(rows.GetArrayLength()!=verified.Count||(plans?.Count??0)!=verified.Count)throw Invalid();
+        foreach(var raw in rows.EnumerateArray())
+        {
+            var row=raw.Deserialize<SignaturePreview>(PreviewRows)??throw Invalid();
+            if(!verified.Any(x=>x.Id==row.Id))throw Invalid();
+            var matches=plans!.Where(x=>ProductionRecordPreviewWriteContract.ReadRow(x.Value.Plan.PreviewRowJson).Id==row.Id).ToArray();
+            if(matches.Length!=1)throw Invalid();
+            var (operationId,writes)=matches.Single();var plan=writes.Plan;
+            ProductionRecordPreviewWriteContract.Validate(plan);
+            if(!ProductionRecordPreviewWriteContract.Complete(writes)||!state.SettledOperations.ContainsKey(operationId)||
+                state.Outcomes?.ContainsKey(operationId)!=true||state.Operations?.GetValueOrDefault(operationId) is not { } operation||
+                operation.Kind!=ProductionRecordPreviewWriteContract.Kind||operation.Reference!=row.Id.ToString("N")||
+                plan.Identity.EnvelopeId!=row.EnvelopeId||plan.Identity.SignerId!=row.SignerId)throw Invalid();
+            row.UsedAt=null;
+            if(ProductionRecordPreviewWriteContract.Row(row)!=plan.PreviewRowJson)throw Invalid();
+            foreach(var receipt in writes.Receipts.Values)
+            {
+                var item=receipt.Item;
+                if(!inventory.Any(x=>x.Address.Area=="normalized"&&x.Address.Name==$"{item.Blob.EnvelopeId:N}/{item.Blob.ObjectId:N}"&&
+                    x.Address.VersionId==receipt.VersionId&&x.Address.Snapshot.Length==0&&x.Address.ETag==receipt.ETag&&
+                    x.Address.Length==item.Length&&x.Sha256==item.Sha256))throw Invalid();
+            }
         }
     }
 

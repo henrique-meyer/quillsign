@@ -50,12 +50,14 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
     SignaturePreviewProtection receipts,AuditWriter audit,TimeProvider time)
 {
     internal ProductionSignerMutationAdmission? HoldAdmission {get;init;}
+    internal ProductionSignaturePreviewAdmission? HoldPreviews {get;init;}
     public const int PreviewMinutes = 10;
     public const int MaximumPreviewsPerSigner = 40;
     public const int MaximumActivePreviews = 5;
 
     public async Task<SignaturePreviewData?> PrepareAsync(ClaimsPrincipal principal,string publicId,SignaturePreviewRequest request,CancellationToken ct = default)
     {
+        if(HoldAdmission is not null||HoldPreviews is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         var initial = await access.GetContextAsync(principal,publicId,ct);
         if (initial?.ConsentAt is null) return null;
         if (!Enum.IsDefined(request.Method)) throw new ArgumentException("Select a supported signature method.");
@@ -65,13 +67,19 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
         if (request.Method != SignatureMethod.Typed && (typedName is not null || typedInitials is not null))
             throw new ArgumentException("Typed descriptors apply only to typed marks.");
         var signature = SignaturePng.Normalize(request.Signature); var initials = SignaturePng.Normalize(request.Initials);
-        var committed = false; var commitStarted = false;
+        var committed = false; var commitStarted = false;var retainAttempted=false;
         var attempted = new List<DocumentBlob>();
         try
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             var context = await access.GetLockedContextAsync(principal,publicId,ct);
             if (context?.ConsentAt is null) return null;
+            if(HoldPreviews is not null)
+            {
+                retainAttempted=!await HoldPreviews.IsUnenrolledDemoLockedAsync(db,context.Identity.EnvelopeId,ct);
+                if(retainAttempted&&HoldAdmission is null)return null;
+            }
+            else if(HoldAdmission is not null&&!await HoldAdmission.IsUnenrolledDemoAsync(db,context.Identity.EnvelopeId,ct))return null;
             var now = time.GetUtcNow();
             if (await db.SignaturePreviews.CountAsync(x => x.EnvelopeId == context.Identity.EnvelopeId && x.SignerId == context.Identity.SignerId,ct) >= MaximumPreviewsPerSigner)
                 throw new InvalidOperationException("This signer has reached the preview limit for this request. Reuse an unexpired preview or contact the sender.");
@@ -85,22 +93,43 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
                 SessionSha256 = SessionHash(context.Identity),BaselineSignerVersion = signer.RowVersion,Method = request.Method,TypedName = typedName,TypedInitials = typedInitials,
                 NormalizationVersion = SignaturePng.Version,AdoptionVersion = SignatureAdoptionStatement.Version,CreatedAt = now,
                 ExpiresAt = new[] { now.AddMinutes(PreviewMinutes),context.AccessExpiresAt }.Min() };
+            ProductionRecordOperation? operation=null;ProductionSignaturePreviewWrite? write=null;
+            if(retainAttempted)
+            {
+                // Own the complete normalized pair and original preview before
+                // external publication; the same parent context owns all IO.
+                write=ProductionSignaturePreviewWrite.Own(preview,context.Identity,context.AccessExpiresAt,signature,initials);
+                try{operation=await HoldPreviews!.BeginLockedAsync(db,write,ct);}
+                catch(ProductionSignerBlockedException){return null;}
+                if(operation is null)throw new InvalidDataException("The production preview reservation is unavailable.");
+            }
             foreach (var pair in new[] { (SignatureBlob(preview),signature.Bytes),(InitialsBlob(preview),initials.Bytes) })
             {
                 attempted.Add(pair.Item1);
-                using var input = new MemoryStream(pair.Item2,false);
-                await blobs.WriteAsync(Capability(context.Identity,pair.Item1,AssetOperation.Write),pair.Item1,input,input.Length,ct);
+                if(operation is not null)await HoldPreviews!.WriteLockedAsync(db,operation,write!,pair.Item1.Kind,ct);
+                else
+                {
+                    using var input = new MemoryStream(pair.Item2,false);
+                    await blobs.WriteAsync(Capability(context.Identity,pair.Item1,AssetOperation.Write),pair.Item1,input,input.Length,ct);
+                }
             }
             var verified = await ReadImages(preview,context.Identity,ct);
             // Storage may have taken time. A session/consent invalidated meanwhile cannot save a preview.
             if (preview.ExpiresAt <= time.GetUtcNow() || (await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null) return null;
             db.SignaturePreviews.Add(preview); await db.SaveChangesAsync(ct);
+            if(operation is not null)
+            {
+                await HoldPreviews!.PrepareOutcomeLockedAsync(db,operation,write!,ct);
+                if(preview.ExpiresAt<=time.GetUtcNow()||(await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null)return null;
+            }
             commitStarted = true; await access.CommitAsync(transaction,ct); committed = true;
+            await transaction.DisposeAsync();
+            if(operation is not null)await HoldPreviews!.CompleteAsync(operation,write!,ct);
             return Data(preview,context.Identity,verified.Signature,verified.Initials);
         }
         finally
         {
-            if (!committed && !commitStarted)
+            if (!retainAttempted && !committed && !commitStarted)
                 foreach (var blob in attempted)
                     try { await blobs.DeleteAsync(Capability(initial.Identity,blob,AssetOperation.Delete),blob,CancellationToken.None); }
                     catch (Exception e) when (e is not OutOfMemoryException) { /* Later envelope purge handles unreachable objects. */ }
@@ -123,6 +152,8 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
         if(HoldAdmission is not null)await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);
         if(HoldAdmission is not null&&(preview.ExpiresAt<=time.GetUtcNow()||!access.IsLive(context)))return null;
         await access.CommitAsync(transaction,ct);
+        await transaction.DisposeAsync();
+        if(HoldAdmission is not null)await HoldAdmission.DemandNewProofAsync(context,ct);
         if(HoldAdmission is not null&&(preview.ExpiresAt<=time.GetUtcNow()||!access.IsLive(context)))return null;
         return Data(preview,context.Identity,images.Signature,images.Initials);
     }

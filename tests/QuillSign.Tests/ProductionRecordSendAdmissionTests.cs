@@ -142,7 +142,7 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
         internal readonly ProductionRecordUploadAdmissionTests.Prepared Prepared=prepared;internal readonly Signals Signals=new();
         internal Envelope Original=null!;private DraftReviewSnapshot Review=null!;private DisclosureSnapshot Disclosure=null!;
         private readonly ElectronicRecordDisclosure disclosures=new(ProductionRetentionAdmissionContractTests.Policies());
-        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false,bool demo=false)
+        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false,bool demo=false,bool withFields=false)
         {
             var test=new Ready(fixture,await ProductionRecordUploadAdmissionTests.Prepared.Create(fixture,demo));await using var db=fixture.Open();
             var p=test.Prepared;
@@ -165,6 +165,16 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
             db.ChangeTracker.Clear();e=await p.Record(db);
             var details=new DraftDetails(db,new(db,p.Run.Time),new(),p.Run.Time){HoldAdmission=new(p.Run.Admission)};
             Assert.Equal(DetailsError.None,(await details.ChangeAsync(p.Sender,e.PublicId,new(DetailsChangeKind.SaveDetails,Convert.ToBase64String(e.RowVersion),Title:"Synthetic NO AGREEMENT"),null,null)).Error);
+            if(withFields)
+            {
+                var owner=await db.Signers.Where(x=>x.EnvelopeId==p.Run.Id).Select(x=>x.Id).SingleAsync();
+                var editor=new FieldEditor(db,new(db,p.Run.Time),new(),p.Run.Time){HoldAdmission=new(p.Run.Admission)};
+                var saved=(await editor.GetAsync(p.Sender,e.PublicId))!;Assert.NotNull(saved);
+                var kinds=new[]{FieldType.Signature,FieldType.Initials,FieldType.Text,FieldType.FullName,FieldType.DateSigned};
+                var fields=kinds.Select((kind,index)=>new FieldInput(Guid.NewGuid(),owner,kind.ToString(),1,.1m,.1m+index*.13m,.65m,.1m,
+                    kind==FieldType.Signature,kind.ToString())).ToArray();
+                Assert.Equal(FieldEditorError.None,(await editor.SaveAsync(p.Sender,e.PublicId,new(saved.Version,saved.DocumentId,fields),null,null)).Error);
+            }
             db.ChangeTracker.Clear();test.Original=await p.Record(db);
             test.Review=(await new DraftReview(db,p.Run.Time).GetAsync(p.Sender,e.PublicId))!;Assert.True(test.Review.ChecksPassed);
             test.Disclosure=test.Review.ProductionDisclosure is { } production?production.Build(test.disclosures,test.Review.Title!):

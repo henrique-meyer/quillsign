@@ -158,19 +158,19 @@ public sealed class ProductionSignerMutationAdmissionTests(SqlDatabaseFixture fi
         Assert.Equal(EnvelopeStatus.Sent,(await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==run.Record.Id)).Status);
     }
 
-    private static ProductionSignerMutationAdmission Hook(ProductionInvitationWorkerAdmissionTests.Delivered run)=>new(run.Record.Admission);
-    private static SignerAccess Access(ProductionInvitationWorkerAdmissionTests.Delivered run,QuillSignDbContext db)
+    internal static ProductionSignerMutationAdmission Hook(ProductionInvitationWorkerAdmissionTests.Delivered run)=>new(run.Record.Admission);
+    internal static SignerAccess Access(ProductionInvitationWorkerAdmissionTests.Delivered run,QuillSignDbContext db)
         =>new(db,new(db,run.Record.Time),new(),run.Record.Time){HoldAdmission=Hook(run)};
-    private static SignerConsent Consent(ProductionInvitationWorkerAdmissionTests.Delivered run,QuillSignDbContext db)
+    internal static SignerConsent Consent(ProductionInvitationWorkerAdmissionTests.Delivered run,QuillSignDbContext db)
         =>new(db,Access(run,db),new(run.Record.Keys,run.Record.Time),new(db,run.Record.Time),
             new DeclineNotificationWriter(db,()=>run.Ready.Signals,new(){Enabled=true},new(run.Record.Keys),run.Record.Time),run.Record.Time){HoldAdmission=Hook(run)};
-    private static SignerPdfAccess Pdf(ProductionInvitationWorkerAdmissionTests.Delivered run)
+    internal static SignerPdfAccess Pdf(ProductionInvitationWorkerAdmissionTests.Delivered run)
         =>new(run.Ready.Prepared.Blobs,new()){HoldAdmission=Hook(run)};
-    private async Task<VerifiedSigner?> Redeem(ProductionInvitationWorkerAdmissionTests.Delivered run)
+    internal async Task<VerifiedSigner?> Redeem(ProductionInvitationWorkerAdmissionTests.Delivered run)
     {await using var db=fixture.Open();return await Access(run,db).RedeemAsync(run.Token,null,null);}
-    private async Task<ConsentResult> Accept(ProductionInvitationWorkerAdmissionTests.Delivered run,ClaimsPrincipal principal,string receipt)
+    internal async Task<ConsentResult> Accept(ProductionInvitationWorkerAdmissionTests.Delivered run,ClaimsPrincipal principal,string receipt)
     {await using var db=fixture.Open();return await Consent(run,db).AcceptAsync(principal,run.Ready.Original.PublicId,receipt,true,true,"preview",null,null);}
-    private async Task<(SignerReadContext Context,string Receipt)> Preview(ProductionInvitationWorkerAdmissionTests.Delivered run,ClaimsPrincipal user)
+    internal async Task<(SignerReadContext Context,string Receipt)> Preview(ProductionInvitationWorkerAdmissionTests.Delivered run,ClaimsPrincipal user)
     {
         await using var db=fixture.Open();var context=(await Access(run,db).GetContextAsync(user,run.Ready.Original.PublicId))!;Assert.NotNull(context);
         var bytes=await Pdf(run).PrepareAsync(user,context);Assert.Equal(context.DocumentSha256,SHA256.HashData(bytes));
@@ -181,7 +181,7 @@ public sealed class ProductionSignerMutationAdmissionTests(SqlDatabaseFixture fi
         public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData eventData,CancellationToken ct=default)
             =>throw new IOException("Synthetic unknown signer SQL acknowledgement.");
     }
-    private sealed class Holds:IDisposable
+    internal sealed class Holds:IDisposable
     {
         internal readonly ProductionHoldArchiveReleaseTests.Provider Provider=new();
         private readonly SqlDatabaseFixture fixture;private readonly ProductionInvitationWorkerAdmissionTests.Delivered run;private readonly BlobServiceClient service;
@@ -192,12 +192,16 @@ public sealed class ProductionSignerMutationAdmissionTests(SqlDatabaseFixture fi
             var options=new BlobClientOptions(BlobClientOptions.ServiceVersion.V2023_11_03){Transport=new HttpClientTransport(new HttpClient(Provider,false))};options.Retry.MaxRetries=0;
             service=new(new Uri("https://storage.example.invalid"),new ProductionHoldArchiveReleaseTests.Credential(),options);
         }
-        private ProductionHoldCoordinator Coordinator()=>new(fixture.Open,run.Record.Keys,run.Record.Time,run.Record.Journal,run.Ready.Prepared.Blobs,new(service),new(service));
+        internal ProductionHoldCoordinator Coordinator()=>new(fixture.Open,run.Record.Keys,run.Record.Time,run.Record.Journal,run.Ready.Prepared.Blobs,new(service),new(service));
         internal async Task<ProductionHoldCommand> Place(long expected)
         {
             var command=ProductionHoldWitnessJournalTests.Place(run.Record.Id,expected);
+            await Preserve(command);return command;
+        }
+        internal async Task Preserve(ProductionHoldCommand command)
+        {
             await Coordinator().SubmitAsync(Authority(run.Record.Time,command.Permission),Operators,command);
-            Assert.True((await Coordinator().PreserveAsync(run.Record.Id,command.HoldId,Guid.NewGuid())).Holds[command.HoldId].Effective);return command;
+            Assert.True((await Coordinator().PreserveAsync(run.Record.Id,command.HoldId,Guid.NewGuid())).Holds[command.HoldId].Effective);
         }
         internal async Task<bool> Release(ProductionHoldCommand place,long revision)
         {
