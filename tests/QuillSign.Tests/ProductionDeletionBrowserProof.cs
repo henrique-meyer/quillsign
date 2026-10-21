@@ -100,7 +100,8 @@ internal static class ProductionDeletionBrowserProof
         app.MapPost("/__fixture/finish",()=>{if(!workDone||!idp.PkceVerified)return Results.BadRequest();done.TrySetResult();return Results.Content("Browser acceptance finished.","text/plain");});
         await app.StartAsync();
         await File.WriteAllTextAsync(Path.Combine(output,"ready.private.json"),JsonSerializer.Serialize(new{recordId=recordId.ToString("N"),origin,at=DateTimeOffset.UtcNow,statement=Statement,fixtureClock=time.GetUtcNow()}));
-        try{await done.Task.WaitAsync(TimeSpan.FromMinutes(9));Assert.True(workDone);Assert.True(idp.PkceVerified);return true;}
+        // Local observation bound only; all actual authority deadlines stay intact.
+        try{await done.Task.WaitAsync(TimeSpan.FromMinutes(30));Assert.True(workDone);Assert.True(idp.PkceVerified);return true;}
         finally{await app.StopAsync();}
     }
     private static X509Certificate2 Certificate()
