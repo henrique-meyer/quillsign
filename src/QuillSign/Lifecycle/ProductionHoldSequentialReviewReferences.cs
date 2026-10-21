@@ -17,19 +17,19 @@ internal static class ProductionHoldSequentialReviewReferences
 {
     private static readonly JsonSerializerOptions Rows = new() { Converters = { new JsonStringEnumConverter() } };
     internal static HoldReviewCheckpointHistory ReadVerified(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects,
-        IDataProtectionProvider keys, IReadOnlyList<VerifiedReviewInput> inputs)
+        IDataProtectionProvider keys, IReadOnlyList<VerifiedReviewInput> inputs, HoldInvitationHistory? invitationHistory = null)
     {
-        try { return Verify(sql, objects, keys, inputs); }
+        try { return Verify(sql, objects, keys, inputs, invitationHistory); }
         catch (Exception error) when (error is JsonException or CryptographicException or KeyNotFoundException or InvalidOperationException or
             ArgumentException or FormatException or OverflowException or NullReferenceException) { throw Invalid(); }
     }
     private static HoldReviewCheckpointHistory Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects,
-        IDataProtectionProvider keys, IReadOnlyList<VerifiedReviewInput> inputs)
+        IDataProtectionProvider keys, IReadOnlyList<VerifiedReviewInput> inputs, HoldInvitationHistory? invitationHistory)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         if (tables.Values.Any(x => x.ValueKind != JsonValueKind.Array || x.GetArrayLength() > 4096) || tables.Values.Sum(x => x.GetArrayLength()) > 4096) throw Invalid();
         T[] Table<T>(string name, int maximum) { var raw = tables[name]; if (raw.GetArrayLength() > maximum) throw Invalid(); return raw.Deserialize<T[]>(Rows) ?? throw Invalid(); }
-        ProductionHoldAuditChain.Demand(sql); ProductionHoldSentAuditReferences.DemandFrozenSequentialBaseline(sql, objects, keys);
+        ProductionHoldAuditChain.Demand(sql); ProductionHoldSentAuditReferences.DemandFrozenSequentialBaseline(sql, objects, keys, invitationHistory);
         var id = sql.GetProperty("RecordId").GetGuid(); var captured = sql.GetProperty("CapturedAt").GetDateTimeOffset();
         var e = Table<Envelope>("Envelopes", 1).Single(); var signers = Table<Signer>("Signers", 100).OrderBy(x => x.Order).ToArray();
         var candidates = Table<SignerReviewCandidate>("SignerReviewCandidates", 4096); var finishes = Table<SignerFinishAcceptance>("SignerFinishAcceptances", 100);
@@ -43,12 +43,12 @@ internal static class ProductionHoldSequentialReviewReferences
             inputs.Count != candidates.Length || inputs.Select(x => x.CandidateId).Distinct().Count() != inputs.Count) throw Invalid();
         Columns(tables["SignerReviewCandidates"], CandidateColumns); Columns(tables["SignerFinishAcceptances"], FinishColumns);
         var sent = audits.Single(x => x.Event == "sent");
-        if (audits.Where(x => x.Sequence > sent.Sequence).Any(x => x.Event is not ("invitation_submitted" or "link_opened" or "consent_given" or
+        if (audits.Where(x => x.Sequence > sent.Sequence).Any(x => !(invitationHistory?.AuditSequences.Contains(x.Sequence) ?? false) && x.Event is not ("invitation_submitted" or "link_opened" or "consent_given" or
             "signature_adopted" or "field_filled" or "field_cleared" or "signer_review_prepared" or "signer_finish_accepted" or "signer_completed"))) throw Invalid();
         var definitions = ProductionHoldPreparationAuditReferences.ReadVerified(sql, ProductionHoldDocumentAuditReferences.ReadVerified(sql, objects));
         ProductionHoldFinalizedFieldReferences.Demand(sql, objects, definitions); ProductionHoldConsentAuditReferences.Demand(sql, objects);
         var adopted = ProductionHoldAdoptionAuditReferences.ReadVerified(sql, objects); ProductionHoldFieldAuditReferences.Demand(sql, objects, definitions, adopted);
-        var marks = ProductionHoldSignaturePreviewReferences.ReadVerifiedSequential(sql, objects);
+        var marks = ProductionHoldSignaturePreviewReferences.ReadVerifiedSequential(sql, objects, invitationHistory);
         var prepared = audits.Where(x => x.Event == "signer_review_prepared").ToArray();
         if (prepared.Length != candidates.Length) throw Invalid();
         var result = new List<HoldVerifiedReviewCandidate>();
@@ -60,6 +60,7 @@ internal static class ProductionHoldSequentialReviewReferences
             var original = ProductionRecordReviewWriteContract.ReadRow(input.CandidateRowJson);
             var current = Clone(candidate); current.UsedAt = null; current.SupersededAt = null;
             var identity = input.Identity;
+            signer=invitationHistory?.SignerForSession(signer.Id,identity.SessionId,signer)??signer;
             var evidence = prepared.Single(x => x.DataJson == PreparedJson(candidate));
             var cut = audits.Single(x => x.Id == input.AuditId && x.Sequence == input.AuditSequence && Hex(x.Hash) == input.AuditSha256);
             var mark = previews.Single(x => x.Id == candidate.AdoptionId);
@@ -109,8 +110,11 @@ internal static class ProductionHoldSequentialReviewReferences
         {
             var next = candidates.Where(x => x.SignerId == old.SignerId && prepareSequences[x.Id] > prepareSequences[old.Id] && x.PreparedAt < old.ExpiresAt &&
                 !Same(x.SnapshotSha256, old.SnapshotSha256)).OrderBy(x => prepareSequences[x.Id]).FirstOrDefault();
-            supersedeSequences.Add(old.Id, next is null ? long.MaxValue : prepareSequences[next.Id]);
-            if (old.SupersededAt != next?.PreparedAt || old.SupersededAt is not null && old.UsedAt is not null ||
+            var correction=invitationHistory?.CorrectionAfter(old.SignerId,prepareSequences[old.Id]);
+            var correctionFirst=correction is{} changed&&(next is null||changed.Sequence<prepareSequences[next.Id]);
+            var supersededAt=correctionFirst?correction!.Value.At:next?.PreparedAt;
+            supersedeSequences.Add(old.Id, correctionFirst?correction!.Value.Sequence:next is null ? long.MaxValue : prepareSequences[next.Id]);
+            if (old.SupersededAt != supersededAt || old.SupersededAt is not null && old.UsedAt is not null ||
                 old.SupersededAt is { } superseded && (!Utc(superseded) || superseded > captured) ||
                 old.UsedAt is { } used && (!Utc(used) || !finishes.Any(x => x.ReviewCandidateId == old.Id && x.FinishedAt == used))) throw Invalid();
         }
@@ -153,7 +157,7 @@ internal static class ProductionHoldSequentialReviewReferences
                 if (JsonSerializer.Serialize(current) != JsonSerializer.Serialize(old)) throw Invalid();
             }
         }
-        DemandPrefixAndJobs(sql, tables, e, signers, audits, finishes, captured, keys, objects);
+        DemandPrefixAndJobs(sql, tables, e, signers, audits, finishes, captured, keys, objects, invitationHistory);
         var latest = finishes.OrderBy(x => signers.Single(s => s.Id == x.SignerId).Order).LastOrDefault();
         return new(marks, result.AsReadOnly(), latest?.Id, latest?.NextInvitationId, latest?.ProcessedAt is not null);
     }
@@ -162,7 +166,7 @@ internal static class ProductionHoldSequentialReviewReferences
     private sealed record Submitted(Guid emailId, Guid tokenId, string documentSha256, string disclosureSha256, Guid signerId,
         string recipient, string provider, string providerMessageId, string meaning);
     private static void DemandPrefixAndJobs(JsonElement sql, Dictionary<string, JsonElement> tables, Envelope e, Signer[] parties,
-        AuditEvent[] audits, SignerFinishAcceptance[] finishes, DateTimeOffset captured, IDataProtectionProvider keys, IReadOnlyList<HoldObjectEvidence> objects)
+        AuditEvent[] audits, SignerFinishAcceptance[] finishes, DateTimeOffset captured, IDataProtectionProvider keys, IReadOnlyList<HoldObjectEvidence> objects, HoldInvitationHistory? invitationHistory)
     {
         var processed = parties.TakeWhile(x => x.Status == SignerStatus.Signed).ToArray();
         if (parties.Skip(processed.Length).Any(x => x.Status == SignerStatus.Signed) || e.CurrentCopyVersion != processed.Length ||
@@ -196,7 +200,12 @@ internal static class ProductionHoldSequentialReviewReferences
             }
             var invitationId = n == 0 ? firstInvitation : finishes.Single(x => x.SignerId == parties[n - 1].Id).NextInvitationId ?? throw Invalid();
             if (!expectedMail.Add(invitationId) || !expectedWork.Add(invitationId)) throw Invalid();
-            var stage = DemandInvitation(e, signer, source, sourceHash, invitationId, prior, captured, mail, work, tokens, audits, keys, expectedTokens);
+            HoldInitialSignerStage stage;
+            if(invitationHistory is null)stage = DemandInvitation(e, signer, source, sourceHash, invitationId, prior, captured, mail, work, tokens, audits, keys, expectedTokens);
+            else
+            {
+                invitationHistory.DemandRoot(signer.Id,invitationId,source,sourceHash);stage=invitationHistory.Stage(signer.Id);
+            }
             var signed = f?.ProcessedAt is not null;
             var wanted = signed ? SignerStatus.Signed : stage == HoldInitialSignerStage.Queued ? SignerStatus.Pending :
                 stage == HoldInitialSignerStage.Consented ? SignerStatus.Viewed : SignerStatus.Notified;
@@ -234,10 +243,12 @@ internal static class ProductionHoldSequentialReviewReferences
                 completion.PayloadJson != JsonSerializer.Serialize(new CompletionWorkPayload(CompletionJobs.Version, last.Id, parties.Length, Hex(last.PdfSha256), Hex(e.ErsdSha256!)))) throw Invalid();
         }
         if (e.ExpiresAt is not null) expectedWork.Add(SigningExpiryJobs.WorkId(e.Id));
+        if(invitationHistory is not null)
+        { expectedMail.UnionWith(invitationHistory.MailIds);expectedWork.UnionWith(invitationHistory.WorkIds);expectedTokens.UnionWith(invitationHistory.TokenIds); }
         if (mail.Length != expectedMail.Count || !expectedMail.SetEquals(mail.Select(x => x.Id)) ||
             work.Length != expectedWork.Count || !expectedWork.SetEquals(work.Select(x => x.Id)) ||
             tokens.Length != expectedTokens.Count || !expectedTokens.SetEquals(tokens.Select(x => x.Id)) ||
-            audits.Count(x => x.Event == "invitation_submitted") != tokens.Count(x => x.Purpose == TokenPurpose.SignerAccess)) throw Invalid();
+            invitationHistory is null && audits.Count(x => x.Event == "invitation_submitted") != tokens.Count(x => x.Purpose == TokenPurpose.SignerAccess)) throw Invalid();
     }
     private static HoldInitialSignerStage DemandInvitation(Envelope e, Signer signer, Guid source, byte[] sourceHash, Guid invitationId,
         AuditEvent prior, DateTimeOffset captured, EmailOutbox[] allMail, WorkItem[] allWork, AuthToken[] tokens, AuditEvent[] audits,

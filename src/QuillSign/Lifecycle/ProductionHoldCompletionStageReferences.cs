@@ -23,15 +23,15 @@ internal static class ProductionHoldCompletionStageReferences
     private sealed record Documents(FinalStoredDocument Executed, FinalStoredDocument Certificate);
     internal static HoldReviewCheckpointHistory ReadVerified(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects,
         IDataProtectionProvider keys, IReadOnlyList<VerifiedReviewInput> reviews, IReadOnlyList<VerifiedCompletionInput> inputs,
-        HoldWitnessState state)
+        HoldWitnessState state, HoldInvitationHistory? invitationHistory = null)
     {
-        try { return Verify(sql, objects, keys, reviews, inputs, state); }
+        try { return Verify(sql, objects, keys, reviews, inputs, state, invitationHistory); }
         catch (Exception error) when (error is JsonException or CryptographicException or KeyNotFoundException or InvalidOperationException or
             ArgumentException or FormatException or OverflowException or NullReferenceException or DocumentRejectedException) { throw Invalid(); }
     }
 
     private static HoldReviewCheckpointHistory Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects,
-        IDataProtectionProvider keys, IReadOnlyList<VerifiedReviewInput> reviews, IReadOnlyList<VerifiedCompletionInput> inputs, HoldWitnessState state)
+        IDataProtectionProvider keys, IReadOnlyList<VerifiedReviewInput> reviews, IReadOnlyList<VerifiedCompletionInput> inputs, HoldWitnessState state, HoldInvitationHistory? invitationHistory)
     {
         ProductionHoldAuditChain.Demand(sql);
         var id = sql.GetProperty("RecordId").GetGuid();
@@ -109,7 +109,7 @@ internal static class ProductionHoldCompletionStageReferences
         using var projection = Project(sql, before, completion.Claim.WorkId, oldWork.RootElement, candidate.AuditSequence, notices,mailHistory.TokenIds);
         // Original complete history is checked on exactly saved facts, never
         // rehashed, relabelled or reconstructed from a newer participant state.
-        var history = ProductionHoldReviewCheckpointReferences.ReadVerified(projection.RootElement, objects, keys, reviews);
+        var history = ProductionHoldReviewCheckpointReferences.ReadVerified(projection.RootElement, objects, keys, reviews, invitationHistory);
         DemandCandidate(projection.RootElement, candidate, objects);
         return history;
     }

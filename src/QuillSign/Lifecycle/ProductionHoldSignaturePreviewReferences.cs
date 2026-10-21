@@ -46,7 +46,7 @@ internal static class ProductionHoldSignaturePreviewReferences
     // Sequential factual metadata. The complete graph separately proves each
     // invitation/consent/acceptance and the coordinator proves each write plan.
     internal static IReadOnlyList<HoldVerifiedSignaturePreview> ReadVerifiedSequential(JsonElement sql,
-        IReadOnlyList<HoldObjectEvidence> objects)
+        IReadOnlyList<HoldObjectEvidence> objects, HoldInvitationHistory? invitationHistory = null)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         var raw = tables["SignaturePreviews"]; if (raw.GetArrayLength() > 4096) throw Invalid();
@@ -67,8 +67,9 @@ internal static class ProductionHoldSignaturePreviewReferences
         var result = new List<HoldVerifiedSignaturePreview>();
         foreach (var p in previews)
         {
-            var signer = parties.Single(x => x.Id == p.SignerId);
-            var consent = audits.Single(x => x.Event == "consent_given" && x.ActorId == signer.Id);
+            var signer = invitationHistory?.SignerForPreview(p,parties.Single(x=>x.Id==p.SignerId)) ?? parties.Single(x => x.Id == p.SignerId);
+            var consent = invitationHistory is null ? audits.Single(x => x.Event == "consent_given" && x.ActorId == signer.Id) :
+                audits.Where(x=>x.Event=="consent_given"&&x.ActorId==signer.Id&&x.ActorEmail==signer.Email&&x.At<=p.CreatedAt).OrderBy(x=>x.Sequence).Last();
             var finish = finishes.SingleOrDefault(x => x.SignerId == signer.Id);
             var (source, hash) = ProductionHoldAdoptionAuditReferences.Source(e, signer, parties, finishes, p.CreatedAt);
             if (p.Id == Guid.Empty || p.EnvelopeId != id || p.DocumentId != source || signer.Status is not (SignerStatus.Viewed or SignerStatus.Signed) ||

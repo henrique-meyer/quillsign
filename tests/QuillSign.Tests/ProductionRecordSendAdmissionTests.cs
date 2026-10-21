@@ -141,10 +141,11 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
     {
         internal readonly ProductionRecordUploadAdmissionTests.Prepared Prepared=prepared;internal readonly Signals Signals=new();
         internal Envelope Original=null!;private DraftReviewSnapshot Review=null!;private DisclosureSnapshot Disclosure=null!;
+        internal int[] ReminderDays {get;init;}=[];
         private readonly ElectronicRecordDisclosure disclosures=new(ProductionRetentionAdmissionContractTests.Policies());
-        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false,bool demo=false,bool withFields=false,bool twoSigners=false,bool withRecipient=false)
+        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false,bool demo=false,bool withFields=false,bool twoSigners=false,bool withRecipient=false,int[]? reminderDays=null)
         {
-            var test=new Ready(fixture,await ProductionRecordUploadAdmissionTests.Prepared.Create(fixture,demo));await using var db=fixture.Open();
+            var test=new Ready(fixture,await ProductionRecordUploadAdmissionTests.Prepared.Create(fixture,demo)){ReminderDays=reminderDays?.ToArray()??[]};await using var db=fixture.Open();
             var p=test.Prepared;
             if(requestedDeadline)
             {
@@ -200,9 +201,13 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
             var work=new WorkOptions{Enabled=true};var email=new EmailOptions{Enabled=true};
             var outbox=new SignerInvitationOutbox(db,()=>Signals,work,email,new(run.Keys),run.Time);
             var expiry=new SigningExpiryJobs(db,new(db,run.Time),()=>Signals,work,run.Time);
+            var reminderOptions=new SignerReminderOptions{Enabled=ReminderDays.Length!=0,Days=ReminderDays,DailyRequests=10,DailySenderRequests=10,DailyAddressRequests=10};
+            var access=new SignerAccess(db,new(db,run.Time),new(),run.Time);
+            var lineage=new InvitationLineage(db,new(run.Keys),new(run.Keys),new(run.Keys),run.Time);
+            var reminderJobs=ReminderDays.Length==0?null:new SignerReminderJobs(db,access,lineage,new(run.Keys),reminderOptions,work,email,()=>Signals,new(db,run.Time),run.Time);
             var workflow=new SendDraftWorkflow(db,Prepared.Blobs,new(),new(),new(),new(),new(32*1024*1024,200,200),disclosures,outbox,work,email,
-                new(db,run.Time),run.Time,NullLogger<SendDraftWorkflow>.Instance,expiry){HoldAdmission=new(run.Admission,Prepared.Blobs)};
-            var reminder=SignerReminderPolicy.FromDays([]);
+                new(db,run.Time),run.Time,NullLogger<SendDraftWorkflow>.Instance,expiry,reminderOptions,reminderJobs){HoldAdmission=new(run.Admission,Prepared.Blobs)};
+            var reminder=reminderOptions.Freeze(Original.IsDemo);
             return await workflow.SendAsync(Prepared.Sender,Original.PublicId,Original.RowVersion,true,acknowledge,SenderSendStatement.Version,null,null,
                 reviewedRetentionSha256:Review.RetentionSha256,reviewedReminderSha256:reminder.Sha256,
                 reviewedReminderSchedulingVersion:SignerReminderEvidence.Version,reviewedDisclosureSha256:Convert.ToHexStringLower(Disclosure.Sha256));

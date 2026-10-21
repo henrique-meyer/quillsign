@@ -20,7 +20,7 @@ internal static class ProductionHoldTerminalReferences
     private static readonly JsonSerializerOptions Rows=new(){Converters={new JsonStringEnumConverter()}};
     internal static async Task<HoldReviewCheckpointHistory> ReadVerifiedLockedAsync(QuillSignDbContext db,JsonElement sql,
         IReadOnlyList<HoldObjectEvidence> objects,IDataProtectionProvider keys,IReadOnlyList<VerifiedReviewInput> inputs,
-        HoldWitnessState state,TimeProvider time,CancellationToken ct=default)
+        HoldWitnessState state,TimeProvider time,CancellationToken ct=default,HoldInvitationHistory? invitationHistory=null)
     {
         try
         {
@@ -99,7 +99,7 @@ internal static class ProductionHoldTerminalReferences
             }
             TableNode("ProductionRetentionTerminals").Clear();var tail=TableNode("AuditEvents");foreach(var row in tail.Where(x=>x!["Sequence"]!.GetValue<long>()>=action.Sequence).ToArray())tail.Remove(row);
             using var before=JsonDocument.Parse(node.ToJsonString());
-            return ProductionHoldReviewCheckpointReferences.ReadVerified(before.RootElement,objects,keys,inputs);
+            return ProductionHoldReviewCheckpointReferences.ReadVerified(before.RootElement,objects,keys,inputs,invitationHistory);
 
             AuditEvent SystemProof(string name,string data)
             {

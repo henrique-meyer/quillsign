@@ -46,13 +46,14 @@ internal static class ProductionHoldSentAuditReferences
     // The sequential graph owns EVERY mutable party/job stage separately. This
     // helper proves only the unchanged original production Send, frozen roster,
     // saved preparation, disclosure/policy and first invitation source.
-    internal static void DemandFrozenSequentialBaseline(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys)
-        => _ = Verify(sql, objects, keys, true, frozenOnly: true);
+    internal static void DemandFrozenSequentialBaseline(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, HoldInvitationHistory? invitationHistory = null)
+        => _ = Verify(sql, objects, keys, true, frozenOnly: true, invitationHistory: invitationHistory);
 
-    private static IReadOnlyList<HoldVerifiedSignaturePreview> Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, bool fullChain, JsonElement? typedHistory = null, bool frozenOnly = false)
+    private static IReadOnlyList<HoldVerifiedSignaturePreview> Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, bool fullChain, JsonElement? typedHistory = null, bool frozenOnly = false, HoldInvitationHistory? invitationHistory = null)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         if (tables.Values.Any(x => x.ValueKind != JsonValueKind.Array || x.GetArrayLength() > 4096) || tables.Values.Sum(x => x.GetArrayLength()) > 4096) throw Invalid();
+        invitationHistory?.DemandProjection(sql);
         var e = tables["Envelopes"].EnumerateArray().Single().Deserialize<Envelope>(Rows) ?? throw Invalid();
         // Draft acceptance belongs to the existing complete Draft registry.
         if (e.Status == EnvelopeStatus.Draft) return [];
@@ -63,7 +64,7 @@ internal static class ProductionHoldSentAuditReferences
             !Utc(e.ExclusionsAckAt) || e.ExclusionsAckAt != e.SentAt || e.ExpiresAt is { } expiry && (!Utc(expiry) || expiry <= e.SentAt) ||
             !frozenOnly && (e.CurrentFinishId is not null || e.CurrentCopyVersion != 0) || e.CompletedAt is not null || e.PurgeAfter is not null ||
             e.FinalBlob is not null || e.FinalSha256 is not null || e.CertificateBlob is not null || e.CertificateSha256 is not null ||
-            e.SealProvider is not null || e.SealCertThumbprint is not null || e.TsaUrl is not null || EmptyTables.Any(x => !(frozenOnly && x is "SignerReviewCandidates" or "SignerFinishAcceptances") && tables[x].GetArrayLength() != 0)) throw Invalid();
+            e.SealProvider is not null || e.SealCertThumbprint is not null || e.TsaUrl is not null || EmptyTables.Any(x => !(frozenOnly && (x is "SignerReviewCandidates" or "SignerFinishAcceptances" || invitationHistory is not null && x is "SignerContactRevisions" or "SignerContactSessions")) && tables[x].GetArrayLength() != 0)) throw Invalid();
         if (fullChain) ProductionHoldAuditChain.Demand(sql);
         ProductionHoldAdmissionAuditReferences.Demand(sql);
         var audits = tables["AuditEvents"].Deserialize<AuditEvent[]>(Rows) ?? throw Invalid();
@@ -75,7 +76,7 @@ internal static class ProductionHoldSentAuditReferences
             p.disclosureVersion != ProductionRetentionDisclosure.Version || p.disclosureVersion != e.ErsdVersion ||
             p.documentSha256 != Hex(e.SentPdfSha256) || p.sourceSha256 != Hex(e.PdfSha256) || p.disclosureSha256 != Hex(e.ErsdSha256) ||
             p.invitationWorkId == Guid.Empty || p.reminderSchedulingVersion != SignerReminderEvidence.Version ||
-            !SignerReminderPolicy.Read(p.reminderPolicy, p.reminderPolicySha256).Days.IsEmpty || !ReviewedVersion(p.reviewedVersion)) throw Invalid();
+            invitationHistory is null && !SignerReminderPolicy.Read(p.reminderPolicy, p.reminderPolicySha256).Days.IsEmpty || !ReviewedVersion(p.reviewedVersion)) throw Invalid();
         if (!ElectronicRecordDisclosure.Verify(new(e.ErsdVersion!, e.PublicId, e.Title!, e.SenderEmail, e.ErsdText!, e.ErsdSha256!))) throw Invalid();
         var policy = tables["ProductionRetentionPolicies"].EnumerateArray().Single().Deserialize<ProductionRetentionPolicyRecord>(Rows) ?? throw Invalid();
         var snapshot = ProductionRetentionPolicyContract.Read(policy.PolicyJson, policy.PolicySha256);
@@ -122,13 +123,13 @@ internal static class ProductionHoldSentAuditReferences
         if (e.PdfBlob == e.SentPdfBlob) throw Invalid();
         Match("originals", e.OriginalBlob, Hex(e.OriginalSha256)); Match("normalized", e.PdfBlob, p.sourceSha256); Match("normalized", e.SentPdfBlob, p.documentSha256);
 
-        if (!frozenOnly && (tables["EmailOutbox"].GetArrayLength() != 2 || tables["WorkItems"].GetArrayLength() != (e.ExpiresAt is null ? 2 : 3)) || tables["EmailOutbox"].GetArrayLength() > 101 || tables["WorkItems"].GetArrayLength() > 203) throw Invalid();
+        if (!frozenOnly && (tables["EmailOutbox"].GetArrayLength() != 2 || tables["WorkItems"].GetArrayLength() != (e.ExpiresAt is null ? 2 : 3)) || tables["EmailOutbox"].GetArrayLength() > (invitationHistory is null ? 101 : 4096) || tables["WorkItems"].GetArrayLength() > (invitationHistory is null ? 203 : 4096)) throw Invalid();
         var mail = tables["EmailOutbox"].Deserialize<EmailOutbox[]>(Rows) ?? throw Invalid();
         var work = tables["WorkItems"].Deserialize<WorkItem[]>(Rows) ?? throw Invalid();
         if (mail.Select(x => x.Id).Distinct().Count() != mail.Length || work.Select(x => x.Id).Distinct().Count() != work.Length ||
             mail.Any(x => x.EnvelopeId != e.Id) || work.Any(x => x.EnvelopeId != e.Id)) throw Invalid();
         var invitation = mail.Single(x => x.Id == p.invitationWorkId);
-        if (invitation.Template != "signer-invitation" || invitation.To != signers[0].Email || invitation.AttachmentsJson != "[]" ||
+        if (invitation.Template != "signer-invitation" || invitation.To != (invitationHistory?.OriginalEmail(signers[0].Id) ?? signers[0].Email) || invitation.AttachmentsJson != "[]" ||
             invitation.LastError is not null || invitation.LeaseOwner is not null || invitation.LeaseExpiresAt is not null ||
             !Utc(invitation.AvailableAt) || invitation.AvailableAt < e.SentAt || invitation.AvailableAt > sent.At ||
             invitation.PayloadJson is not { Length: > 0 and <= 12000 } || Encoding.UTF8.GetByteCount(invitation.PayloadJson) > 12000) throw Invalid();

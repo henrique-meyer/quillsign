@@ -34,9 +34,9 @@ internal static class ProductionHoldReviewCheckpointReferences
     private static bool Added(string name) => name is "signer_review_prepared" or "signer_finish_accepted" or "signer_completed";
 
     internal static HoldReviewCheckpointHistory ReadVerified(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects,
-        IDataProtectionProvider keys, IReadOnlyList<VerifiedReviewInput> inputs)
+        IDataProtectionProvider keys, IReadOnlyList<VerifiedReviewInput> inputs, HoldInvitationHistory? invitationHistory = null)
     {
-        try { return Verify(sql, objects, keys, inputs); }
+        try { return invitationHistory is null ? Verify(sql, objects, keys, inputs) : ProductionHoldSequentialReviewReferences.ReadVerified(sql,objects,keys,inputs,invitationHistory); }
         catch (Exception error) when (error is JsonException or CryptographicException or KeyNotFoundException or InvalidOperationException or
             ArgumentException or FormatException or OverflowException or NullReferenceException) { throw Invalid(); }
     }
