@@ -78,7 +78,17 @@ public sealed class VoidNotificationJobs(QuillSignDbContext db,SenderVoidState s
         foreach(var id in ids)try {await signals().PublishAsync(id,TimeSpan.Zero,ct);}
             catch(Exception error) when(error is IOException or Azure.RequestFailedException or HttpRequestException or OperationCanceledException) { /* durable hints recover */ }
     }
-    internal async Task<SenderVoidScope?> ResolveLocked(Guid id,string to,VoidNotificationPayload p,CancellationToken ct)
+    internal Task<SenderVoidScope?> ResolveLocked(Guid id,string to,VoidNotificationPayload p,CancellationToken ct)
+        =>ResolveCanonicalLocked(id,to,p,ct);
+    internal Task<SenderVoidScope?> ResolveCloseoutLocked(Guid id,string to,VoidNotificationPayload p,
+        Email.Pilot.EmailPilotCloseout.AliasFact alias,CancellationToken ct)
+    {
+        alias.DemandLocked(db,id,to,Template);
+        if(db.Database.CurrentTransaction is null||alias.AliasId!=id||alias.OriginalId!=Id(p)||alias.RecordId!=p.EnvelopeId||
+            alias.Template!=Template||alias.Recipient!=to||alias.Until<=time.GetUtcNow())return Task.FromResult<SenderVoidScope?>(null);
+        return ResolveCanonicalLocked(alias.OriginalId,to,p,ct);
+    }
+    private async Task<SenderVoidScope?> ResolveCanonicalLocked(Guid id,string to,VoidNotificationPayload p,CancellationToken ct)
     {
         RequireTransaction();if(!Shape(p) || Id(p)!=id)return null;
         var scope=await state.ReadLockedAsync(p.EnvelopeId,ct);if(scope is null || !Retained(scope))return null;
