@@ -24,7 +24,7 @@ internal sealed partial class ProductionRecordOperationAdmission
         internal readonly ProductionRecordOperation Scope = scope;
         internal readonly Guid PreparingTransaction = preparingTransaction;
         internal readonly DbTransaction PreparingSqlTransaction = preparingSqlTransaction;
-        internal DbTransaction? ConsumingSqlTransaction;
+        internal DbTransaction? ConsumingSqlTransaction, ReceiptSqlTransaction;
         internal readonly HoldWitnessOutcome Checkpoint = checkpoint;
         internal readonly DateTimeOffset Deadline = deadline;
         internal Guid ConsumingTransaction, ReceiptTransaction;
@@ -79,6 +79,7 @@ internal sealed partial class ProductionRecordOperationAdmission
             Interlocked.CompareExchange(ref binding.ReceiptVerified, 1, 0) != 0) throw Invalid();
         await DemandDispatchCheckpointLocked(db, binding, ct);
         binding.ReceiptTransaction = transaction;
+        binding.ReceiptSqlTransaction = db.Database.CurrentTransaction.GetDbTransaction();
         Volatile.Write(ref binding.ReceiptVerified, 2);
     }
 
@@ -127,7 +128,8 @@ internal sealed partial class ProductionRecordOperationAdmission
         state.DispatchStarts?.GetValueOrDefault(scope.OperationId) is { } checkpoint &&
         db.Database.CurrentTransaction is { } transaction && dispatchBindings.TryGetValue(db, out var binding) &&
         binding.Scope == scope && binding.Checkpoint == checkpoint && time.GetUtcNow() < binding.Deadline && Volatile.Read(ref binding.Consumed) == 2 &&
-        Volatile.Read(ref binding.ReceiptVerified) == 2 && binding.ReceiptTransaction == transaction.TransactionId;
+        Volatile.Read(ref binding.ReceiptVerified) == 2 && binding.ReceiptTransaction == transaction.TransactionId &&
+        binding.ReceiptSqlTransaction?.Connection is not null && ReferenceEquals(transaction.GetDbTransaction(), binding.ReceiptSqlTransaction);
 
     private bool DemandDispatchHandlerPermission(QuillSignDbContext db, ProductionRecordOperation scope, HoldWitnessState state)
     {

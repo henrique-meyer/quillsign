@@ -245,6 +245,27 @@ public sealed class ProductionRecordDispatchAdmissionTests(SqlDatabaseFixture fi
         }
         public Task<ProductionHoldWitnessObject> CreateAsync(ProductionHoldWitnessWrite write, CancellationToken ct = default) => inner.CreateAsync(write, ct);
     }
+    [Fact]
+    public async Task Reusing_a_rolled_back_receipt_transaction_GUID_on_a_new_physical_transaction_cannot_seal_handler_outcome()
+    {
+        var run = await Ready(fixture); await using var db = fixture.Open(); var permit = await PrepareCommitted(db, run);
+        await using (var tx = await db.Database.BeginTransactionAsync()) { await run.Gate.ConsumeDispatchLockedAsync(db, permit); await tx.RollbackAsync(); }
+        Guid receiptId; System.Data.Common.DbTransaction receiptSql;
+        await using (var tx = await db.Database.BeginTransactionAsync())
+        {
+            await run.Gate.DemandDispatchReceiptLockedAsync(db, permit);
+            receiptId = tx.TransactionId; receiptSql = tx.GetDbTransaction(); await tx.RollbackAsync();
+        }
+        await db.Database.OpenConnectionAsync();
+        await using var replacement = await db.Database.GetDbConnection().BeginTransactionAsync();
+        await using var alias = await db.Database.UseTransactionAsync(replacement, receiptId);
+        Assert.Equal(receiptId, db.Database.CurrentTransaction!.TransactionId);
+        Assert.NotSame(receiptSql, db.Database.CurrentTransaction.GetDbTransaction());
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate.ResumeLockedAsync(db, run.Seed.Id, run.Scope.OperationId, run.Scope.Kind, run.Scope.Reference));
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate.PrepareHandlerOutcomeLockedAsync(db, run.Scope));
+        Assert.Empty((await run.Seed.Journal().ReadAsync(run.Seed.Id)).HandlerOutcomes!);
+        Assert.Empty((await run.Seed.Journal().ReadAsync(run.Seed.Id)).Outcomes!);
+    }
     private sealed record DispatchRun(Run Seed, ProductionRecordOperationAdmission Gate, ProductionRecordOperation Scope, Guid Token, DateTimeOffset Deadline);
     private static async Task<DispatchRun> Ready(SqlDatabaseFixture fixture, Func<Run, ProductionRecordOperationAdmission>? create = null)
     {
