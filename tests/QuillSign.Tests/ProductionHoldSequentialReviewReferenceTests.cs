@@ -150,6 +150,47 @@ public sealed class ProductionHoldSequentialReviewReferenceTests
         f.Frame.Sync(); Assert.Throws<InvalidDataException>(() => f.Frame.Demand());
     }
 
+    [Theory]
+    [InlineData(1, false)][InlineData(1, true)][InlineData(2, false)][InlineData(2, true)][InlineData(3, true)]
+    public void Accepted_before_frozen_deadline_may_drain_at_or_after_it_without_a_new_party_invitation(int parties, bool later)
+    {
+        var f = new SequentialFrame(parties); var deadline = Deadline(f); f.Frame.Review(); f.Frame.Accept();
+        Assert.True(f.Frame.Acceptance!.FinishedAt < deadline); Assert.Equal(deadline, f.Frame.Candidates[0].ExpiresAt);
+        f.Frame.Process(later ? deadline.AddMinutes(1) : deadline); var history = f.Frame.Demand();
+        Assert.True(history.Processed); Assert.Null(history.NextInvitationId); Assert.Single(history.Reviews);
+        Assert.Equal(1, f.F.Envelope.CurrentCopyVersion); Assert.Equal(2, f.F.Mail.Count);
+        Assert.Equal(parties == 1 ? 1 : 0, f.F.Work.Count(x => x.Kind == WorkKind.Sealing));
+        Assert.All(f.F.Signers.Skip(1), x => { Assert.Equal(SignerStatus.Pending, x.Status); Assert.Null(x.ConsentAt); Assert.Null(x.SignatureAdoptionId); });
+    }
+    [Fact]
+    public void Late_drain_cannot_manufacture_a_new_initial_invitation_after_original_deadline()
+    {
+        var f = new SequentialFrame(); var deadline = Deadline(f); f.Frame.Review(); f.Frame.Accept(); f.Frame.Process(deadline);
+        var finish = f.Frame.Acceptance!; finish.NextInvitationId = Guid.NewGuid(); var due = deadline.AddTicks(2); var target = f.F.Signers[1];
+        f.F.Mail.Add(new() { Id = finish.NextInvitationId.Value, EnvelopeId = f.F.Envelope.Id, Template = "signer-invitation", To = target.Email, AvailableAt = due,
+            PayloadJson = new SignerInvitationProtection(f.F.Keys).Protect(new(target.Id, DocumentId: finish.PdfObjectId, DocumentSha256: Hex(finish.PdfSha256), DisclosureSha256: Hex(finish.DisclosureSha256))) });
+        f.F.Work.Add(new() { Id = finish.NextInvitationId.Value, EnvelopeId = f.F.Envelope.Id, Kind = WorkKind.Email, AvailableAt = due });
+        f.F.Audits.Single(x => x.Event == "signer_completed").DataJson = SignerCheckpointState.PublishedJson(finish); f.Frame.Sync();
+        Assert.Throws<InvalidDataException>(() => f.Frame.Demand());
+    }
+    [Fact]
+    public void Late_processing_does_not_excuse_a_Finish_accepted_at_the_expired_deadline()
+    {
+        var f = new SequentialFrame(); var deadline = Deadline(f); f.Frame.Review(); f.Frame.Accept(); var finish = f.Frame.Acceptance!;
+        finish.FinishedAt = deadline; f.Frame.Candidates[0].UsedAt = deadline;
+        f.F.Audits.Single(x => x.Event == "signer_finish_accepted").DataJson = SignerFinish.EvidenceJson(finish); f.Frame.Process(deadline.AddMinutes(1));
+        Assert.Throws<InvalidDataException>(() => f.Frame.Demand());
+    }
+    private static DateTimeOffset Deadline(SequentialFrame f)
+    {
+        var deadline = f.F.Audits.Last().At.AddMinutes(2); var e = f.F.Envelope; e.ExpiresAt = deadline;
+        foreach (var token in f.F.Tokens.Where(x => x.Purpose == TokenPurpose.SignerAccess)) token.ExpiresAt = deadline;
+        foreach (var preview in f.Frame.M.Previews.Where(x => x.ExpiresAt > deadline)) preview.ExpiresAt = deadline;
+        var work = SigningExpiryJobs.WorkId(e.Id); f.F.Edit(x => { x["expiryWorkId"] = work; x["signingDeadline"] = System.Text.Json.Nodes.JsonValue.Create(deadline); });
+        f.F.Work.Add(new() { Id = work, EnvelopeId = e.Id, Kind = WorkKind.Expiry, AvailableAt = deadline, PayloadJson = SigningExpiryJobs.Bind(e) });
+        f.Frame.Sync(); return deadline;
+    }
+
     private sealed class SequentialFrame
     {
         internal readonly ProductionHoldReviewCheckpointReferenceTests.Frame Frame;

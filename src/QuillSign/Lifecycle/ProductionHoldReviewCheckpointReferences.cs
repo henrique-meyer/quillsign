@@ -48,7 +48,10 @@ internal static class ProductionHoldReviewCheckpointReferences
         if (tables.Values.Any(x => x.ValueKind != JsonValueKind.Array || x.GetArrayLength() > 4096) || tables.Values.Sum(x => x.GetArrayLength()) > 4096) throw Invalid();
         T[] Table<T>(string name, int maximum) { var rows = tables[name]; if (rows.GetArrayLength() > maximum) throw Invalid(); return rows.Deserialize<T[]>(Rows) ?? throw Invalid(); }
         var orderedParties = Table<Signer>("Signers", 100).OrderBy(x => x.Order).ToArray();
-        if (tables["SignerFinishAcceptances"].GetArrayLength() > 1 ||
+        var originalDeadline = Table<Envelope>("Envelopes", 1).Single().ExpiresAt;
+        if (originalDeadline is { } deadline && tables["SignerFinishAcceptances"].EnumerateArray().Any(x =>
+                x.GetProperty("ProcessedAt").ValueKind != JsonValueKind.Null && x.GetProperty("ProcessedAt").GetDateTimeOffset() >= deadline) ||
+            tables["SignerFinishAcceptances"].GetArrayLength() > 1 ||
             orderedParties.Skip(1).Any(x => x.Status != SignerStatus.Pending || x.ConsentAt is not null) ||
             tables["SignaturePreviews"].EnumerateArray().Any(x => x.GetProperty("SignerId").GetGuid() != orderedParties[0].Id) ||
             orderedParties.Length == 1 && tables["SignerReviewCandidates"].GetArrayLength() != 0)

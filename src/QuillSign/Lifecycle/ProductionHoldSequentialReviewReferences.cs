@@ -131,7 +131,7 @@ internal static class ProductionHoldSequentialReviewReferences
             var proof = inputs.Single(x => x.CandidateId == candidate.Id).Body; var a = accepted.Single(x => x.ActorId == signer.Id);
             if (finish.Id == Guid.Empty || finish.EnvelopeId != id || finish.RowVersion.Length != 8 || finish.AdoptionId != signer.SignatureAdoptionId ||
                 !SignerFinish.MatchesCandidate(finish, candidate) || !Utc(finish.FinishedAt) || finish.FinishedAt > captured ||
-                finish.FinishedAt >= proof.AccessExpiresAt || a.DataJson != SignerFinish.EvidenceJson(finish) || !Actor(a, signer, id, captured) ||
+                finish.FinishedAt >= proof.AccessExpiresAt || e.ExpiresAt is { } finishDeadline && finish.FinishedAt >= finishDeadline || a.DataJson != SignerFinish.EvidenceJson(finish) || !Actor(a, signer, id, captured) ||
                 a.At < finish.FinishedAt || a.Ip != finish.Ip || a.UserAgent != finish.UserAgent || finish.Ip is { Length: > 45 } || finish.UserAgent is { Length: > 2048 } ||
                 a.Sequence <= prepared.Single(x => x.DataJson == PreparedJson(candidate)).Sequence ||
                 audits.Any(x => x.ActorId == signer.Id && x.Sequence > a.Sequence && x.Event != "signer_completed") ||
@@ -181,7 +181,13 @@ internal static class ProductionHoldSequentialReviewReferences
         for (var n = 0; n < parties.Length; n++)
         {
             var signer = parties[n]; var f = finishes.SingleOrDefault(x => x.SignerId == signer.Id);
-            if (n > processed.Length)
+            var blockedAfterDrain = n == processed.Length && n > 0 && finishes.Single(x => x.SignerId == parties[n - 1].Id).NextInvitationId is null;
+            if (blockedAfterDrain)
+            {
+                var previous = finishes.Single(x => x.SignerId == parties[n - 1].Id);
+                if (e.ExpiresAt is not { } cutoff || previous.ProcessedAt < cutoff) throw Invalid();
+            }
+            if (n > processed.Length || blockedAfterDrain)
             {
                 if (signer.Status != SignerStatus.Pending || signer.DeclineReason is not null || signer.ConsentAt is not null || signer.ConsentIp is not null || signer.ConsentUa is not null ||
                     signer.SignedAt is not null || signer.SignedIp is not null || signer.SignedUa is not null || f is not null ||
@@ -210,12 +216,13 @@ internal static class ProductionHoldSequentialReviewReferences
                 continue;
             }
             var published = audits.Single(x => x.Event == "signer_completed" && x.ActorId == signer.Id);
-            if (!Utc(f.ProcessedAt) || f.ProcessedAt < a.At || f.ProcessedAt > captured || e.ExpiresAt is { } deadline && f.ProcessedAt >= deadline ||
+            var expiredDuringDrain = e.ExpiresAt is { } frozenDeadline && f.ProcessedAt >= frozenDeadline;
+            if (!Utc(f.ProcessedAt) || f.ProcessedAt < a.At || f.ProcessedAt > captured ||
                 signer.SignedAt != f.FinishedAt || signer.SignedIp != f.Ip || signer.SignedUa != f.UserAgent ||
                 published.DataJson != SignerCheckpointState.PublishedJson(f) || !Actor(published, signer, e.Id, captured) ||
                 published.At < f.ProcessedAt || published.Sequence <= a.Sequence || published.Ip != f.Ip || published.UserAgent != f.UserAgent ||
                 job.Status != WorkStatus.Completed || job.Attempts != 1 || job.AvailableAt < published.At || job.AvailableAt > captured ||
-                (n == parties.Length - 1 ? f.NextInvitationId is not null : f.NextInvitationId is null || f.NextInvitationId == Guid.Empty)) throw Invalid();
+                (n == parties.Length - 1 || expiredDuringDrain ? f.NextInvitationId is not null : f.NextInvitationId is null || f.NextInvitationId == Guid.Empty)) throw Invalid();
             source = f.PdfObjectId; sourceHash = f.PdfSha256; prior = published;
         }
         if (processed.Length == parties.Length)

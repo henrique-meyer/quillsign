@@ -228,7 +228,7 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
                 PdfObjectId = Guid.NewGuid(), PdfLength = bytes.Length, SourceSha256 = mark.DocumentSha256, DisclosureSha256 = e.ErsdSha256!,
                 SessionSha256 = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(reviewIdentity)), SnapshotSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot)),
                 PdfSha256 = SHA256.HashData(bytes), RecipeSha256 = Convert.FromHexString(ProductionReviewInputCodec.Binding(render, 1, mark.DocumentSha256)),
-                RendererVersion = "signer-pdf-v1", SnapshotVersion = "signer-review-v1", PreparedAt = at, ExpiresAt = at.AddMinutes(10), ProspectiveDate = DateOnly.FromDateTime(at.UtcDateTime) };
+                RendererVersion = "signer-pdf-v1", SnapshotVersion = "signer-review-v1", PreparedAt = at, ExpiresAt = new[] { at.AddMinutes(10), reviewIdentity.SessionExpiresAt, e.ExpiresAt ?? DateTimeOffset.MaxValue, new DateTimeOffset(at.UtcDateTime.Date.AddDays(1), TimeSpan.Zero) }.Min(), ProspectiveDate = DateOnly.FromDateTime(at.UtcDateTime) };
             var body = new ReviewInputV1("review-input-v1", e.Id, Guid.NewGuid(), candidate.Id, JsonSerializer.Serialize(candidate), reviewIdentity, reviewIdentity.SessionExpiresAt,
                 snapshot, render, JsonSerializer.Deserialize<PageGeometry[]>(e.PageSizesJson!)!, cut.Id, checked((int)cut.Sequence), Hex(cut.Hash));
             Inputs.Add(Seal(body, candidate, bytes));
@@ -264,20 +264,20 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
             F.Work.Add(new() { Id = Acceptance.Id, EnvelopeId = c.EnvelopeId, Kind = WorkKind.Rendering, AvailableAt = at.AddTicks(2),
                 PayloadJson = JsonSerializer.Serialize(new SignerCheckpointPayload(SignerCheckpointJobs.Version, Acceptance.Id)) }); Sync();
         }
-        internal void Process()
+        internal void Process(DateTimeOffset? processedAt = null)
         {
-            var f = Acceptance!; var at = F.Audits.Last().At.AddSeconds(1); f.ProcessedAt = at;
+            var f = Acceptance!; var at = processedAt ?? F.Audits.Last().At.AddSeconds(1); f.ProcessedAt = at;
             var s = F.Signers.Single(x => x.Id == f.SignerId); var next = F.Signers.SingleOrDefault(x => x.Order == s.Order + 1);
-            f.NextInvitationId = next is null ? null : Guid.NewGuid(); s.Status = SignerStatus.Signed; s.SignedAt = f.FinishedAt; s.SignedIp = f.Ip; s.SignedUa = f.UserAgent;
+            f.NextInvitationId = next is null || F.Envelope.ExpiresAt is { } deadline && at >= deadline ? null : Guid.NewGuid(); s.Status = SignerStatus.Signed; s.SignedAt = f.FinishedAt; s.SignedIp = f.Ip; s.SignedUa = f.UserAgent;
             F.Envelope.CurrentFinishId = f.Id; F.Envelope.CurrentCopyVersion = s.Order;
             PartyEvent(s, "signer_completed", SignerCheckpointState.PublishedJson(f), at.AddTicks(1)); var due = at.AddTicks(2);
-            if (next is not null)
+            if (next is not null && f.NextInvitationId is not null)
             {
                 F.Mail.Add(new() { Id = f.NextInvitationId!.Value, EnvelopeId = f.EnvelopeId, Template = "signer-invitation", To = next.Email, AvailableAt = due,
                     PayloadJson = new SignerInvitationProtection(F.Keys).Protect(new(next.Id, DocumentId: f.PdfObjectId, DocumentSha256: Hex(f.PdfSha256), DisclosureSha256: Hex(f.DisclosureSha256))) });
                 F.Work.Add(new() { Id = f.NextInvitationId.Value, EnvelopeId = f.EnvelopeId, Kind = WorkKind.Email, AvailableAt = due });
             }
-            else F.Work.Add(new() { Id = CompletionJobs.WorkId(f.EnvelopeId), EnvelopeId = f.EnvelopeId, Kind = WorkKind.Sealing, AvailableAt = due,
+            else if (next is null) F.Work.Add(new() { Id = CompletionJobs.WorkId(f.EnvelopeId), EnvelopeId = f.EnvelopeId, Kind = WorkKind.Sealing, AvailableAt = due,
                 PayloadJson = JsonSerializer.Serialize(new CompletionWorkPayload(CompletionJobs.Version, f.Id, F.Signers.Count, Hex(f.PdfSha256), Hex(f.DisclosureSha256))) });
             var work = F.Work.Single(x => x.Id == f.Id); work.Status = WorkStatus.Completed; work.Attempts = 1; work.AvailableAt = due.AddTicks(1); Sync();
         }
