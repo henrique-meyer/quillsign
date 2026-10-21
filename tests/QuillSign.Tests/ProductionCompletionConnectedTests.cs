@@ -4,11 +4,16 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using Azure.Core;
 using Azure.Core.Pipeline;
 using Azure.Storage.Blobs;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using QuillSign.Email;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Completion;
 using QuillSign.Data;
@@ -35,7 +40,7 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
         Assert.Equal(1,seal.Requests);
     }
     [Fact]
-    public async Task Genuine_two_signers_complete_all_seven_witnessed_slots_with_exact_SDK_objects_and_four_queued_notices()
+    public async Task Genuine_two_signers_complete_all_seven_slots_then_submit_four_exact_pairs_and_preserve_independent_holds()
     {
         await using var run=await LastCheckpoint();var originalClock=run.Record.Time.Now;
         await using var seal=await SealFixtures.Create(initialTime:originalClock);
@@ -151,10 +156,19 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
             }
             await tx.RollbackAsync();
         }
+        var mailAdmission=new ProductionWorkAdmission(fixture.Open,run.Record.Admission){Completion=completion,CompletionMail=new(run.Record.Keys,run.Record.Time)};
+        await using(var blocked=fixture.Open())
+        {
+            var before=await blocked.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==mail[0].Id);
+            Assert.Null((await new WorkStore(blocked,new(){Enabled=true,LeaseSeconds=600},run.Record.Time,mailAdmission).ClaimAsync(mail[0].Id,default)).Lease);
+            Assert.Equal(JsonSerializer.Serialize(before),JsonSerializer.Serialize(await blocked.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==before.Id)));
+        }
         var second=await holds.Place(1);
         var independent=await holds.Coordinator().ReadVerifiedAsync(run.Id);
         Assert.True(independent.Holds[first.HoldId].Effective);Assert.True(independent.Holds[second.HoldId].Effective);
-        Assert.True(await holds.Release(first,2));Assert.False(await holds.Release(second,3));
+        Assert.True(await holds.Release(first,2));
+        await using(var blocked=fixture.Open())Assert.Null((await new WorkStore(blocked,new(){Enabled=true,LeaseSeconds=600},run.Record.Time,mailAdmission).ClaimAsync(mail[0].Id,default)).Lease);
+        Assert.False(await holds.Release(second,3));
         Assert.All(holds.Provider.Files.Values,x=>Assert.False(x.Held));
         await using(var inspect=fixture.Open())
         {
@@ -165,8 +179,122 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
         }
         Assert.All(provider.Objects.Values.Where(x=>x.Until is not null),x=>Assert.Equal(envelope.PurgeAfter,x.Until));
         Assert.Equal(17,provider.Commits);Assert.Equal(0,provider.OtherMutations);Assert.Equal(2,seal.Requests);
+
+        var capture=new CompletionCapture(published.ExecutedBytes,published.CertificateBytes);
+        var builder=WebApplication.CreateBuilder(new WebApplicationOptions{ApplicationName=typeof(SignerAccess).Assembly.FullName,ContentRootPath=AppContext.BaseDirectory,EnvironmentName="Development"});
+        builder.Logging.ClearProviders();builder.Services.AddRazorPages();builder.Services.AddScoped<RazorEmailViews>();
+        await using var app=builder.Build();using var services=app.Services.CreateScope();var views=services.ServiceProvider.GetRequiredService<RazorEmailViews>();
+        var dispatchedAt=run.Record.Time.Now;var leases=new List<WorkLease>();
+        foreach(var queued in mail)
+        {
+            await using var dispatch=fixture.Open();
+            var storeWork=new WorkStore(dispatch,new(){Enabled=true,LeaseSeconds=600},run.Record.Time,mailAdmission);
+            var emailLease=(await storeWork.ClaimAsync(queued.Id,default)).Lease!;Assert.NotNull(emailLease);leases.Add(emailLease);
+            var delivery=CompletionHandler(dispatch,run,seal,blobs,final,views,capture,mailAdmission);
+            var outcome=await delivery.ExecuteAsync(emailLease,default);Assert.Equal(WorkOutcome.Completed,outcome.Outcome);
+            await storeWork.FinishAsync(emailLease,outcome,default);
+            Assert.Null((await run.Record.Journal.ReadAsync(run.Id)).OutstandingOperation);
+        }
+        Assert.Equal(4,capture.Messages.Count);Assert.Equal(4,capture.Messages.Select(x=>x.To).Distinct().Count());
+        var delivered=await run.Record.Journal.ReadAsync(run.Id);Assert.Equal(4,delivered.CompletionMailBaselines!.Count);
+        await using(var inspect=fixture.Open())
+        {
+            Assert.Equal(4,await inspect.EmailOutbox.CountAsync(x=>x.EnvelopeId==run.Id&&x.Template==CompletionNotificationJobs.Template&&x.Status==EmailStatus.Sent&&x.Attempts==1));
+            var issued=await inspect.AuthTokens.AsNoTracking().Where(x=>x.EnvelopeId==run.Id&&x.Purpose==TokenPurpose.CompletionAccess).ToArrayAsync();
+            Assert.Equal(4,issued.Length);Assert.All(issued,t=>{Assert.Null(t.UsedAt);Assert.Equal(dispatchedAt.AddHours(24),t.ExpiresAt);});
+            Assert.Equal(tokens,JsonSerializer.Serialize(await inspect.AuthTokens.AsNoTracking().Where(x=>x.EnvelopeId==run.Id&&x.Purpose!=TokenPurpose.CompletionAccess).OrderBy(x=>x.Id).ToArrayAsync()));
+        }
+        var transportFirst=await holds.Place(4);
+        ProductionHoldProtectedPlan transportPlan;
+        await using(var inspect=fixture.Open())
+        {
+            await using var tx=await inspect.Database.BeginTransactionAsync();var controls=await new ProductionHoldControls(inspect,run.Record.Keys,run.Record.Time).ReadLockedAsync(run.Id);
+            transportPlan=Assert.Single(controls.Plans.Values,x=>x.HoldId==transportFirst.HoldId);await tx.RollbackAsync();
+        }
+        var transportFrozen=ProductionHoldBundlePlan.OpenVerified(transportPlan,run.Record.Keys,run.Record.Time);
+        Assert.Equal(frozen.Items.Length,transportFrozen.Items.Length);        using(var projection=ProductionHoldSqlInventory.OpenVerified(transportFrozen.Snapshot.Sql,run.Record.Keys))
+            DemandHistoricalMailFaults(projection.RootElement,await run.Record.Journal.ReadAsync(run.Id),run.Record.Keys,
+                ProductionHoldObjectInventory.OpenVerified(transportFrozen.Snapshot,run.Record.Keys,run.Record.Time));
+        run.Record.Time.Now=run.Record.Time.Now.AddMinutes(11);Assert.All(leases,l=>Assert.True(run.Record.Time.Now>l.Until));
+        Assert.Equal(transportFrozen.Snapshot.ManifestSha256,ProductionHoldBundlePlan.OpenVerified(transportPlan,run.Record.Keys,run.Record.Time).Snapshot.ManifestSha256);
+        var transportSecond=await holds.Place(5);
+        Assert.True(await holds.Release(transportFirst,6));Assert.False(await holds.Release(transportSecond,7));
+        Assert.All(holds.Provider.Files.Values,x=>Assert.False(x.Held));
+        Assert.Equal(17,provider.Commits);Assert.Equal(0,provider.OtherMutations);Assert.Equal(2,seal.Requests);Assert.Equal(4,capture.Messages.Count);
+        Assert.Equal(0,blobs.Writes);Assert.Equal(0,blobs.Deletes);Assert.Equal(0,run.Blobs.UnwitnessedWrites);Assert.Equal(0,run.Blobs.Deletes);
     }
 
+    private static void DemandHistoricalMailFaults(JsonElement sql,HoldWitnessState state,Microsoft.AspNetCore.DataProtection.IDataProtectionProvider keys,IReadOnlyList<HoldObjectEvidence> objects)
+    {
+        var history=ProductionHoldCompletionMailReferences.ReadVerified(sql,state,keys,objects);Assert.Equal(4,history.TokenIds.Count);Assert.Equal(12,history.AuditSequences.Count);
+        var first=state.CompletionMailBaselines!.First();
+        foreach(var fault in new[]{"missing-baseline","foreign-publication","expired-claim","missing-dispatch","missing-handler","wrong-settlement"})
+        {
+            var baselines=state.CompletionMailBaselines!.ToDictionary(x=>x.Key,x=>x.Value);var changed=state;
+            switch(fault)
+            {
+                case "missing-baseline":baselines.Remove(first.Key);changed=state with{CompletionMailBaselines=baselines};break;
+                case "foreign-publication":baselines[first.Key]=first.Value with{PublicationId=Guid.NewGuid()};changed=state with{CompletionMailBaselines=baselines};break;
+                case "expired-claim":baselines[first.Key]=first.Value with{ClaimUntil=first.Value.ClaimUntil.AddDays(-1)};changed=state with{CompletionMailBaselines=baselines};break;
+                case "missing-dispatch":var starts=state.DispatchStarts!.ToDictionary(x=>x.Key,x=>x.Value);starts.Remove(first.Key);changed=state with{DispatchStarts=starts};break;
+                case "missing-handler":var handlers=state.HandlerOutcomes!.ToDictionary(x=>x.Key,x=>x.Value);handlers.Remove(first.Key);changed=state with{HandlerOutcomes=handlers};break;
+                case "wrong-settlement":var receipts=state.SettledOperations.ToDictionary(x=>x.Key,x=>x.Value);receipts[first.Key]=new string('a',64);changed=state with{SettledOperations=receipts};break;
+            }
+            Assert.Throws<InvalidDataException>(()=>ProductionHoldCompletionMailReferences.ReadVerified(sql,changed,keys,objects));
+        }
+        foreach(var fault in new[]{"token-deadline","provider-receipt","future-wrapper","extra-attempt"})
+        {
+            var copy=JsonNode.Parse(sql.GetRawText())!.AsObject();
+            JsonArray Table(string name)=>copy["Tables"]!.AsArray().Single(x=>x!["Table"]!.GetValue<string>()==name)!["Rows"]!.AsArray();
+            if(fault=="token-deadline")
+            {
+                var token=Table("AuthTokens").Single(x=>x!["Id"]!.GetValue<Guid>()==history.TokenIds.First())!;
+                token["ExpiresAt"]=token["ExpiresAt"]!.GetValue<DateTimeOffset>().AddMinutes(1);
+            }
+            else if(fault is "provider-receipt" or "future-wrapper")
+            {
+                var mail=Table("EmailOutbox").Single(x=>x!["Id"]!.GetValue<Guid>()==first.Value.WorkId)!;
+                if(fault=="provider-receipt")mail["ProviderMessageId"]="synthetic-substituted-receipt";
+                else{var wrapper=JsonNode.Parse(mail["PayloadJson"]!.GetValue<string>())!.AsObject();wrapper["Future"]=true;mail["PayloadJson"]=wrapper.ToJsonString();}
+            }
+            else
+            {
+                var tail=Table("AuditEvents").Select(x=>x!.Deserialize<AuditEvent>(new JsonSerializerOptions{Converters={new System.Text.Json.Serialization.JsonStringEnumConverter()}})!).OrderBy(x=>x.Sequence).Last();
+                var extra=new AuditEvent{Id=tail.Id+1,EnvelopeId=tail.EnvelopeId,Sequence=tail.Sequence+1,At=tail.At,ActorType=PartyType.System,
+                    Event="completion_notification_attempt",DataJson="{}",PrevHash=tail.Hash};extra.Hash=AuditHash.Compute(extra);
+                Table("AuditEvents").Add(JsonSerializer.SerializeToNode(extra,new JsonSerializerOptions{Converters={new System.Text.Json.Serialization.JsonStringEnumConverter()}}));
+            }
+            using var malformed=JsonDocument.Parse(copy.ToJsonString());
+            Assert.Throws<InvalidDataException>(()=>ProductionHoldCompletionMailReferences.ReadVerified(malformed.RootElement,state,keys,objects));
+        }
+        var changedSource=objects.Select(x=>x.Address.Area=="final"?x with{Address=x.Address with{VersionId=x.Address.VersionId+"-foreign"}}:x).ToArray();
+        Assert.Throws<InvalidDataException>(()=>ProductionHoldCompletionMailReferences.ReadVerified(sql,state,keys,changedSource));
+    }
+    private EmailWorkHandler CompletionHandler(QuillSignDbContext db,ProductionSignerReviewRuntimeContractTests.Flow run,SealFixtures seal,IBlobStore blobs,
+        ICompletionFinalStore final,RazorEmailViews views,IEmailSender capture,IProductionWorkAdmission admission)
+    {
+        var options=new EmailOptions{Enabled=true,BaseUrl="https://example.invalid",FromEmail="noreply@example.invalid"};
+        var scope=new CompletionCommitScope(db,run.Record.Time);var audit=new AuditWriter(db,run.Record.Time);
+        var collector=new CompletionEvidenceCollector(db,new(db,run.Record.Time),new(blobs,run.Record.Time),blobs,run.Record.Time);
+        var candidates=new CompletionCandidates(db,collector,new(),blobs,audit,run.Record.Time,scope);
+        var seals=new CompletionSealOutputs(db,candidates,collector,new(),seal.Engine,new(seal.Options,seal.Timestamps),blobs,audit,run.Record.Time,scope);
+        CompletionPublication? publication=null;var accessState=new CompletionAccessState(db,collector,()=>publication!,run.Record.Time);
+        var jobs=new CompletionNotificationJobs(db,accessState,new(run.Record.Keys),()=>run.Delivered.Ready.Signals,new(){Enabled=true},audit,run.Record.Time);
+        publication=new(db,candidates,seals,collector,final,audit,run.Record.Time,new(),seal.App.Environment,scope,()=>jobs);
+        var access=new CompletionAccess(db,accessState,new(run.Record.Keys,run.Record.Time),new(),audit,run.Record.Time,()=>publication);
+        var delivery=new CompletionNotificationDelivery(db,accessState,access,jobs,new(run.Record.Keys),()=>new(options,views),capture,options,audit,run.Record.Time);
+        return new EmailWorkHandler(db,options,new(run.Record.Keys),new(options,views),capture,run.Record.Time,completions:()=>delivery){HoldAdmission=admission};
+    }
+    private sealed class CompletionCapture(byte[] executed,byte[] certificate):IEmailSender
+    {
+        internal readonly List<OutgoingEmail> Messages=[];
+        public Task<EmailDelivery> SendAsync(OutgoingEmail message,CancellationToken ct=default)
+        {
+            ct.ThrowIfCancellationRequested();Assert.EndsWith("@example.invalid",message.To);
+            Assert.Equal(2,message.Attachments!.Count);Assert.Equal(executed,message.Attachments[0].CopyBytes());Assert.Equal(certificate,message.Attachments[1].CopyBytes());
+            Assert.Contains("complete/access#token=",message.Text);Messages.Add(message);return Task.FromResult(new EmailDelivery("SyntheticCompletionCapture","synthetic-completion-"+Messages.Count));
+        }
+    }
     private async Task<ProductionSignerReviewRuntimeContractTests.Flow> LastCheckpoint()
     {
         var ready=await ProductionRecordSendAdmissionTests.Ready.Create(fixture,withFields:true,twoSigners:true,withRecipient:true);

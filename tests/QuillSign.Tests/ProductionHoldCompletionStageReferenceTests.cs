@@ -141,7 +141,7 @@ public sealed class ProductionHoldCompletionStageReferenceTests
         var options = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
         var exact = JsonSerializer.SerializeToElement(work, options); var notice = Guid.NewGuid();
         var method = typeof(ProductionHoldCompletionStageReferences).GetMethod("Project", BindingFlags.Static | BindingFlags.NonPublic)!;
-        using var projection = (JsonDocument)method.Invoke(null, [original.RootElement, before, work.Id, exact, f.Candidate.AuditSequence, new HashSet<Guid> { notice }])!;
+        using var projection = (JsonDocument)method.Invoke(null, [original.RootElement, before, work.Id, exact, f.Candidate.AuditSequence, new HashSet<Guid> { notice }, new HashSet<Guid>()])!;
         var tables = projection.RootElement.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         Assert.True(JsonElement.DeepEquals(exact, tables["WorkItems"].EnumerateArray().Single(x => x.GetProperty("Id").GetGuid() == work.Id)));
         var old = original.RootElement.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));

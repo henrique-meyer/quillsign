@@ -56,9 +56,11 @@ internal static class ProductionHoldCompletionInputReferences
         }
     }
     internal static void Demand(JsonElement sql, HoldWitnessState state, IReadOnlyList<HoldObjectEvidence> objects,
-        IReadOnlyList<VerifiedCompletionInput> inputs, Microsoft.AspNetCore.DataProtection.IDataProtectionProvider keys)
+        IReadOnlyList<VerifiedCompletionInput> inputs, Microsoft.AspNetCore.DataProtection.IDataProtectionProvider keys,
+        ProductionHoldCompletionMailReferences.History? mailHistory = null)
     {
         var recordId = sql.GetProperty("RecordId").GetGuid(); var references = References(recordId, state); DemandCensus(recordId, references, objects);
+        mailHistory ??= ProductionHoldCompletionMailReferences.ReadVerified(sql,state,keys,objects);
         if (inputs.Count != references.Length || inputs.Select(x => x.Descriptor.Blob.ObjectId).Distinct().Count() != inputs.Count) throw ProductionCompletionInputCodec.Invalid();
         foreach (var reference in references)
         {
@@ -68,7 +70,11 @@ internal static class ProductionHoldCompletionInputReferences
             var body = input.Body;
             if (input.Kind is CompletionInputKind.CandidatePlan or CompletionInputKind.ExecutedResult or CompletionInputKind.CertificateResult or
                 CompletionInputKind.PublicationIntentPlan or CompletionInputKind.PublicationResultPlan)
-                _ = ProductionCompletionInputRows.Bind(input, keys, sql);
+            {
+                if(input.Kind==CompletionInputKind.PublicationResultPlan)
+                {using var original=mailHistory.ProjectOriginalRows(sql);_ = ProductionCompletionInputRows.Bind(input,keys,original.RootElement);}
+                else _ = ProductionCompletionInputRows.Bind(input, keys, sql);
+            }
             if (body.TimestampRequest is { } request)
             {
                 var original = inputs.SingleOrDefault(x => x.Context.OperationId == input.Context.OperationId && x.Context.Slot == input.Context.Slot &&

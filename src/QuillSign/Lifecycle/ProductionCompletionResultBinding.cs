@@ -61,7 +61,7 @@ internal static partial class ProductionCompletionInputRows
                 CompletionNotificationJobs.Queued(id, member.Email, payload)); previous = queued.Hash;
         }
     }
-    private static CompletionNotificationPayload ReadPayload(IDataProtectionProvider keys, string raw)
+    internal static CompletionNotificationPayload ReadPayload(IDataProtectionProvider keys, string raw)
     {
         var options = new JsonSerializerOptions { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
         if (raw is null || raw.Length > 8192 || Encoding.UTF8.GetByteCount(raw) > 32768) throw ProductionCompletionInputCodec.Invalid();

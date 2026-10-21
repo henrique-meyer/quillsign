@@ -40,7 +40,8 @@ internal static class ProductionHoldCompletionStageReferences
         T[] Table<T>(string name) => tables[name].Deserialize<T[]>(Rows) ?? throw Invalid();
         var current = Table<Envelope>("Envelopes").Single();
         var (operationId, completion) = DemandSettled(id, state);
-        ProductionHoldCompletionInputReferences.Demand(sql, state, objects, inputs, keys);
+        var mailHistory=ProductionHoldCompletionMailReferences.ReadVerified(sql,state,keys,objects);
+        ProductionHoldCompletionInputReferences.Demand(sql, state, objects, inputs, keys,mailHistory);
         if (inputs.Count != Enum.GetValues<CompletionInputKind>().Length || inputs.Any(x => x.Context.OperationId != operationId) ||
             inputs.Select(x => x.Kind).Distinct().Count() != inputs.Count) throw Invalid();
         VerifiedCompletionInput Input(CompletionInputKind kind) => inputs.Single(x => x.Kind == kind);
@@ -71,7 +72,7 @@ internal static class ProductionHoldCompletionStageReferences
             Input(CompletionInputKind.CandidatePlan).Body.AuditCut.Sequence != candidate.AuditSequence ||
             Input(CompletionInputKind.CandidatePlan).Body.AuditCut.Sha256 != Hex(candidate.AuditAnchor)) throw Invalid();
         var suffix = completion.Slots.Values.SelectMany(x => x.Context.SqlRows).Where(x => x.Table == "AuditEvents")
-            .Select(x => long.Parse(x.Key, CultureInfo.InvariantCulture)).ToArray();
+            .Select(x => long.Parse(x.Key, CultureInfo.InvariantCulture)).Concat(mailHistory.AuditSequences).ToArray();
         if (suffix.Distinct().Count() != suffix.Length || !suffix.ToHashSet().SetEquals(audits.Where(x => x.Sequence > candidate.AuditSequence).Select(x => (long)x.Sequence))) throw Invalid();
 
         var rows = Table<CompletionSealOutput>("CompletionSealOutputs");
@@ -105,7 +106,7 @@ internal static class ProductionHoldCompletionStageReferences
             work.AvailableAt > completion.Slots[CompletionSlot.WorkFinish].Context.RecordedAt || work.AvailableAt < leased.AvailableAt) throw Invalid();
         var notices = Table<EmailOutbox>("EmailOutbox").Where(x => x.Template == CompletionNotificationJobs.Template).Select(x => x.Id).ToHashSet();
         if (notices.Count != Input(CompletionInputKind.PublicationResultPlan).Body.Publication!.Notifications.Length) throw Invalid();
-        using var projection = Project(sql, before, completion.Claim.WorkId, oldWork.RootElement, candidate.AuditSequence, notices);
+        using var projection = Project(sql, before, completion.Claim.WorkId, oldWork.RootElement, candidate.AuditSequence, notices,mailHistory.TokenIds);
         // Original complete history is checked on exactly saved facts, never
         // rehashed, relabelled or reconstructed from a newer participant state.
         var history = ProductionHoldReviewCheckpointReferences.ReadVerified(projection.RootElement, objects, keys, reviews);
@@ -211,7 +212,7 @@ internal static class ProductionHoldCompletionStageReferences
         if (JsonSerializer.Serialize(expected) != candidate.EvidenceJson || !Same(CompletionEvidenceValidation.Digest(expected), candidate.EvidenceSha256)) throw Invalid();
     }
 
-    private static JsonDocument Project(JsonElement original, Envelope before, Guid workId, JsonElement workBefore, long auditCut, HashSet<Guid> notifications)
+    private static JsonDocument Project(JsonElement original, Envelope before, Guid workId, JsonElement workBefore, long auditCut, HashSet<Guid> notifications,IReadOnlySet<Guid> completionTokens)
     {
         var root = JsonNode.Parse(original.GetRawText())!.AsObject();
         foreach (var entry in root["Tables"]!.AsArray())
@@ -219,6 +220,7 @@ internal static class ProductionHoldCompletionStageReferences
             var table = entry!.AsObject(); var name = table["Table"]!.GetValue<string>();
             if (name == "Envelopes") table["Rows"] = new JsonArray(JsonSerializer.SerializeToNode(before, Rows));
             else if (name is "CompletionCandidates" or "CompletionSealOutputs" or "CompletionPublicationIntents" or "CompletionPublicationResults" or "ProductionRetentionTerminals") table["Rows"] = new JsonArray();
+            else if(name=="AuthTokens") table["Rows"]=new JsonArray(table["Rows"]!.AsArray().Where(x=>!completionTokens.Contains(x!["Id"]!.GetValue<Guid>())).Select(x=>x!.DeepClone()).ToArray());
             else if (name == "AuditEvents") table["Rows"] = new JsonArray(table["Rows"]!.AsArray().Where(x => x!["Sequence"]!.GetValue<long>() <= auditCut).Select(x => x!.DeepClone()).ToArray());
             else if (name is "WorkItems" or "EmailOutbox") table["Rows"] = new JsonArray(table["Rows"]!.AsArray()
                 .Where(x => !notifications.Contains(x!["Id"]!.GetValue<Guid>())).Select(x => name == "WorkItems" && x!["Id"]!.GetValue<Guid>() == workId ? JsonNode.Parse(workBefore.GetRawText()) : x!.DeepClone()).ToArray());
