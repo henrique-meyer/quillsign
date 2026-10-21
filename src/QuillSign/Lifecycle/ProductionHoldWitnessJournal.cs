@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace QuillSign.Lifecycle;
 
-internal enum HoldWitnessKind { OperationReserved, OperationSettled, CommandIntent, SqlAccepted, Preserved, Released, PreservationReserved, ReleaseReserved, PlanFrozen, Initialized, OperationOutcomePrepared, HandlerOutcomePrepared, UploadWritesPrepared, UploadWriteStarted, UploadWriteRecorded, SendWritePrepared, SendWriteStarted, SendWriteRecorded, DispatchStarted, PreviewWritesPrepared, PreviewWriteStarted, PreviewWriteRecorded, ReviewWritesPrepared, ReviewWriteStarted, ReviewWriteRecorded }
+internal enum HoldWitnessKind { OperationReserved, OperationSettled, CommandIntent, SqlAccepted, Preserved, Released, PreservationReserved, ReleaseReserved, PlanFrozen, Initialized, OperationOutcomePrepared, HandlerOutcomePrepared, UploadWritesPrepared, UploadWriteStarted, UploadWriteRecorded, SendWritePrepared, SendWriteStarted, SendWriteRecorded, DispatchStarted, PreviewWritesPrepared, PreviewWriteStarted, PreviewWriteRecorded, ReviewWritesPrepared, ReviewWriteStarted, ReviewWriteRecorded, CompletionTransition }
 internal sealed record HoldWitnessEvent(string Version, Guid RecordId, long Sequence, Guid EventId,
     HoldWitnessKind Kind, DateTimeOffset At, string? PreviousHash, ProductionHoldCommand? Command,
     string? Issuer, string? Subject, Guid? OperationId, long RequestRevision, string? RequestFenceHash,
@@ -36,7 +36,8 @@ internal sealed record HoldWitnessEvent(string Version, Guid RecordId, long Sequ
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReviewWriteVersion = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HoldWitnessReviewPlan? ReviewPlan = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteDescriptor? ReviewItem = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteReceipt? ReviewReceipt = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteReceipt? ReviewReceipt = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HoldWitnessCompletionTransition? Completion = null);
 internal sealed record HoldWitnessOutcome(string ContentSha256, string SqlStateSha256, long Sequence);
 internal sealed record HoldWitnessHold(ProductionHoldCommand Placement, ProductionHoldCommand? Release,
     bool Effective, bool Released, Guid? PlanId, string? PlanSha256, string? PreservationSha256, string? ReleaseSha256,
@@ -51,7 +52,8 @@ internal sealed record HoldWitnessState(long Sequence, string? HeadHash, long Re
     IReadOnlyDictionary<Guid, HoldWitnessSendWrite>? SendWrites = null,
     IReadOnlyDictionary<Guid, HoldWitnessOutcome>? DispatchStarts = null,
     IReadOnlyDictionary<Guid, HoldWitnessPreviewWrites>? PreviewWrites = null,
-    IReadOnlyDictionary<Guid, HoldWitnessReviewWrites>? ReviewWrites = null)
+    IReadOnlyDictionary<Guid, HoldWitnessReviewWrites>? ReviewWrites = null,
+    IReadOnlyDictionary<Guid, HoldWitnessCompletionState>? Completions = null)
 {
     internal bool Frozen => Unacknowledged is not null || OutstandingOperation is not null || Holds.Values.Any(x => !x.Released);
 }
@@ -77,6 +79,35 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
 
     internal async Task<HoldWitnessState> ReadAsync(Guid recordId, CancellationToken ct = default)
         => (await Read(recordId, ct)).State;
+
+    // Conservative headroom for all remaining bounded seven-slot transitions,
+    // final settlement and concurrent hold intent. No event/budget is refunded.
+    internal async Task DemandCompletionHeadroomAsync(Guid recordId, CancellationToken ct = default)
+    {
+        var prior = await Read(recordId, ct);
+        if (prior.Events.Length > MaximumEvents - 128 || prior.Bytes > MaximumBytes - 1024 * 1024) throw Invalid();
+    }
+
+    internal async Task<bool> ChangeCompletionAsync(Guid recordId, HoldWitnessOperation operation, HoldWitnessCompletionTransition transition, Guid eventId, CancellationToken ct = default)
+    {
+        // Own the complete small DTO before the first externally controlled await.
+        ProductionCompletionProtocol.Bound(transition);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(transition);
+        if (bytes.Length > 49152) throw Invalid();
+        transition = JsonSerializer.Deserialize<HoldWitnessCompletionTransition>(bytes) ?? throw Invalid();
+        var prior = await Read(recordId, ct);
+        var proposed = New(recordId, eventId, HoldWitnessKind.CompletionTransition) with { OperationId = operation.OperationId,
+            OperationKind = operation.Kind, OperationReference = operation.Reference, RequestRevision = operation.RequestRevision,
+            RequestFenceHash = operation.RequestFenceHash, Completion = transition };
+        var replay = prior.Events.SingleOrDefault(x => x.EventId == eventId);
+        if (replay is not null)
+        {
+            if (!JsonSerializer.SerializeToUtf8Bytes(replay).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(proposed with {
+                At = replay.At, Sequence = replay.Sequence, PreviousHash = replay.PreviousHash }))) throw Invalid();
+            return false;
+        }
+        await Append(prior, proposed, ct); return true;
+    }
 
     internal Task<HoldWitnessState> InitializeAsync(Guid recordId, string contentSha256, string sqlStateSha256, Guid eventId, CancellationToken ct = default)
         => Change(recordId, eventId, HoldWitnessKind.Initialized, ct,
@@ -353,7 +384,11 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         var read = await Read(value.RecordId, ct);
         if (read.Events.Length < value.Sequence) throw Invalid();
         var actual = read.Events[(int)value.Sequence - 1];
-        if (value.Kind == HoldWitnessKind.ReviewWritesPrepared)
+        if (value.Kind == HoldWitnessKind.CompletionTransition)
+        {
+            if (!JsonSerializer.SerializeToUtf8Bytes(actual).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(value))) throw Invalid();
+        }
+        else if (value.Kind == HoldWitnessKind.ReviewWritesPrepared)
         {
             // A deserialized nonempty immutable array has a different backing
             // store. Verify all header bytes and retain the exact old equality
@@ -412,6 +447,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         var sends = new Dictionary<Guid, HoldWitnessSendWrite>();
         var previews = new Dictionary<Guid, HoldWitnessPreviewWrites>();
         var reviews = new Dictionary<Guid, HoldWitnessReviewWrites>();
+        var completions = new Dictionary<Guid, HoldWitnessCompletionState>();
         Guid? operation = null; ProductionHoldCommand? pending = null; long revision = 0; string? fence = null; string? business = null;
         DateTimeOffset? lastAt = null;
         foreach (var e in events)
@@ -450,6 +486,16 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                     }
                     else if (initialized) throw Invalid();
                     break;
+                case HoldWitnessKind.CompletionTransition:
+                    if (maintenance || operation is null || e.OperationId != operation || !typed.TryGetValue(operation.Value, out var completing) ||
+                        e.OperationKind != completing.Kind || e.OperationReference != completing.Reference || e.RequestRevision != completing.RequestRevision ||
+                        e.RequestFenceHash != completing.RequestFenceHash || revision != completing.RequestRevision || fence != completing.RequestFenceHash ||
+                        (outcomes.ContainsKey(operation.Value) && e.Completion is not { Kind: CompletionTransitionKind.SlotAcknowledged, Slot: CompletionSlot.WorkFinish }) || e.Completion is not { } transition) throw Invalid();
+                    completions[operation.Value] = ProductionCompletionProtocol.Fold(completions.GetValueOrDefault(operation.Value), transition, completing, e.Sequence, e.At, transition.Context is { PredecessorSequence: > 0 } ctx && ctx.PredecessorSequence <= events.Length ? events[(int)ctx.PredecessorSequence - 1].At : null);
+                    outcomeRequired.Add(operation.Value);
+                    canonical = canonical with { OperationId = e.OperationId, OperationKind = e.OperationKind, OperationReference = e.OperationReference,
+                        RequestRevision = revision, RequestFenceHash = fence, Completion = transition };
+                    break;
                 case HoldWitnessKind.OperationOutcomePrepared:
                     if (maintenance || operation is null || e.OperationId != operation ||
                         !typed.TryGetValue(operation.Value, out var preparing) || outcomes.ContainsKey(operation.Value) ||
@@ -465,6 +511,9 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                         previews.TryGetValue(operation.Value, out var previewOutcome) &&
                         (!ProductionRecordPreviewWriteContract.Complete(previewOutcome) || e.At >= ProductionRecordPreviewWriteContract.ReadRow(previewOutcome.Plan.PreviewRowJson).ExpiresAt)) throw Invalid();
                     if (preparing.Kind == ProductionRecordReviewWriteContract.Kind && (!reviews.TryGetValue(operation.Value, out var reviewOutcome) || !ProductionRecordReviewWriteContract.Complete(reviewOutcome) || e.At >= ProductionRecordReviewWriteContract.ReadRow(reviewOutcome.Plan.CandidateRowJson).ExpiresAt)) throw Invalid();
+                    if (completions.TryGetValue(operation.Value, out var finalCompletion) &&
+                        (finalCompletion.Slots?.GetValueOrDefault(CompletionSlot.WorkFinish)?.Expected is not { } finishExpected ||
+                        finishExpected.ContentSha256 != e.BusinessStateSha256 || finishExpected.SqlStateSha256 != e.SqlStateSha256)) throw Invalid();
                     outcomes.Add(operation.Value, new(e.BusinessStateSha256!, e.SqlStateSha256!, e.Sequence));
                     canonical = canonical with { OperationId = e.OperationId, OperationKind = e.OperationKind, OperationReference = e.OperationReference,
                         RequestRevision = revision, RequestFenceHash = fence, BusinessStateSha256 = e.BusinessStateSha256, SqlStateSha256 = e.SqlStateSha256 };
@@ -624,6 +673,9 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                         e.RequestRevision != handling.RequestRevision || e.RequestFenceHash != handling.RequestFenceHash ||
                         revision != handling.RequestRevision || fence != handling.RequestFenceHash ||
                         e.HandlerOutcomeVersion != HandlerOutcomeVersion || !Hash(e.BusinessStateSha256) || !Hash(e.SqlStateSha256)) throw Invalid();
+                    if (completions.TryGetValue(operation.Value, out var handlerCompletion) &&
+                        (handlerCompletion.Slots?.GetValueOrDefault(CompletionSlot.HandlerReceipt)?.Acknowledged is not { } handlerExpected ||
+                        handlerExpected.ContentSha256 != e.BusinessStateSha256 || handlerExpected.SqlStateSha256 != e.SqlStateSha256)) throw Invalid();
                     handlerOutcomes.Add(operation.Value, new(e.BusinessStateSha256!, e.SqlStateSha256!, e.Sequence)); outcomeRequired.Add(operation.Value);
                     canonical = canonical with { OperationId = e.OperationId, OperationKind = e.OperationKind, OperationReference = e.OperationReference,
                         RequestRevision = revision, RequestFenceHash = fence, BusinessStateSha256 = e.BusinessStateSha256, SqlStateSha256 = e.SqlStateSha256,
@@ -642,6 +694,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                         canonical = canonical with { OperationKind = e.OperationKind, OperationReference = e.OperationReference,
                             RequestRevision = e.RequestRevision, RequestFenceHash = e.RequestFenceHash, SqlStateSha256 = sqlState };
                     }
+                    if (completions.TryGetValue(operation.Value, out var settledCompletion) && settledCompletion.Slots?.GetValueOrDefault(CompletionSlot.WorkFinish)?.Acknowledged is null) throw Invalid();
                     settled.Add(operation.Value, e.ReceiptSha256!); operation = null; business = e.BusinessStateSha256;
                     canonical = canonical with { OperationId = e.OperationId, ReceiptSha256 = e.ReceiptSha256, BusinessStateSha256 = business }; break;
                 case HoldWitnessKind.CommandIntent:
@@ -701,9 +754,9 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                     operation = null; maintenance = false;
                     canonical = canonical with { Command = e.Command, ReceiptSha256 = e.ReceiptSha256, Control = e.Control, OperationId = e.OperationId }; break;
             }
-            if (canonical != e) throw Invalid();
+            if (e.Kind == HoldWitnessKind.CompletionTransition ? !JsonSerializer.SerializeToUtf8Bytes(canonical).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(e)) : canonical != e) throw Invalid();
         }
-        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed, outcomes, handlerOutcomes, uploads, sends, dispatches, previews, reviews);
+        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed, outcomes, handlerOutcomes, uploads, sends, dispatches, previews, reviews, completions);
     }
 
     private static bool Prefix(ProductionHoldControlPrefix? value) => value is { Sequence: > 0 } && Hash(value.Hash);
