@@ -299,7 +299,7 @@ public sealed class ProductionHoldSentAuditReferenceTests
         Assert.Throws<InvalidDataException>(() => f.Demand(sql));
     }
 
-    private sealed class Frame
+    internal sealed class Frame
     {
         private static readonly JsonSerializerOptions Rows = new() { Converters = { new JsonStringEnumConverter() } };
         internal readonly IDataProtectionProvider Keys = new EphemeralDataProtectionProvider();
@@ -317,7 +317,7 @@ public sealed class ProductionHoldSentAuditReferenceTests
         internal readonly Dictionary<string, object[]> Other = new(StringComparer.Ordinal);
         internal EmailOutbox Invitation => Mail[1]; internal EmailOutbox Verification => Mail[0];
         internal WorkItem InvitationWork => Work[1]; internal WorkItem VerificationWork => Work[0];
-        internal AuthToken Token => Tokens[0]; internal AuditEvent Sent => Audits[5];
+        internal AuthToken Token => Tokens[0]; internal AuditEvent Sent => Audits.Single(x => x.Event == "sent");
         internal SignerInvitationPayload Payload => new SignerInvitationProtection(Keys).Read(Invitation.PayloadJson);
         internal Frame(bool deadline = false)
         {
@@ -377,7 +377,7 @@ public sealed class ProductionHoldSentAuditReferenceTests
         internal void FreezeFields()
         {
             var snapshot = JsonSerializer.SerializeToUtf8Bytes(Fields.OrderBy(x => new SqlGuid(x.Id)).Select(x => new { x.Id, x.SignerId, x.Type, x.Page, x.X, x.Y, x.Width, x.Height, x.Required, x.Label, x.Value }));
-            Audits[4].DataJson = JsonSerializer.Serialize(new { fieldSnapshotSha256 = Convert.ToHexStringLower(SHA256.HashData(snapshot)), fieldCount = Fields.Count, documentSha256 = Convert.ToHexStringLower(Envelope.SentPdfSha256!) });
+            Audits.Single(x => x.Event == "fields_finalized").DataJson = JsonSerializer.Serialize(new { fieldSnapshotSha256 = Convert.ToHexStringLower(SHA256.HashData(snapshot)), fieldCount = Fields.Count, documentSha256 = Convert.ToHexStringLower(Envelope.SentPdfSha256!) });
             Rehash();
         }
         internal JsonObject SentJson() => JsonNode.Parse(Sent.DataJson)!.AsObject();
