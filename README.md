@@ -97,7 +97,7 @@ pwsh -File scripts/dev/Initialize-LocalEnvironment.ps1
 docker compose up -d --build --wait --wait-timeout 240
 ```
 
-The initializer generates local SQL and Azurite credentials in ignored `.env` configuration, preserving existing values and process-variable precedence. Optional port settings are listed in `.env.example`. Initial image downloads can take several minutes; allow at least 6 GB of Docker memory. The SQL Server image requires Linux amd64; ARM hosts need compatible emulation. SQL Server Developer is for development/testing only.
+The initializer generates local SQL and Azurite credentials in ignored `.env` configuration (or in the file named by `QUILLSIGN_ENV_FILE`, which may live outside the checkout; set Compose's `COMPOSE_ENV_FILES` to the same path), preserving existing values and process-variable precedence. Optional port settings are listed in `.env.example`. Initial image downloads can take several minutes; allow at least 6 GB of Docker memory. The SQL Server image requires Linux amd64; ARM hosts need compatible emulation. SQL Server Developer is for development/testing only.
 
 | Service | Local endpoint | Container endpoint |
 | --- | --- | --- |
