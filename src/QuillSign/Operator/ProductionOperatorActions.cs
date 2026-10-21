@@ -36,14 +36,13 @@ internal sealed class ProductionOperatorActions(ProductionOperatorOptions option
     public async Task<ProductionOperatorView> StatusAsync(HttpContext context,Guid recordId,bool inspect,CancellationToken ct)
     {
         var session=await browser.RequireAsync(context,ProductionOperatorPermission.Status);
-        if(DeletionEnabled)
         {
-            var recorded=await deletion!().ReadRecordedStatusAsync(recordId,ct);
+            var recorded=await coordinator.ReadRecordedDeletionStatusAsync(recordId,ct);
             if(recorded.DeletionId is not null)
             {
                 session.Authority.Demand(options.Policy(),ProductionOperatorPermission.Status,time);
                 await Audit(recordId,"deletion-recorded-status","recorded deletion state; no fresh provider or SQL absence observation",recorded.Sequence,recorded.HeadHash,null,session.Authority,ct);
-                SameDeletion(recorded,await deletion().ReadRecordedStatusAsync(recordId,ct));session.Authority.Demand(options.Policy(),ProductionOperatorPermission.Status,time);
+                SameDeletion(recorded,await coordinator.ReadRecordedDeletionStatusAsync(recordId,ct));session.Authority.Demand(options.Policy(),ProductionOperatorPermission.Status,time);
                 return new(recordId.ToString("N"),"Deletion lifecycle",null,null,null,true,!recorded.ActiveDataCleaned,false,null,null,
                     new(recorded.State,recorded.SqlRemoved,recorded.ActiveDataCleaned,recorded.EligibleAt?.ToString("O")));
             }
@@ -68,7 +67,7 @@ internal sealed class ProductionOperatorActions(ProductionOperatorOptions option
         var op=operation=="Place"?ProductionHoldOperation.Place:operation=="Release"?ProductionHoldOperation.Release:throw ProductionOperatorAuthority.Denied();
         var session=await browser.RequireAsync(context,op==ProductionHoldOperation.Place?ProductionOperatorPermission.PlaceHold:ProductionOperatorPermission.ReleaseHold);
         var selected=browser.Selected(context,session.Ticket);if(selected!=recordId)throw ProductionOperatorAuthority.Denied();
-        var state=await coordinator.ReadVerifiedAsync(recordId,ct);var id=op==ProductionHoldOperation.Place?Guid.NewGuid():holdId??throw ProductionOperatorAuthority.Denied();
+        await DemandNoDeletion(recordId,ct);var state=await coordinator.ReadVerifiedAsync(recordId,ct);var id=op==ProductionHoldOperation.Place?Guid.NewGuid():holdId??throw ProductionOperatorAuthority.Denied();
         if(op==ProductionHoldOperation.Release&&(!state.Holds.TryGetValue(id,out var existing)||!existing.Effective||existing.Release is not null||existing.Released))throw ProductionOperatorAuthority.Denied();
         var command=new ProductionHoldCommand(Guid.NewGuid(),recordId,id,state.RequestRevision,op,purpose,reason,reference);_=command.Digest();
         return new(browser.Confirm(session.Ticket,command,state.HeadHash),operation,id.ToString("N"),purpose);
@@ -78,7 +77,7 @@ internal sealed class ProductionOperatorActions(ProductionOperatorOptions option
         var ticket=(await context.AuthenticateAsync(ProductionOperatorAuthority.CookieScheme)).Ticket??throw ProductionOperatorAuthority.Denied();
         var value=browser.Open(ticket,confirmation);var session=await browser.RequireAsync(context,value.Command.Permission);
         if(browser.Selected(context,ticket)!=value.Command.RecordId)throw ProductionOperatorAuthority.Denied();
-        var current=await coordinator.ReadVerifiedAsync(value.Command.RecordId,ct);if(current.HeadHash!=value.WitnessHead)throw new InvalidDataException("Private state changed.");
+        await DemandNoDeletion(value.Command.RecordId,ct);var current=await coordinator.ReadVerifiedAsync(value.Command.RecordId,ct);if(current.HeadHash!=value.WitnessHead)throw new InvalidDataException("Private state changed.");
         using var stop=CancellationTokenSource.CreateLinkedTokenSource(ct);var remaining=session.Authority.ExpiresAt-time.GetUtcNow();if(remaining<=TimeSpan.Zero)throw ProductionOperatorAuthority.Denied();stop.CancelAfter(remaining);
         var state=await coordinator.SubmitAsync(session.Authority,options.Policy(),value.Command,stop.Token);
         if(state.OutstandingOperation is not null||state.Unacknowledged is not null)return "Command recorded; preservation or release remains pending.";
@@ -91,7 +90,7 @@ internal sealed class ProductionOperatorActions(ProductionOperatorOptions option
     public async Task<byte[]> ExportAsync(HttpContext context,Guid recordId,string purpose,CancellationToken ct)
     {
         if(!ProductionOperatorAuthority.Text(purpose,256))throw ProductionOperatorAuthority.Denied();var session=await browser.RequireAsync(context,ProductionOperatorPermission.ReadEvidence);
-        if(browser.Selected(context,session.Ticket)!=recordId)throw ProductionOperatorAuthority.Denied();var state=await coordinator.ReadVerifiedAsync(recordId,ct);
+        if(browser.Selected(context,session.Ticket)!=recordId)throw ProductionOperatorAuthority.Denied();await DemandNoDeletion(recordId,ct);var state=await coordinator.ReadVerifiedAsync(recordId,ct);
         await using var db=open();await using var tx=await db.Database.BeginTransactionAsync(ct);var controls=await new ProductionHoldControls(db,keys,time).ReadLockedAsync(recordId,ct);
         var plans=controls.Plans.Values.Select(p=>{
             var body=ProductionHoldBundlePlan.OpenVerified(p,keys,time);return new{p.HoldId,p.PlanId,body.Snapshot.Objects,body.Snapshot.Bytes,
@@ -110,8 +109,8 @@ internal sealed class ProductionOperatorActions(ProductionOperatorOptions option
         var backend=Deletion();if(!ProductionOperatorAuthority.Text(purpose,256)||!ProductionOperatorAuthority.Text(deletionOptions!.CompletedCommitmentStatement,2048))throw ProductionOperatorAuthority.Denied();
         var session=await browser.RequireAsync(context,ProductionOperatorPermission.AuthorizeDeletion);
         if(browser.Selected(context,session.Ticket)!=recordId)throw ProductionOperatorAuthority.Denied();
-        var before=await backend.ReadRecordedStatusAsync(recordId,ct);if(before.DeletionId is not Guid id||before.SqlRemoved||before.ActiveDataCleaned)throw ProductionOperatorAuthority.Denied();
-        var facts=await backend.CompletedFactsAsync(recordId,ct);SameDeletion(before,await backend.ReadRecordedStatusAsync(recordId,ct));
+        var before=await backend.ReadRecordedStatusAsync(recordId,ct);if(before.DeletionId is not null||before.SqlRemoved||before.ActiveDataCleaned)throw ProductionOperatorAuthority.Denied();
+        var facts=await backend.CompletedFactsAsync(recordId,ct);var id=facts.DeletionId;if(id==Guid.Empty)throw ProductionOperatorAuthority.Denied();SameDeletion(before,await backend.ReadRecordedStatusAsync(recordId,ct));
         session.Authority.Demand(options.Policy(),ProductionOperatorPermission.AuthorizeDeletion,time);
         await Audit(recordId,"completed-copy-authorization-review",purpose,before.Sequence,before.HeadHash,null,session.Authority,ct);
         SameDeletion(before,await backend.ReadRecordedStatusAsync(recordId,ct));session.Authority.Demand(options.Policy(),ProductionOperatorPermission.AuthorizeDeletion,time);
@@ -126,9 +125,9 @@ internal sealed class ProductionOperatorActions(ProductionOperatorOptions option
             session.Ticket.Properties.IssuedUtc!=value.TicketIssuedAt||session.Ticket.Properties.ExpiresUtc!=value.TicketExpiresAt)throw ProductionOperatorAuthority.Denied();
         if(browser.Selected(context,ticket)!=value.RecordId||deletionOptions!.CompletedCommitmentStatement!=value.Commitment)throw ProductionOperatorAuthority.Denied();
         var current=await backend.ReadRecordedStatusAsync(value.RecordId,ct);
-        if(current.DeletionId!=value.DeletionId||current.Sequence!=value.Sequence||current.HeadHash!=value.WitnessHead||current.SqlRemoved||current.ActiveDataCleaned)throw new InvalidDataException("Private deletion state changed.");
+        if(current.DeletionId is not null||current.Sequence!=value.Sequence||current.HeadHash!=value.WitnessHead||current.SqlRemoved||current.ActiveDataCleaned)throw new InvalidDataException("Private deletion state changed.");
         var facts=await backend.CompletedFactsAsync(value.RecordId,ct);
-        if(facts.PublicationId!=value.PublicationId||facts.PublicationSha256!=value.PublicationSha256||facts.FinalReceiptsSha256!=value.FinalReceiptsSha256)throw new InvalidDataException("The reviewed completed packet changed.");
+        if(facts.DeletionId!=value.DeletionId||facts.PublicationId!=value.PublicationId||facts.PublicationSha256!=value.PublicationSha256||facts.FinalReceiptsSha256!=value.FinalReceiptsSha256)throw new InvalidDataException("The reviewed completed packet changed.");
         SameDeletion(current,await backend.ReadRecordedStatusAsync(value.RecordId,ct));
         var remaining=value.Until-time.GetUtcNow();if(remaining<=TimeSpan.Zero)throw ProductionOperatorAuthority.Denied();
         using var deadline=new CancellationTokenSource(remaining,time);using var stop=CancellationTokenSource.CreateLinkedTokenSource(ct,deadline.Token);
@@ -141,6 +140,8 @@ internal sealed class ProductionOperatorActions(ProductionOperatorOptions option
         await backend.WakeAsync(value.RecordId,stop.Token);authority.Demand(options.Policy(),ProductionOperatorPermission.AuthorizeDeletion,time);
         return "The exact completed-copy statement was recorded. Inspect recorded cleanup status; this statement is not independent proof of copy possession or legal adequacy.";
     }
+    private async Task DemandNoDeletion(Guid recordId,CancellationToken ct)
+    {if((await coordinator.ReadRecordedDeletionStatusAsync(recordId,ct)).DeletionId is not null)throw ProductionOperatorAuthority.Denied();}
     private ProductionDeletionCoordinator Deletion()=>DeletionEnabled?deletion!():throw ProductionOperatorAuthority.Denied();
     private static void SameDeletion(ProductionDeletionStatus a,ProductionDeletionStatus b)
     {if(a.RecordId!=b.RecordId||a.DeletionId!=b.DeletionId||a.Sequence!=b.Sequence||a.HeadHash!=b.HeadHash||a.SqlRemoved!=b.SqlRemoved||a.ActiveDataCleaned!=b.ActiveDataCleaned||a.EligibleAt!=b.EligibleAt)throw new InvalidDataException("Private deletion state changed.");}
