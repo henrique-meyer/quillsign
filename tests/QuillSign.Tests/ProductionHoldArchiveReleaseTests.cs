@@ -182,6 +182,7 @@ public sealed class ProductionHoldArchiveReleaseTests(SqlDatabaseFixture fixture
         internal readonly Dictionary<string, File> Files = []; internal readonly List<string> Calls = []; private readonly Dictionary<string, byte[]> blocks = [];
         internal string Fault = "normal"; internal int Clears, Heads; internal Action<string>? After;
         internal HoldObjectAddress? Source;
+        internal readonly Dictionary<HoldObjectAddress,byte[]> SourceFiles = [];
         private const string Tag = "\"synthetic-etag\"";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -191,7 +192,7 @@ public sealed class ProductionHoldArchiveReleaseTests(SqlDatabaseFixture fixture
             Assert.Equal("storage.example.invalid", request.RequestUri.Host);
             if (Q("restype") == "container")
             {
-                Assert.True(path == "/final" || Source is { } source && path == "/" + source.Area); Assert.Equal(HttpMethod.Get, request.Method);
+                Assert.True(path == "/final" || Source is { } source && path == "/" + source.Area || SourceFiles.Keys.Any(x=>path=="/"+x.Area)); Assert.Equal(HttpMethod.Get, request.Method);
                 var result = Reply([]); result.Headers.TryAddWithoutValidation("x-ms-immutable-storage-with-versioning-enabled", Fault == "versioning-off" ? "false" : "true");
                 if (Fault == "public") result.Headers.TryAddWithoutValidation("x-ms-blob-public-access", "blob"); After?.Invoke("container"); return result;
             }
@@ -200,6 +201,13 @@ public sealed class ProductionHoldArchiveReleaseTests(SqlDatabaseFixture fixture
                 Assert.Equal(HttpMethod.Get, request.Method); Assert.Equal(original.VersionId, Q("versionid")); Assert.Equal(original.ETag, H("If-Match"));
                 var read = Reply(Raw); read.Content.Headers.ContentLength = original.Length;
                 read.Headers.TryAddWithoutValidation("ETag", original.ETag); read.Headers.TryAddWithoutValidation("x-ms-version-id", original.VersionId); return read;
+            }
+            var selected=SourceFiles.SingleOrDefault(x=>path=="/"+x.Key.Area+"/"+x.Key.Name);
+            if(selected.Key is not null)
+            {
+                Assert.Equal(HttpMethod.Get,request.Method);Assert.Equal(selected.Key.VersionId,Q("versionid"));Assert.Equal(selected.Key.ETag,H("If-Match"));
+                var read=Reply(selected.Value);read.Content.Headers.ContentLength=selected.Key.Length;
+                read.Headers.TryAddWithoutValidation("ETag",selected.Key.ETag);read.Headers.TryAddWithoutValidation("x-ms-version-id",selected.Key.VersionId);return read;
             }
             Assert.StartsWith("/final/production-holds/", path); var name = path[7..];
             if (comp == "block") { Assert.Equal(HttpMethod.Put, request.Method); blocks[Q("blockid")] = await request.Content!.ReadAsByteArrayAsync(ct); var staged = Reply([]); staged.StatusCode = HttpStatusCode.Created; return staged; }
