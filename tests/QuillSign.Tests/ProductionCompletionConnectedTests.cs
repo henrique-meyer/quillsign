@@ -255,7 +255,8 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
         using var index=new AzureProductionDeletionRecoveryIndex(new("https://storage.example.invalid/recovery-index"),new Credential(),run.Record.Keys,
             ProductionHoldWitnessJournalTests.Installation,provider.Transport());
         var signals=new DeletionSignals();var workOptions=new WorkOptions{Enabled=true,LeaseSeconds=600};
-        var deletion=new ProductionDeletionCoordinator(fixture.Open,run.Record.Keys,run.Record.Time,run.Record.Journal,holds.Coordinator(),run.Record.Admission,storage,index,options,workOptions,()=>signals);
+        ProductionDeletionCoordinator FreshDeletion()=>new(fixture.Open,run.Record.Keys,run.Record.Time,run.Record.Journal,holds.Coordinator(),run.Record.Admission,storage,index,options,workOptions,()=>signals);
+        var deletion=FreshDeletion();
         var workId=await deletion.PrepareAsync(run.Id);var before=await run.Record.Journal.ReadAsync(run.Id);
         await using(var db=fixture.Open())
         {
@@ -282,11 +283,32 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
         var objectCount=provider.Objects.Count;Assert.Equal(run.Blobs.Objects.Count+completion.Objects.Count+controls.Items.Count,objectCount);
         before=await run.Record.Journal.ReadAsync(run.Id);var facts=await deletion.CompletedFactsAsync(run.Id);
         signals.Selected=workId;
+        var recovered=false;var completedAttempt=1;
         async Task PerformWork()
         {
             await using var db=fixture.Open();
             var store=new WorkStore(db,workOptions,run.Record.Time){DeletionAdmission=deletion};
-            Assert.True(await new WorkProcessor(store,signals,[new ProductionDeletionWork(()=>deletion)],run.Record.Time).RunOnceAsync(default));
+            try{Assert.True(await new WorkProcessor(store,signals,[new ProductionDeletionWork(()=>deletion)],run.Record.Time).RunOnceAsync(default));}
+            catch(Microsoft.Data.SqlClient.SqlException error)when(error.Number==50001&&error.Message=="A current exact production deletion SQL scope is required.")
+            {
+                var pending=(await run.Record.Journal.ReadAsync(run.Id)).Deletion;
+                if(recovered||pending?.Lease is null||DateTimeOffset.UtcNow<=pending.Lease.Until||!pending.SqlReserved||pending.SqlExpectedSha256 is not null||
+                    pending.SqlExpectedWorkJson is not null||pending.SqlCommitted||pending.PlanSha256 is null||pending.StorageReceiptSha256 is null||
+                    pending.Items?.Length!=objectCount||pending.Effects?.Count!=objectCount*2||pending.Effects.Values.Any(x=>x.Result is null))throw;
+                Assert.Equal(1,pending.SqlRound);var irreversible=JsonSerializer.Serialize(pending.Header);var disposition=JsonSerializer.Serialize(pending.Disposition);
+                var plan=JsonSerializer.Serialize(pending.Items);var receipts=JsonSerializer.Serialize(pending.Effects);var deletes=provider.Deletes.Count;
+                var originalSql=pending.SqlStateSha256;var originalContent=pending.ContentSha256;var originalOwner=pending.Lease.Owner;
+                SynchronizeOperatorClock();recovered=true;completedAttempt=checked(pending.Lease.Attempt+1);
+                // Explicit existing maintenance recovery, not another worker delivery or provider attempt.
+                await FreshDeletion().RecoverAsync(run.Id);
+                var resumed=(await run.Record.Journal.ReadAsync(run.Id)).Deletion!;
+                Assert.NotEqual(originalOwner,resumed.Lease!.Owner);Assert.Equal(completedAttempt,resumed.Lease.Attempt);Assert.Equal(2,resumed.SqlRound);
+                Assert.True(resumed.SqlCommitted);Assert.True(resumed.Terminal);Assert.True(resumed.WorkFinished);Assert.False(resumed.SqlReserved);
+                Assert.Equal(irreversible,JsonSerializer.Serialize(resumed.Header));Assert.Equal(disposition,JsonSerializer.Serialize(resumed.Disposition));
+                Assert.Equal(pending.PlanSha256,resumed.PlanSha256);Assert.Equal(plan,JsonSerializer.Serialize(resumed.Items));Assert.Equal(receipts,JsonSerializer.Serialize(resumed.Effects));
+                Assert.Equal(pending.StorageReceiptSha256,resumed.StorageReceiptSha256);Assert.Equal(deletes,provider.Deletes.Count);
+                Assert.NotNull(originalSql);Assert.NotNull(originalContent); // Round two requires the closed protocol's exact FULL-SQL SqlNoEffect reconciliation.
+            }
         }
         var operatorClockGate=new object();
         void SynchronizeOperatorClock(){lock(operatorClockGate){var actual=DateTimeOffset.UtcNow;if(actual>run.Record.Time.Now)run.Record.Time.Now=actual;}}
@@ -319,9 +341,9 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
         {
             Assert.False(await db.Envelopes.AnyAsync(x=>x.Id==run.Id));Assert.False(await db.WorkItems.AnyAsync(x=>x.EnvelopeId==run.Id));Assert.False(await db.AuthTokens.AnyAsync(x=>x.EnvelopeId==run.Id));
             Assert.False(await db.ProductionHoldControls.AnyAsync(x=>x.EnvelopeId==run.Id));
-            var row=await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==workId);Assert.Null(row.EnvelopeId);Assert.Equal(WorkStatus.Completed,row.Status);Assert.Equal(1,row.Attempts);Assert.Null(row.LeaseOwner);Assert.Null(row.LeaseExpiresAt);
+            var row=await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==workId);Assert.Null(row.EnvelopeId);Assert.Equal(WorkStatus.Completed,row.Status);Assert.Equal(completedAttempt,row.Attempts);Assert.Null(row.LeaseOwner);Assert.Null(row.LeaseExpiresAt);
         }
-        Assert.Equal(1,signals.Acknowledged);Assert.Equal(0,signals.Deferred);
+        Assert.Equal(recovered?0:1,signals.Acknowledged);Assert.Equal(0,signals.Deferred);
         await Assert.ThrowsAsync<InvalidDataException>(()=>run.Record.Admission.BeginAsync(run.Id,Guid.NewGuid(),"sender/details","after-deletion"));
         var status=await deletion.ReadRecordedStatusAsync(run.Id);Assert.True(status.SqlRemoved);Assert.True(status.ActiveDataCleaned);Assert.Contains("restore barrier retained",status.State);
         Assert.Equal(2,seal.Requests);Assert.Equal(4,capture.Messages.Count);Assert.Equal(17,completion.Commits);Assert.Equal(0,completion.OtherMutations);
