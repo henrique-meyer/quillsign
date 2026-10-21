@@ -243,7 +243,8 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
             if (status is "Sent" or "Completed" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given" or
                 "signature_adopted" or "field_filled" or "field_cleared" or "signer_review_prepared" or "signer_finish_accepted" or "signer_completed") continue;
             if (status=="Completed"&&audit.GetProperty("Event").GetString() is "completion_prepared" or "completion_executed_sealed" or "completion_certificate_sealed" or
-                "completion_publication_prepared" or "completed" or ProductionRetentionLedger.TerminalEvent or "completion_notification_queued") continue;
+                "completion_publication_prepared" or "completed" or ProductionRetentionLedger.TerminalEvent or "completion_notification_queued" or
+                "completion_access_issued" or "completion_notification_attempt" or "completion_notification_submitted") continue;
             if (audit.GetProperty("Event").GetString() is not (ProductionRetentionLedger.EnrollmentEvent or
                 "draft_created" or "sender_verification_requested" or "sender_email_verified" or
                 "document_uploaded" or "document_replaced" or "preview_confirmed" or "signer_added" or "signer_updated" or "signer_removed" or
