@@ -12,7 +12,9 @@ using QuillSign.Lifecycle;
 
 namespace QuillSign.Work;
 
-public sealed record VerificationPayload(string Token, Guid TokenId);
+public sealed record VerificationPayload(string Token, Guid TokenId,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    DemoCreationOrigin? DemoOrigin = null);
 public sealed record ProtectedWorkPayload(string Protected);
 
 public sealed class EmailPayloadProtection(IDataProtectionProvider provider)
@@ -48,6 +50,14 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
         return await PrepareVerificationCoreAsync(envelopeId,recipient,cancellationToken);
     }
 
+    internal async Task<Guid> PrepareInitialDemoVerificationAsync(Envelope envelope, DemoCreationOrigin origin, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null || !workOptions.Enabled || !emailOptions.Enabled ||
+            !ProductionDemoOrigin.Matches(origin, envelope) ||
+            await db.EmailOutbox.AnyAsync(x => x.EnvelopeId == envelope.Id, ct)) throw new InvalidDataException("Original demo admission is unavailable.");
+        return await PrepareVerificationCoreAsync(envelope.Id, envelope.SenderEmail, ct, origin);
+    }
+
     internal async Task<Guid> PreparePilotVerificationAsync(Guid envelopeId, string recipient,
         Email.Pilot.EmailPilotAdmissionScope scope, CancellationToken cancellationToken)
     {
@@ -56,13 +66,14 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
         return await PrepareVerificationCoreAsync(envelopeId,recipient,cancellationToken);
     }
 
-    private async Task<Guid> PrepareVerificationCoreAsync(Guid envelopeId, string recipient, CancellationToken cancellationToken)
+    private async Task<Guid> PrepareVerificationCoreAsync(Guid envelopeId, string recipient, CancellationToken cancellationToken,
+        DemoCreationOrigin? origin = null)
     {
         recipient = EmailAddress.Normalize(recipient);
         if (!await db.Envelopes.AnyAsync(x => x.Id == envelopeId && x.SenderEmail == recipient && x.Status == EnvelopeStatus.Draft, cancellationToken))
             throw new InvalidOperationException("Verification requires a matching draft sender.");
         if (await db.Suppressions.AnyAsync(x => x.Email == recipient, cancellationToken)) throw new RecipientSuppressedException();
-        var payload = new VerificationPayload(WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32)), Guid.NewGuid());
+        var payload = new VerificationPayload(WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32)), Guid.NewGuid(), origin);
         var email = new EmailOutbox { EnvelopeId = envelopeId, To = recipient, Template = "sender-verification", PayloadJson = protection.Protect(payload), AvailableAt = time.GetUtcNow() };
         var item = new WorkItem { Id = email.Id, EnvelopeId = envelopeId, Kind = WorkKind.Email, AvailableAt = email.AvailableAt,
             PayloadJson = JsonSerializer.Serialize(new { emailId = email.Id }) };

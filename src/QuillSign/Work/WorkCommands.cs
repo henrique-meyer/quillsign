@@ -56,6 +56,7 @@ public static class WorkCommands
                 builder.Services.AddRestrictedEmailPilotRuntime(builder.Configuration);
             }
             if (args[0] == "listen" && !builder.Environment.IsDevelopment()) throw new InvalidOperationException("Listen is Development-only.");
+            if(args[0]!="recover"&&!purgeRecovery)QuillSign.Lifecycle.ProductionHoldRuntime.AddProductionHoldRuntime(builder.Services,builder.Configuration);
             using var app = builder.Build();
             if (!expiry && !app.Services.GetRequiredService<WorkOptions>().Enabled) throw new InvalidOperationException("Durable work is disabled.");
             using var timeout = new CancellationTokenSource(purgeRecovery && sandboxMaintenanceRequested ? TimeSpan.FromSeconds(75) : args[0] == "recover" || purgeRecovery ? TimeSpan.FromSeconds(50) : TimeSpan.FromSeconds(240));

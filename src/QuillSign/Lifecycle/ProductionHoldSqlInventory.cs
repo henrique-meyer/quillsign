@@ -29,7 +29,7 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
     private static readonly HashSet<Type> PilotTypes = [typeof(EmailPilotRunRecord), typeof(EmailPilotSecretRecord),
         typeof(EmailPilotEnrollmentRecord), typeof(EmailPilotReservationRecord), typeof(EmailPilotLookupRequestRecord), typeof(EmailPilotLookupTokenRecord),
         typeof(EmailPilotCloseoutHeaderRecord), typeof(EmailPilotCloseoutOperationRecord)];
-    private static readonly HashSet<Type> KnownTypes = [typeof(Envelope), typeof(Signer), typeof(Recipient), typeof(DocumentField),
+    private static readonly HashSet<Type> KnownTypes = [typeof(ProductionOperatorAccessReceipt), typeof(Envelope), typeof(Signer), typeof(Recipient), typeof(DocumentField),
         typeof(AuthToken), typeof(AuditEvent), typeof(EmailOutbox), typeof(WorkItem), typeof(Suppression), typeof(SignaturePreview),
         typeof(SignerReviewCandidate), typeof(SignerFinishAcceptance), typeof(CompletionCandidate), typeof(CompletionSealOutput),
         typeof(CompletionPublicationIntent), typeof(CompletionPublicationResult), typeof(DocumentRetentionSnapshot),
@@ -118,7 +118,7 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
         foreach (var entity in entities.OrderBy(x => x.GetTableName(), StringComparer.Ordinal))
         {
             ct.ThrowIfCancellationRequested();
-            if (PilotTypes.Contains(entity.ClrType) || entity.ClrType == typeof(Suppression) || entity.ClrType == typeof(ProductionHoldControlRecord)) continue;
+            if (entity.ClrType==typeof(ProductionOperatorAccessReceipt)||PilotTypes.Contains(entity.ClrType) || entity.ClrType == typeof(Suppression) || entity.ClrType == typeof(ProductionHoldControlRecord)) continue;
             var table = entity.GetTableName() ?? throw Invalid(); var schema = entity.GetSchema() ?? "dbo";
             var tableId = Identifier(schema) + "." + Identifier(table);
             var store = StoreObjectIdentifier.Table(table, entity.GetSchema());

@@ -1507,7 +1507,6 @@ namespace QuillSign.Data.Migrations
                         {
                             t.HasCheckConstraint("CK_ProductionHoldControlRecord_Hash", "[Hash] IS NULL OR DATALENGTH([Hash]) = 32");
 
-
                             t.HasCheckConstraint("CK_ProductionHoldControlRecord_PreviousHash", "[PreviousHash] IS NULL OR DATALENGTH([PreviousHash]) = 32");
 
                             t.HasCheckConstraint("CK_ProductionHoldControl_Bounds", "[Sequence] BETWEEN 1 AND 16384 AND [Kind] IN (0,1) AND DATEPART(TZOFFSET,[At])=0 AND DATALENGTH([PolicySha256])=64 AND DATALENGTH([PlanSha256])=64 AND DATALENGTH([ProtectedEvidence]) BETWEEN 64 AND 131072");
@@ -1586,6 +1585,36 @@ namespace QuillSign.Data.Migrations
                             t.HasCheckConstraint("CK_ProductionHoldRequest_Hash", "DATALENGTH([Hash])=32 AND (([Revision]=1 AND [PreviousHash] IS NULL) OR ([Revision]>1 AND DATALENGTH([PreviousHash])=32))");
 
                             t.HasCheckConstraint("CK_ProductionHoldRequest_Ids", "[CommandId]<>'00000000-0000-0000-0000-000000000000' AND [HoldId]<>'00000000-0000-0000-0000-000000000000'");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.ProductionOperatorAccessReceipt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("PayloadSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<string>("ProtectedReceipt")
+                        .IsRequired()
+                        .HasMaxLength(8192)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ProductionOperatorAccessReceipts", null, t =>
+                        {
+                            t.UseSqlOutputClause(false);
+                            t.HasCheckConstraint("CK_OperatorAccess_Receipt", "[Id]<>'00000000-0000-0000-0000-000000000000' AND DATEPART(TZOFFSET,[At])=0 AND DATALENGTH([PayloadSha256])=32 AND DATALENGTH([ProtectedReceipt]) BETWEEN 2 AND 16384");
+
+                            t.HasCheckConstraint("CK_ProductionOperatorAccessReceipt_PayloadSha256", "[PayloadSha256] IS NULL OR DATALENGTH([PayloadSha256]) = 32");
                         });
                 });
 
