@@ -13,6 +13,7 @@ public sealed class ProductionCompletionIntentInputTests
     private static (IDataProtectionProvider Keys, ProductionCompletionInput Input) Create()
     {
         var now = ProductionCompletionInputCodecTests.Now; var hash = Convert.FromHexString(ProductionCompletionInputCodecTests.Hash("synthetic"));
+        hash[0] = 251; // Actual binary producer base64 starts with '+'.
         var envelope = new Envelope { Status = EnvelopeStatus.Sent, SenderEmail = "sender@example.invalid", CreatedAt = now.AddHours(-1), RowVersion = [1,2,3,4,5,6,7,8] };
         var row = new CompletionPublicationIntent { EnvelopeId = envelope.Id, CandidateId = Guid.NewGuid(), ExecutedOutputId = Guid.NewGuid(), CertificateOutputId = Guid.NewGuid(),
             BeforeEnvelopeJson = JsonSerializer.Serialize(envelope), PreparedAt = now, RetentionDays = 365 };
@@ -26,6 +27,18 @@ public sealed class ProductionCompletionIntentInputTests
         var cut = new CompletionInputAuditCut(3, Convert.ToHexStringLower(hash));
         var context = ProductionCompletionInputCodecTests.Context(CompletionSlot.PublicationIntent, ProductionCompletionInputRows.Selectors(row, cut));
         var keys = new EphemeralDataProtectionProvider(); return (keys, ProductionCompletionInput.OwnIntent(keys, envelope.Id, context, row, now, cut));
+    }
+    [Fact]
+    public void Actual_retention_wrapper_escaped_base64_preserves_original_recipe_bytes_and_closed_typed_stage_shape()
+    {
+        var f = Create(); var row = f.Input.Verified.Body.Intent!;
+        var original = row.StageBindingsJson; var recipe = row.RecipeSha256.ToArray();
+        var stages = ProductionCompletionInputCodec.DemandIntentFacts(row);
+        var wrapper = ProductionCompletionRetentionBinding.Read(row)!;
+        Assert.Contains("+", JsonSerializer.Serialize(stages), StringComparison.Ordinal);
+        Assert.Contains("\\u002B", wrapper.Stages.GetRawText(), StringComparison.Ordinal);
+        Assert.Equal(wrapper.Stages.GetRawText(), JsonSerializer.Serialize(JsonSerializer.SerializeToElement(stages)));
+        Assert.Equal(original, row.StageBindingsJson); Assert.Equal(recipe, CompletionPublication.Recipe(row));
     }
     [Fact]
     public void Original_frozen_stage_and_policy_can_open_only_same_result_ID_roster_targets_and_recorded_clock_projection()

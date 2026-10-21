@@ -67,7 +67,12 @@ internal static partial class ProductionCompletionInputCodec
         var production = ProductionCompletionRetentionBinding.Read(row) ?? throw Invalid();
         var raw = production.Stages.GetRawText();
         var stages = JsonSerializer.Deserialize<CompletionStages>(Nested(raw), Json) ?? throw Invalid();
-        if (JsonSerializer.Serialize(stages, Json) != raw || stages.Id != row.CandidateId || stages.EnvelopeId != row.EnvelopeId ||
+        // The existing retention producer serializes Stages as a JsonElement.
+        // That writer escapes decoded '+' in base64 strings, whereas directly
+        // serializing a typed byte[] writes raw '+'. Reproduce the SAME nested
+        // writer; preserve every retained recipe byte and the closed schema.
+        var canonical = JsonSerializer.Serialize(JsonSerializer.SerializeToElement(stages, Json), Json);
+        if (canonical != raw || stages.Id != row.CandidateId || stages.EnvelopeId != row.EnvelopeId ||
             !Hash32(stages.RecipeSha256) || stages.RowVersion is not { Length: 8 } || !Hash32(stages.FrozenStateSha256) ||
             stages.AuditSequence is < 1 or > 512 || !Hash32(stages.AuditAnchor) || stages.outputs is not { Length: 2 } ||
             stages.outputs[0]?.Id != row.ExecutedOutputId || stages.outputs[1]?.Id != row.CertificateOutputId ||
