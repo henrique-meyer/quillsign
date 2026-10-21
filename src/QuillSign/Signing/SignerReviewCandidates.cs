@@ -187,6 +187,8 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
     private async Task<State?> Current(ClaimsPrincipal principal,string publicId,CancellationToken ct)
     {
         var context=await access.GetLockedContextAsync(principal,publicId,ct); if(context?.ConsentAt is null)return null;
+        if(!await CompositionAllowedLocked(context,ct))return null;
+        if(HoldAdmission is not null){await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);if(!access.IsLive(context))return null;}
         var identity=context.Identity; var envelope=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==identity.EnvelopeId,ct);
         var signer=await db.Signers.AsNoTracking().SingleAsync(x=>x.Id==identity.SignerId && x.EnvelopeId==identity.EnvelopeId,ct);
         var fields=await db.Fields.AsNoTracking().Where(x=>x.EnvelopeId==identity.EnvelopeId && x.SignerId==identity.SignerId).OrderBy(x=>x.Id).Take(201).ToArrayAsync(ct);
@@ -195,6 +197,7 @@ public sealed class SignerReviewCandidates(QuillSignDbContext db,SignerAccess ac
             fields.Any(f=>f.Required && f.Type!=FieldType.DateSigned && !SignerFields.Item(f,signer).Filled) ||
             !fields.Any(f=>f.Type==FieldType.Signature && SignerFields.Item(f,signer).Filled))return null;
         var assets=await adoption.GetCurrentLockedAsync(identity,ct); if(assets is null)return null;
+        if(HoldAdmission is not null){await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);if(!access.IsLive(context))return null;}
         PageGeometry[]? pages;
         try { pages=JsonSerializer.Deserialize<PageGeometry[]>(envelope.PageSizesJson??"null"); } catch(JsonException) { return null; }
         if(pages?.Length!=envelope.PageCount)return null;

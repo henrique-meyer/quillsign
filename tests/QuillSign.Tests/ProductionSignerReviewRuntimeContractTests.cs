@@ -99,6 +99,18 @@ public sealed class ProductionSignerReviewRuntimeContractTests(SqlDatabaseFixtur
         Assert.Equal(WorkStatus.Completed,(await readback.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==lease.Id)).Status);
         Assert.False(await readback.WorkItems.AnyAsync(x=>x.EnvelopeId==flow.Id&&x.Kind==WorkKind.Sealing));
     }
+    [Fact]
+    public async Task A_known_hold_blocks_new_review_before_reading_even_the_saved_adopted_mark_bytes()
+    {
+        await using var flow=await Flow.Create(fixture);
+        using var holds=new ProductionSignerMutationAdmissionTests.Holds(fixture,flow.Delivered);
+        var hold=await holds.Place(0);var copies=flow.Blobs.Copies;var state=await flow.Record.Journal.ReadAsync(flow.Id);
+        await Assert.ThrowsAsync<DocumentRejectedException>(()=>flow.Prepare());
+        Assert.Equal(copies,flow.Blobs.Copies);Assert.Equal(0,((ReviewStore)flow.Store).Writes);Assert.Equal(0,flow.Blobs.Deletes);
+        Assert.Equal(state.HeadHash,(await flow.Record.Journal.ReadAsync(flow.Id)).HeadHash);
+        await using var db=fixture.Open();Assert.False(await db.SignerReviewCandidates.AnyAsync(x=>x.EnvelopeId==flow.Id));
+        Assert.False(await holds.Release(hold,1));
+    }
     internal sealed class Flow(SqlDatabaseFixture fixture,ProductionSignaturePreviewAdmissionTests.Flow marks,IProductionSignerReviewStore store):IAsyncDisposable
     {
         internal readonly ProductionSignaturePreviewAdmissionTests.Flow Marks=marks;
