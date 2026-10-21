@@ -34,8 +34,10 @@ internal sealed class ProductionSignerReviewWrite
         if (operationId == Guid.Empty || inputObjectId == Guid.Empty || inputObjectId == candidate.PdfObjectId || inputObjectId == candidate.SourceObjectId ||
             rendered.Bytes is not { Length: > 0 and <= ProductionRecordReviewWriteContract.MaximumPdfBytes } ||
             request.Fields is null || request.Fields.Count > 200 || pages.Count is < 1 or > 200 || request.Marks is not { } marks ||
+            new[] { candidate.Id, marks.AdoptionId, marks.SignatureObjectId, marks.InitialsObjectId }.Contains(inputObjectId) ||
             marks.Signature is not { Length: > 0 and <= SignaturePng.MaximumBytes } || marks.Initials is not { Length: > 0 and <= SignaturePng.MaximumBytes } ||
-            ip is { Length: > 64 }) throw ProductionReviewInputCodec.Invalid();
+            request.Fields.Any(x => x is null || x.Revision is not { Length: 8 } || x.ImageSha256 is not (null or { Length: 32 }) || x.Value is { Length: > 4000 }) ||
+            pages.Any(x => x is null || x.MediaBox is not { Length: 4 } || x.CropBox is not { Length: 4 }) || ip is { Length: > 64 }) throw ProductionReviewInputCodec.Invalid();
         // Own every byte before protection or any caller-controlled await. Raw
         // images are verified, then represented only by their exact references.
         var signature = marks.Signature.ToArray(); var initials = marks.Initials.ToArray();
@@ -90,6 +92,7 @@ internal static class ProductionRecordReviewWriteContract
     internal const int MaximumPdfBytes = 64 * 1024 * 1024;
     private static readonly JsonSerializerOptions Json = new() { Converters = { new JsonStringEnumConverter() }, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     internal static readonly string[] Columns = ["Id", "EnvelopeId", "SignerId", "AdoptionId", "SourceObjectId", "PdfObjectId", "PdfLength", "SourceSha256", "DisclosureSha256", "SessionSha256", "SnapshotSha256", "PdfSha256", "RecipeSha256", "RendererVersion", "SnapshotVersion", "ProspectiveDate", "PreparedAt", "ExpiresAt", "UsedAt", "SupersededAt", "RowVersion"];
+    private static readonly string[] AuditColumns = ["Id", "EnvelopeId", "Sequence", "At", "ActorType", "ActorId", "ActorEmail", "Event", "Ip", "UserAgent", "DataJson", "PrevHash", "Hash"];
     internal static string Row(SignerReviewCandidate row)
     {
         if (row.RendererVersion is not { Length: > 0 and <= 64 } || row.SnapshotVersion is not { Length: > 0 and <= 64 } ||
@@ -121,7 +124,7 @@ internal static class ProductionRecordReviewWriteContract
             !ProductionReviewInputCodec.IsHash(plan.BaselineProjectionSha256) || plan.AuditId < 1 || plan.AuditSequence < 1 || !ProductionReviewInputCodec.IsHash(plan.AuditSha256) ||
             plan.Ip is { Length: > 64 } || plan.UserAgent is { Length: > 2048 } || plan.Superseded.IsDefault || plan.Superseded.Length > 20 ||
             plan.Superseded.Select(x => x.CandidateId).Distinct().Count() != plan.Superseded.Length ||
-            plan.Superseded.Any(x => x.CandidateId == Guid.Empty || x.CandidateId == row.Id || Convert.FromBase64String(x.OriginalRowVersion).Length != 8) ||
+            plan.Superseded.Any(x => x.CandidateId == Guid.Empty || x.CandidateId == row.Id || !RowVersion(x.OriginalRowVersion)) ||
             row.RendererVersion != SignerPdfRenderer.Version || row.SnapshotVersion != "signer-review-v1" || row.PreparedAt.Offset != TimeSpan.Zero || row.ExpiresAt.Offset != TimeSpan.Zero ||
             plan.AccessExpiresAt.Offset != TimeSpan.Zero || id.SessionExpiresAt.Offset != TimeSpan.Zero ||
             plan.RetentionDeadline is { Offset: var ro } && ro != TimeSpan.Zero || plan.SigningDeadline is { Offset: var so } && so != TimeSpan.Zero ||
@@ -138,6 +141,8 @@ internal static class ProductionRecordReviewWriteContract
     internal static bool Receipt(Guid record, ProductionRecordWriteReceipt? receipt) => receipt is not null && Item(record, receipt.Item) &&
         Opaque(receipt.VersionId) && Opaque(receipt.ETag);
     private static bool Opaque(string? value) => value is { Length: > 0 and <= 256 } && value != "*" && value.All(x => x is >= '!' and <= '~');
+    private static bool RowVersion(string? value)
+    { if (value is not { Length: 12 }) return false; Span<byte> bytes = stackalloc byte[8]; return Convert.TryFromBase64String(value, bytes, out var length) && length == 8 && Convert.ToBase64String(bytes) == value; }
     internal static bool Complete(HoldWitnessReviewWrites saved) => saved.Begun.Count == 2 && saved.Receipts.Count == 2 &&
         new[] { saved.Plan.Input, saved.Plan.Pdf }.All(x => saved.Begun.Contains(x.Blob) && saved.Receipts.TryGetValue(x.Blob, out var r) && r.Item == x && Receipt(x.Blob.EnvelopeId, r));
     internal static DateTimeOffset Earlier(DateTimeOffset first, DateTimeOffset? second) => second is { } end && end < first ? end : first;
@@ -154,6 +159,8 @@ internal static class ProductionRecordReviewWriteContract
         var seenSuperseded = new HashSet<Guid>(); var seenCandidate = false; var seenAudit = false;
         var tables = sql.RootElement.GetProperty("Tables").EnumerateArray().Select(table => {
             var name = table.GetProperty("Table").GetString(); if (name is not ("SignerReviewCandidates" or "AuditEvents")) return table.Clone();
+            if (name == "AuditEvents" && (!typeof(AuditEvent).GetProperties().Select(x => x.Name).Order(StringComparer.Ordinal).SequenceEqual(AuditColumns.Order(StringComparer.Ordinal)) ||
+                !table.GetProperty("Columns").EnumerateArray().Select(x => x.GetString()!.Split(':')[0]).Order(StringComparer.Ordinal).SequenceEqual(AuditColumns.Order(StringComparer.Ordinal)))) throw Invalid();
             var rows = new List<JsonElement>();
             foreach (var raw in table.GetProperty("Rows").EnumerateArray())
             {
@@ -210,7 +217,11 @@ internal sealed partial class ProductionRecordOperationAdmission
         var retention = await ProductionRecordRetentionAccess.ReadLockedAsync(db, envelope, time, ct);
         var row = ProductionRecordReviewWriteContract.ReadRow(write.CandidateRowJson);
         var old = await db.SignerReviewCandidates.AsNoTracking().Where(x => x.EnvelopeId == scope.RecordId && x.SignerId == row.SignerId).ToArrayAsync(ct);
-        if (old.Length >= 20 || old.Any(x => x.Id == row.Id || x.PdfObjectId == write.Pdf.Blob.ObjectId || x.PdfObjectId == write.Input.Blob.ObjectId)) throw Invalid();
+        if (old.Length >= 20 || old.Count(x => x.UsedAt is null && x.SupersededAt is null && x.ExpiresAt > row.PreparedAt && x.SnapshotSha256.SequenceEqual(row.SnapshotSha256)) >= 2 ||
+            old.Any(x => x.Id == row.Id || x.PdfObjectId == write.Pdf.Blob.ObjectId || x.PdfObjectId == write.Input.Blob.ObjectId || x.SourceObjectId == write.Pdf.Blob.ObjectId || x.SourceObjectId == write.Input.Blob.ObjectId) ||
+            await db.SignaturePreviews.AnyAsync(x => x.EnvelopeId == scope.RecordId &&
+                (x.SignatureObjectId == write.Input.Blob.ObjectId || x.InitialsObjectId == write.Input.Blob.ObjectId || x.DocumentId == write.Input.Blob.ObjectId ||
+                 x.SignatureObjectId == write.Pdf.Blob.ObjectId || x.InitialsObjectId == write.Pdf.Blob.ObjectId || x.DocumentId == write.Pdf.Blob.ObjectId), ct)) throw Invalid();
         var superseded = old.Where(x => x.UsedAt is null && x.SupersededAt is null && x.ExpiresAt > row.PreparedAt && !x.SnapshotSha256.SequenceEqual(row.SnapshotSha256))
             .Select(x => new ReviewSupersede(x.Id, Convert.ToBase64String(x.RowVersion))).OrderBy(x => x.CandidateId).ToArray();
         var plan = write.Plan(retention.Deadline, envelope.ExpiresAt, new('0', 64), superseded);

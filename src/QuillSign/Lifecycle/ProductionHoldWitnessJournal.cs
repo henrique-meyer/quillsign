@@ -210,9 +210,21 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         OperationId = operation.OperationId, OperationKind = operation.Kind, OperationReference = operation.Reference,
         RequestRevision = operation.RequestRevision, RequestFenceHash = operation.RequestFenceHash, PreviewWriteVersion = ProductionRecordPreviewWriteContract.Version };
 
-    internal Task<HoldWitnessState> PrepareReviewWritesAsync(Guid recordId, HoldWitnessOperation operation,
+    internal async Task<HoldWitnessState> PrepareReviewWritesAsync(Guid recordId, HoldWitnessOperation operation,
         HoldWitnessReviewPlan plan, Guid eventId, CancellationToken ct = default)
-        => Change(recordId, eventId, HoldWitnessKind.ReviewWritesPrepared, ct, x => ReviewEvent(x, operation) with { ReviewPlan = plan });
+    {
+        var prior = await Read(recordId, ct); var proposed = ReviewEvent(New(recordId, eventId, HoldWitnessKind.ReviewWritesPrepared), operation) with { ReviewPlan = plan };
+        var replay = prior.Events.SingleOrDefault(x => x.EventId == eventId);
+        if (replay is not null)
+        {
+            // ImmutableArray compares backing storage identity. Authenticate the
+            // complete canonical header bytes, not an array reference, on replay.
+            if (replay.ReviewPlan is not { } original || ProductionRecordReviewWriteContract.PlanSha256(original) != ProductionRecordReviewWriteContract.PlanSha256(plan) ||
+                replay != (proposed with { At = replay.At, Sequence = replay.Sequence, PreviousHash = replay.PreviousHash, ReviewPlan = original })) throw Invalid();
+            return prior.State;
+        }
+        return await Append(prior, proposed, ct);
+    }
     internal async Task<bool> BeginReviewWriteAsync(Guid recordId, HoldWitnessOperation operation, ProductionRecordWriteDescriptor item,
         Guid eventId, CancellationToken ct = default)
     {
@@ -339,7 +351,18 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         }
         finally { CryptographicOperations.ZeroMemory(cipher); }
         var read = await Read(value.RecordId, ct);
-        if (read.Events.Length < value.Sequence || read.Events[(int)value.Sequence - 1] != value) throw Invalid();
+        if (read.Events.Length < value.Sequence) throw Invalid();
+        var actual = read.Events[(int)value.Sequence - 1];
+        if (value.Kind == HoldWitnessKind.ReviewWritesPrepared)
+        {
+            // A deserialized nonempty immutable array has a different backing
+            // store. Verify all header bytes and retain the exact old equality
+            // check for every other event family.
+            if (value.ReviewPlan is not { } plan || actual.ReviewPlan is not { } saved ||
+                ProductionRecordReviewWriteContract.PlanSha256(plan) != ProductionRecordReviewWriteContract.PlanSha256(saved) ||
+                actual != (value with { ReviewPlan = saved })) throw Invalid();
+        }
+        else if (actual != value) throw Invalid();
         return read.State;
     }
 

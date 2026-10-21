@@ -41,13 +41,26 @@ internal sealed class VerifiedReviewInput
         RecordId = value.RecordId; OperationId = value.OperationId; CandidateId = value.CandidateId;
         PlanSha256 = ProductionRecordReviewWriteContract.PlanSha256(plan);
     }
-    internal static VerifiedReviewInput Authenticate(byte[] body, HoldWitnessReviewPlan plan)
+    internal static VerifiedReviewInput OpenVerified(IDataProtectionProvider keys, HoldWitnessReviewPlan plan, byte[] ciphertext)
+    {
+        ProductionRecordReviewWriteContract.Validate(plan);
+        if (ciphertext is not { Length: > 0 and <= ProductionReviewInputCodec.MaximumCipherBytes }) throw ProductionReviewInputCodec.Invalid();
+        ciphertext = ciphertext.ToArray();
+        if (ciphertext.LongLength != plan.Input.Length || ProductionReviewInputCodec.Hash(ciphertext) != plan.Input.Sha256) throw ProductionReviewInputCodec.Invalid();
+        var row = ProductionRecordReviewWriteContract.ReadRow(plan.CandidateRowJson); byte[] plain;
+        try { plain = keys.CreateProtector("QuillSign.ProductionReviewInput.v1", row.EnvelopeId.ToString("N"), plan.OperationId.ToString("N"), row.Id.ToString("N")).Unprotect(ciphertext); }
+        catch (CryptographicException error) { throw new InvalidDataException("The retained review input cannot be authenticated.", error); }
+        if (plain.Length is < 1 or > ProductionReviewInputCodec.MaximumPlainBytes) throw ProductionReviewInputCodec.Invalid();
+        return Authenticate(plain, plan);
+    }
+    private static VerifiedReviewInput Authenticate(byte[] body, HoldWitnessReviewPlan plan)
     {
         var value = ProductionReviewInputCodec.Read(body); ProductionReviewInputCodec.Validate(value);
         if (value.OperationId != plan.OperationId || value.CandidateRowJson != plan.CandidateRowJson || value.Identity != plan.Identity ||
             value.AccessExpiresAt != plan.AccessExpiresAt || value.AuditId != plan.AuditId || value.AuditSequence != plan.AuditSequence ||
             value.AuditSha256 != plan.AuditSha256 || ProductionReviewInputCodec.Hash(Encoding.UTF8.GetBytes(value.OriginalSnapshotJson)) != plan.SnapshotSha256 ||
-            ProductionReviewInputCodec.Hash(body) != plan.InputPlainSha256) throw ProductionReviewInputCodec.Invalid();
+            ProductionReviewInputCodec.Hash(body) != plan.InputPlainSha256 || value.Render.Marks is not { } marks ||
+            new[] { value.CandidateId, marks.AdoptionId, marks.SignatureObjectId, marks.InitialsObjectId }.Contains(plan.Input.Blob.ObjectId)) throw ProductionReviewInputCodec.Invalid();
         return new(body, plan);
     }
 }
@@ -72,16 +85,7 @@ internal static class ProductionReviewInputCodec
         if (cipher.Length > MaximumCipherBytes) throw Invalid(); return cipher;
     }
     internal static VerifiedReviewInput OpenVerified(IDataProtectionProvider keys, HoldWitnessReviewPlan plan, byte[] ciphertext)
-    {
-        ProductionRecordReviewWriteContract.Validate(plan);
-        if (ciphertext is not { Length: > 0 and <= MaximumCipherBytes } || ciphertext.LongLength != plan.Input.Length || Hash(ciphertext) != plan.Input.Sha256) throw Invalid();
-        var row = ProductionRecordReviewWriteContract.ReadRow(plan.CandidateRowJson);
-        byte[] plain;
-        try { plain = Protector(keys, row.EnvelopeId, plan.OperationId, row.Id).Unprotect(ciphertext.ToArray()); }
-        catch (CryptographicException error) { throw new InvalidDataException("The retained review input cannot be authenticated.", error); }
-        if (plain.Length is < 1 or > MaximumPlainBytes) throw Invalid();
-        return VerifiedReviewInput.Authenticate(plain, plan);
-    }
+        => VerifiedReviewInput.OpenVerified(keys, plan, ciphertext);
     private static IDataProtector Protector(IDataProtectionProvider keys, Guid record, Guid operation, Guid candidate)
         => keys.CreateProtector("QuillSign.ProductionReviewInput.v1", record.ToString("N"), operation.ToString("N"), candidate.ToString("N"));
     internal static ReviewInputV1 Read(byte[] bytes)
@@ -126,6 +130,13 @@ internal static class ProductionReviewInputCodec
                 else if (reader.TokenType == JsonTokenType.StartArray) { arrays.Push((reader.CurrentDepth, 0, property is "MediaBox" or "CropBox" ? 4 : 200)); property = null; }
                 else if (reader.TokenType == JsonTokenType.EndArray) { var a = arrays.Pop(); if (a.Maximum == 4 && a.Count != 4) throw Invalid(); }
                 if (reader.TokenType is JsonTokenType.String or JsonTokenType.PropertyName && reader.ValueSpan.Length > MaximumPlainBytes) throw Invalid();
+                if (reader.TokenType == JsonTokenType.String)
+                {
+                    var limit = property switch { "RowVersion" or "signerVersion" or "Revision" => 12,
+                        "SignatureSha256" or "InitialsSha256" or "ImageSha256" => 44,
+                        "Label" or "Placeholder" or "DateFormat" => 512 * 6, "Value" => 4000 * 6, _ => MaximumPlainBytes };
+                    if (reader.ValueSpan.Length > limit) throw Invalid(); property = null;
+                }
             }
         }
         catch (JsonException error) { throw new InvalidDataException("The bounded review input JSON is malformed.", error); }
@@ -152,7 +163,8 @@ internal static class ProductionReviewInputCodec
             snapshot.signerVersion is not { Length: 8 } || snapshot.PageCount != body.Pages.Length || snapshot.adoptionId != row.AdoptionId ||
             snapshot.FullName != render.FullName || snapshot.ConsentAt is null || snapshot.ConsentAt > row.PreparedAt ||
             render.EnvelopeId != body.RecordId || render.SignerId != row.SignerId || render.AdoptionId != row.AdoptionId || render.FinishAt != row.PreparedAt ||
-            render.Fields.Length != snapshot.fields.Length || render.Marks is not { } marks || marks.AdoptionId != row.AdoptionId ||
+            render.Fields.Length != snapshot.fields.Length || !render.Fields.Select(x => x.Id).SequenceEqual(snapshot.fields.Select(x => x.Id)) ||
+            render.Fields.Select(x => x.Id).Distinct().Count() != render.Fields.Length || render.Marks is not { } marks || marks.AdoptionId != row.AdoptionId ||
             marks.SignatureObjectId == Guid.Empty || marks.InitialsObjectId == Guid.Empty || marks.SignatureObjectId == marks.InitialsObjectId ||
             marks.SignatureObjectId == row.PdfObjectId || marks.InitialsObjectId == row.PdfObjectId || marks.SignatureObjectId == row.SourceObjectId || marks.InitialsObjectId == row.SourceObjectId ||
             marks.NormalizationVersion != SignaturePng.Version || snapshot.NormalizationVersion != marks.NormalizationVersion ||
