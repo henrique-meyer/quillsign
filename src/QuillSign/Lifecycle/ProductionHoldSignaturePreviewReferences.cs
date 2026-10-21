@@ -43,6 +43,61 @@ internal static class ProductionHoldSignaturePreviewReferences
         IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, Guid invitationId)
         => Verify(projection, objects, keys, invitationId, typedHistory);
 
+    // Sequential factual metadata. The complete graph separately proves each
+    // invitation/consent/acceptance and the coordinator proves each write plan.
+    internal static IReadOnlyList<HoldVerifiedSignaturePreview> ReadVerifiedSequential(JsonElement sql,
+        IReadOnlyList<HoldObjectEvidence> objects)
+    {
+        var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
+        var raw = tables["SignaturePreviews"]; if (raw.GetArrayLength() > 4096) throw Invalid();
+        foreach (var row in raw.EnumerateArray())
+        {
+            var columns = row.EnumerateObject().Select(x => x.Name).ToArray();
+            if (columns.Length != PreviewColumns.Count || !PreviewColumns.SetEquals(columns)) throw Invalid();
+        }
+        var id = sql.GetProperty("RecordId").GetGuid(); var captured = sql.GetProperty("CapturedAt").GetDateTimeOffset();
+        var e = tables["Envelopes"].Deserialize<Envelope[]>(Rows)!.Single();
+        var parties = tables["Signers"].Deserialize<Signer[]>(Rows)!;
+        var finishes = tables["SignerFinishAcceptances"].Deserialize<SignerFinishAcceptance[]>(Rows)!;
+        var audits = tables["AuditEvents"].Deserialize<AuditEvent[]>(Rows)!;
+        var previews = raw.Deserialize<SignaturePreview[]>(Rows)!;
+        if (previews.GroupBy(x => x.SignerId).Any(x => x.Count() > SignatureAdoption.MaximumPreviewsPerSigner) ||
+            previews.Select(x => x.Id).Distinct().Count() != previews.Length ||
+            previews.SelectMany(x => new[] { x.SignatureObjectId, x.InitialsObjectId }).Distinct().Count() != previews.Length * 2) throw Invalid();
+        var result = new List<HoldVerifiedSignaturePreview>();
+        foreach (var p in previews)
+        {
+            var signer = parties.Single(x => x.Id == p.SignerId);
+            var consent = audits.Single(x => x.Event == "consent_given" && x.ActorId == signer.Id);
+            var finish = finishes.SingleOrDefault(x => x.SignerId == signer.Id);
+            var (source, hash) = ProductionHoldAdoptionAuditReferences.Source(e, signer, parties, finishes, p.CreatedAt);
+            if (p.Id == Guid.Empty || p.EnvelopeId != id || p.DocumentId != source || signer.Status is not (SignerStatus.Viewed or SignerStatus.Signed) ||
+                signer.ConsentAt is not { } accepted || accepted.Offset != TimeSpan.Zero || p.CreatedAt < accepted || p.CreatedAt < consent.At || finish is not null && p.CreatedAt > finish.FinishedAt ||
+                p.SignatureObjectId == Guid.Empty || p.InitialsObjectId == Guid.Empty || p.SignatureObjectId == p.InitialsObjectId ||
+                new[] { p.SignatureObjectId, p.InitialsObjectId }.Any(x => x == source || x.ToString("N") == e.PdfBlob || x.ToString("N") == e.OriginalBlob) ||
+                p.CreatedAt.Offset != TimeSpan.Zero || p.CreatedAt > captured || p.ExpiresAt.Offset != TimeSpan.Zero || p.ExpiresAt <= p.CreatedAt ||
+                p.ExpiresAt > p.CreatedAt.AddMinutes(SignatureAdoption.PreviewMinutes) || e.ExpiresAt is { } deadline && p.ExpiresAt > deadline ||
+                p.UsedAt is { } used && (used.Offset != TimeSpan.Zero || used < p.CreatedAt || used >= p.ExpiresAt || used > captured) ||
+                p.SessionSha256 is not { Length: 32 } || p.BaselineSignerVersion is not { Length: 8 } ||
+                p.SignatureWidth is < 17 or > SignaturePng.MaximumWidth || p.InitialsWidth is < 17 or > SignaturePng.MaximumWidth ||
+                p.SignatureHeight is < 17 or > SignaturePng.MaximumHeight || p.InitialsHeight is < 17 or > SignaturePng.MaximumHeight ||
+                p.Method is not (SignatureMethod.Typed or SignatureMethod.Drawn or SignatureMethod.Uploaded) || p.NormalizationVersion != Normalizer || p.AdoptionVersion != Adoption ||
+                (p.Method == SignatureMethod.Typed ? !Descriptor(p.TypedName, 200) || !Descriptor(p.TypedInitials, 20) : p.TypedName is not null || p.TypedInitials is not null) ||
+                Hex(p.DocumentSha256) != Hex(hash) || Hex(p.DisclosureSha256) != Hex(e.ErsdSha256!) ||
+                !objects.Any(x => x.Address.Area == "normalized" && x.Address.Name == $"{id:N}/{source:N}" && x.Sha256 == Hex(hash))) throw Invalid();
+            foreach (var (objectId, digest) in new[] { (p.SignatureObjectId, p.SignatureSha256), (p.InitialsObjectId, p.InitialsSha256) })
+                if (!objects.Any(x => x.Address.Area == "normalized" && x.Address.Name == $"{id:N}/{objectId:N}" &&
+                    x.Address.Length is > 0 and <= SignaturePng.MaximumBytes && x.Sha256 == Hex(digest))) throw Invalid();
+            if (previews.Count(x => x.SignerId == signer.Id && x.CreatedAt <= p.CreatedAt && x.ExpiresAt > p.CreatedAt &&
+                (x.UsedAt is null || x.UsedAt > p.CreatedAt)) > SignatureAdoption.MaximumActivePreviews) throw Invalid();
+            result.Add(new(p.Id, p.SignerId, p.DocumentId, p.SignatureObjectId, p.InitialsObjectId, Hex(p.SignatureSha256), Hex(p.InitialsSha256),
+                Hex(p.DocumentSha256), Hex(p.DisclosureSha256), Hex(p.SessionSha256), Convert.ToBase64String(p.BaselineSignerVersion),
+                p.SignatureWidth, p.SignatureHeight, p.InitialsWidth, p.InitialsHeight, p.Method, p.TypedName, p.TypedInitials,
+                p.NormalizationVersion, p.AdoptionVersion, p.CreatedAt, p.ExpiresAt, p.UsedAt));
+        }
+        return result.AsReadOnly();
+    }
+
     private static HoldSignatureProgress Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, Guid invitationId, JsonElement? typedHistory = null)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));

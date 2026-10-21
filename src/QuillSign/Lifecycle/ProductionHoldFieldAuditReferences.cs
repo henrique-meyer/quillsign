@@ -26,7 +26,16 @@ internal static class ProductionHoldFieldAuditReferences
         catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException or FormatException or NullReferenceException)
         { throw Invalid(error); }
     }
-    private static void Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IReadOnlyList<FieldInput> definitions, IReadOnlyList<HoldAdoptedMark> adoptions)
+    internal static void DemandSnapshot(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects,
+        IReadOnlyList<FieldInput> definitions, IReadOnlyList<HoldAdoptedMark> adoptions, Guid signerId,
+        long auditCut, IReadOnlyList<DocumentField> fields, DateTimeOffset preparedAt)
+    {
+        try { Verify(sql, objects, definitions, adoptions, new(signerId, auditCut, fields, preparedAt)); }
+        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException or FormatException or NullReferenceException)
+        { throw Invalid(error); }
+    }
+    private sealed record Snapshot(Guid Signer, long Cut, IReadOnlyList<DocumentField> Fields, DateTimeOffset At);
+    private static void Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IReadOnlyList<FieldInput> definitions, IReadOnlyList<HoldAdoptedMark> adoptions, Snapshot? snapshot = null)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         T[] Table<T>(string name, int maximum)
@@ -57,16 +66,16 @@ internal static class ProductionHoldFieldAuditReferences
         }
         foreach (var group in retired.Values.GroupBy(x => x.Revision.SignerId)) addresses[group.Key] = group.OrderBy(x => x.Revision.Number).First().Revision.OldEmail;
         var corrections = new HashSet<Guid>();
-        foreach (var audit in audits.Where(x => x.Event is "field_filled" or "field_cleared" or SignerContactHistory.Event).OrderBy(x => x.Sequence))
+        foreach (var audit in audits.Where(x => (snapshot is null || x.Sequence <= snapshot.Cut) && x.Event is "field_filled" or "field_cleared" or SignerContactHistory.Event).OrderBy(x => x.Sequence))
         {
             if (audit.EnvelopeId != id || audit.Sequence <= sent.Sequence || audit.At.Offset != TimeSpan.Zero || audit.At < e.SentAt || audit.At > captured ||
                 !Bounded(audit.DataJson, 64 * 1024) || !Same(audit.Hash, AuditHash.Compute(audit))) throw Invalid();
             if (audit.Event == SignerContactHistory.Event)
             {
-                var (revision, snapshot) = retired.Values.Single(x => SignerContactHistory.Canonical(x.Revision) == audit.DataJson);
+                var (revision, retiredSnapshot) = retired.Values.Single(x => SignerContactHistory.Canonical(x.Revision) == audit.DataJson);
                 if (!corrections.Add(revision.Id) || audit.ActorType != PartyType.Sender || audit.ActorId is not null || audit.ActorEmail != e.SenderEmail ||
                     revision.ChangedAt != audit.At || addresses[revision.SignerId] != revision.OldEmail || finishes.Any(x => x.SignerId == revision.SignerId)) throw Invalid();
-                MatchFields(snapshot.Fields, revision.SignerId, audit.At);
+                MatchFields(retiredSnapshot.Fields, revision.SignerId, audit.At);
                 foreach (var field in assigned.Values.Where(x => x.SignerId == revision.SignerId)) states[field.Id] = Empty;
                 addresses[revision.SignerId] = revision.NewEmail; resetAfter[revision.SignerId] = audit.Sequence; continue;
             }
@@ -103,6 +112,12 @@ internal static class ProductionHoldFieldAuditReferences
             if (previous.Value == data.value && previous.Adoption == data.adoptionId && previous.ImageHash == data.imageSha256 && previous.Upper is not null) throw Invalid();
             var lower = audits.Single(x => x.Sequence == audit.Sequence - 1).At;
             states[data.fieldId] = new(data.value, data.adoptionId, data.imageSha256, lower, audit.At);
+        }
+        if (snapshot is not null)
+        {
+            if (contacts.Length != 0 || snapshot.Signer == Guid.Empty || !audits.Any(x => x.Sequence == snapshot.Cut) ||
+                snapshot.At.Offset != TimeSpan.Zero || snapshot.At > captured) throw Invalid();
+            MatchFields(snapshot.Fields, snapshot.Signer, snapshot.At); return;
         }
         if (corrections.Count != contacts.Length) throw Invalid();
         foreach (var signer in signers)
@@ -143,7 +158,7 @@ internal static class ProductionHoldFieldAuditReferences
                 {
                     // This is only the server-owned Date Signed transition, not
                     // an invented editable-field event or full Finish validation.
-                    var finish = finishes.SingleOrDefault(x => x.SignerId == signer);
+                    var finish = finishes.SingleOrDefault(x => x.SignerId == signer && (snapshot is null || audits.Any(a => a.Event == "signer_finish_accepted" && a.ActorId == signer && a.Sequence <= snapshot.Cut)));
                     if (field.SignatureAdoptionId is not null || field.ImageSha256 is not null ||
                         (finish is null || at < finish.FinishedAt ? field.Value is not null || field.FilledAt is not null || field.FilledBy is not null :
                             finish.ProspectiveDate != DateOnly.FromDateTime(finish.FinishedAt.UtcDateTime) ||

@@ -152,21 +152,32 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
         f.Sync(); Assert.Throws<InvalidDataException>(() => f.Demand());
     }
 
-    private sealed class Frame
+    internal sealed class Frame
     {
         internal readonly ProductionHoldSignaturePreviewReferenceTests.MarksFrame M = new(SignatureMethod.Typed);
         internal ProductionHoldSentAuditReferenceTests.Frame F => M.F;
         internal readonly List<SignerReviewCandidate> Candidates = []; internal readonly List<VerifiedReviewInput> Inputs = [];
-        internal SignerFinishAcceptance? Acceptance;
+        internal SignerFinishAcceptance? Acceptance; internal readonly List<SignerFinishAcceptance> Finishes = [];
         private readonly VerifiedSigner identity;
-        internal Frame(bool large = false, bool craftedOrder = false)
+        internal Frame(bool large = false, bool craftedOrder = false, int parties = 2, bool laterFields = false, int additionalTextFields = 0)
         {
             var first = F.Signers[0]; var e = F.Envelope;
-            F.Signers.Add(new() { EnvelopeId = e.Id, Order = 2, FullName = "Synthetic later signer", Email = "second@example.invalid", RowVersion = new byte[8] });
-            var roster = new AuditEvent { EnvelopeId = e.Id, Event = "signer_added", ActorType = PartyType.Sender, ActorEmail = e.SenderEmail,
-                At = F.Audits.Single(x => x.Event == "signer_added").At.AddSeconds(1), DataJson = JsonSerializer.Serialize(new { signerId = F.Signers[1].Id,
-                    signers = F.Signers.Select(x => new SignerListItem(x.Id, x.Order, x.FullName, x.Email, x.Role)).ToArray() }) };
-            F.Audits.Insert(F.Audits.FindIndex(x => x.Event == "recipient_added"), roster);
+            for (var party = 1; party < parties; party++)
+            {
+                var later = new Signer { EnvelopeId = e.Id, Order = party + 1, FullName = $"Synthetic later signer {party + 1}", Email = $"party{party + 1}@example.invalid", RowVersion = new byte[8] };
+                F.Signers.Add(later);
+                var roster = new AuditEvent { EnvelopeId = e.Id, Event = "signer_added", ActorType = PartyType.Sender, ActorEmail = e.SenderEmail,
+                    At = F.Audits.First(x => x.Event == "signer_added").At.AddTicks(party),
+                    DataJson = JsonSerializer.Serialize(new { signerId = later.Id, signers = F.Signers.Select(x => new SignerListItem(x.Id, x.Order, x.FullName, x.Email, x.Role)).ToArray() }) };
+                F.Audits.Insert(F.Audits.FindIndex(x => x.Event == "recipient_added"), roster);
+                if (laterFields)
+                    foreach (var type in new[] { FieldType.Signature, FieldType.Initials, FieldType.Text, FieldType.FullName, FieldType.DateSigned })
+                        F.Fields.Add(new() { EnvelopeId = e.Id, SignerId = later.Id, Type = type, Page = 1, X = .10000000m, Y = .20000000m, Width = .30000000m, Height = .10000000m,
+                            DateFormat = type == FieldType.DateSigned ? "yyyy-MM-dd" : null, RowVersion = new byte[8] });
+            }
+            for (var index = 0; index < additionalTextFields; index++)
+                F.Fields.Add(new() { EnvelopeId = e.Id, SignerId = F.Signers[index % parties].Id, Type = FieldType.Text, Page = 1,
+                    X = .10000000m, Y = .20000000m, Width = .30000000m, Height = .10000000m, RowVersion = new byte[8] });
             e.PageSizesJson = JsonSerializer.Serialize(new[] { new PageGeometry(612, 792, 0, 1, [0, 0, 612, 792], [0, 0, 612, 792]) });
             if (craftedOrder)
             {
@@ -180,14 +191,14 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
                 for (var n = 0; n < 194; n++) F.Fields.Add(new() { EnvelopeId = e.Id, SignerId = first.Id, Type = FieldType.Text, Page = 1,
                     X = .10000000m, Y = .20000000m, Width = .30000000m, Height = .10000000m, RowVersion = new byte[8] });
             }
-            if (large || craftedOrder)
+            if (large || craftedOrder || laterFields || additionalTextFields > 0)
             {
                 F.Audits.Single(x => x.Event == "fields_saved").DataJson = JsonSerializer.Serialize(new { documentId = e.PdfBlob,
                     fields = F.Fields.Select(x => new FieldInput(x.Id, x.SignerId, x.Type.ToString(), x.Page, x.X, x.Y, x.Width, x.Height, x.Required, x.Label, x.Value)).ToArray() });
                 F.FreezeFields();
             }
             M.Adopt(); M.Fill();
-            if (large)
+            if (large || additionalTextFields > 0)
                 foreach (var field in F.Fields.Where(x => x.SignerId == first.Id && x.Type == FieldType.Text))
                 {
                     var at = F.Audits.Last().At.AddTicks(2); field.Value = new string('é', 4000); field.FilledAt = at; field.FilledBy = PartyType.Signer;
@@ -199,34 +210,36 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
             identity = new(e.Id, e.PublicId, first.Id, first.Email, Guid.Parse(e.SentPdfBlob!), Hex(e.SentPdfSha256!), Hex(e.ErsdSha256!), F.Audits.Last().At.AddHours(2));
             Sync();
         }
-        internal void Review(bool reverseSnapshot = false)
+        internal void Review(bool reverseSnapshot = false, int party = 0)
         {
-            var e = F.Envelope; var s = F.Signers[0]; var mark = M.P; var at = F.Audits.Last().At.AddSeconds(1); var cut = F.Audits.Last();
+            var e = F.Envelope; var s = F.Signers[party]; var mark = M.Previews.Last(x => x.SignerId == s.Id); var at = F.Audits.Last().At.AddSeconds(1); var cut = F.Audits.Last();
+            var reviewIdentity = party == 0 ? identity : new VerifiedSigner(e.Id, e.PublicId, s.Id, s.Email, mark.DocumentId,
+                Hex(mark.DocumentSha256), Hex(mark.DisclosureSha256), at.AddHours(2));
             var fields = F.Fields.Where(x => x.SignerId == s.Id).OrderBy(x => new SqlGuid(x.Id)).Select(Clone).ToArray();
             if (reverseSnapshot) fields = fields.OrderBy(x => x.Id).ToArray();
-            var snapshot = JsonSerializer.Serialize(new { version = "signer-review-v1", identity.EnvelopeId, identity.SignerId, identity.DocumentId,
-                identity.DocumentHash, identity.DisclosureHash, e.RowVersion, e.PageCount, e.PageSizesJson, s.FullName, s.ConsentAt, signerVersion = s.RowVersion,
+            var snapshot = JsonSerializer.Serialize(new { version = "signer-review-v1", reviewIdentity.EnvelopeId, reviewIdentity.SignerId, reviewIdentity.DocumentId,
+                reviewIdentity.DocumentHash, reviewIdentity.DisclosureHash, e.RowVersion, e.PageCount, e.PageSizesJson, s.FullName, s.ConsentAt, signerVersion = s.RowVersion,
                 adoptionId = mark.Id, mark.SignatureSha256, mark.InitialsSha256, mark.NormalizationVersion, fields });
             var render = new ReviewRenderInputV1(e.Id, s.Id, s.FullName, at, mark.Id, fields.Select(x => new SignerPdfField(x.Id, x.EnvelopeId, x.SignerId,
                 x.RowVersion, x.Type, x.Page, x.X, x.Y, x.Width, x.Height, x.Required, x.Value, x.FilledAt, x.FilledBy, x.SignatureAdoptionId, x.ImageSha256)).ToArray(),
                 new(mark.Id, mark.SignatureObjectId, mark.InitialsObjectId, mark.SignatureSha256, mark.InitialsSha256, mark.NormalizationVersion));
             var bytes = Encoding.UTF8.GetBytes("Synthetic retained review PDF bytes");
-            var candidate = new SignerReviewCandidate { EnvelopeId = e.Id, SignerId = s.Id, AdoptionId = mark.Id, SourceObjectId = identity.DocumentId,
-                PdfObjectId = Guid.NewGuid(), PdfLength = bytes.Length, SourceSha256 = e.SentPdfSha256!, DisclosureSha256 = e.ErsdSha256!,
-                SessionSha256 = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(identity)), SnapshotSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot)),
-                PdfSha256 = SHA256.HashData(bytes), RecipeSha256 = Convert.FromHexString(ProductionReviewInputCodec.Binding(render, 1, e.SentPdfSha256!)),
+            var candidate = new SignerReviewCandidate { EnvelopeId = e.Id, SignerId = s.Id, AdoptionId = mark.Id, SourceObjectId = reviewIdentity.DocumentId,
+                PdfObjectId = Guid.NewGuid(), PdfLength = bytes.Length, SourceSha256 = mark.DocumentSha256, DisclosureSha256 = e.ErsdSha256!,
+                SessionSha256 = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(reviewIdentity)), SnapshotSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot)),
+                PdfSha256 = SHA256.HashData(bytes), RecipeSha256 = Convert.FromHexString(ProductionReviewInputCodec.Binding(render, 1, mark.DocumentSha256)),
                 RendererVersion = "signer-pdf-v1", SnapshotVersion = "signer-review-v1", PreparedAt = at, ExpiresAt = at.AddMinutes(10), ProspectiveDate = DateOnly.FromDateTime(at.UtcDateTime) };
-            var body = new ReviewInputV1("review-input-v1", e.Id, Guid.NewGuid(), candidate.Id, JsonSerializer.Serialize(candidate), identity, identity.SessionExpiresAt,
+            var body = new ReviewInputV1("review-input-v1", e.Id, Guid.NewGuid(), candidate.Id, JsonSerializer.Serialize(candidate), reviewIdentity, reviewIdentity.SessionExpiresAt,
                 snapshot, render, JsonSerializer.Deserialize<PageGeometry[]>(e.PageSizesJson!)!, cut.Id, checked((int)cut.Sequence), Hex(cut.Hash));
             Inputs.Add(Seal(body, candidate, bytes));
-            foreach (var old in Candidates.Where(x => x.UsedAt is null && x.SupersededAt is null && x.ExpiresAt > at && !x.SnapshotSha256.SequenceEqual(candidate.SnapshotSha256))) old.SupersededAt = at;
+            foreach (var old in Candidates.Where(x => x.SignerId == s.Id && x.UsedAt is null && x.SupersededAt is null && x.ExpiresAt > at && !x.SnapshotSha256.SequenceEqual(candidate.SnapshotSha256))) old.SupersededAt = at;
             candidate.RowVersion = Enumerable.Repeat((byte)(10 + Candidates.Count), 8).ToArray(); Candidates.Add(candidate);
             F.Objects.Add(new(new("normalized", $"{e.Id:N}/{candidate.PdfObjectId:N}", "synthetic-review-version", "", "\"synthetic-review-etag\"", bytes.Length), Hex(candidate.PdfSha256)));
-            M.Event("signer_review_prepared", ProductionHoldReviewCheckpointReferences.PreparedJson(candidate), at.AddTicks(1)); Sync();
+            PartyEvent(s, "signer_review_prepared", ProductionHoldReviewCheckpointReferences.PreparedJson(candidate), at.AddTicks(1)); Sync();
         }
         private VerifiedReviewInput Seal(ReviewInputV1 body, SignerReviewCandidate candidate, byte[] pdf)
         {
-            var mark = M.P; var signature = SignaturePng.Normalize(SignatureAdoptionTests.Mark(20)).Bytes;
+            var mark = M.Previews.Single(x => x.Id == candidate.AdoptionId); var signature = SignaturePng.Normalize(SignatureAdoptionTests.Mark(20)).Bytes;
             var initials = SignaturePng.Normalize(SignatureAdoptionTests.Mark(60)).Bytes;
             var request = new SignerPdfRequest(body.RecordId, candidate.SignerId, body.Render.FullName, candidate.PreparedAt, candidate.AdoptionId,
                 body.Render.Fields, new(mark.Id, mark.SignatureObjectId, mark.InitialsObjectId, signature, initials, mark.SignatureSha256, mark.InitialsSha256, mark.NormalizationVersion));
@@ -239,7 +252,7 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
         }
         internal void Accept()
         {
-            var c = Candidates[^1]; var at = F.Audits.Last().At.AddSeconds(1); var date = M.Date;
+            var c = Candidates[^1]; var at = F.Audits.Last().At.AddSeconds(1); var date = F.Fields.Single(x => x.SignerId == c.SignerId && x.Type == FieldType.DateSigned);
             date.Value = c.ProspectiveDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture); date.FilledAt = at; date.FilledBy = PartyType.Signer; date.RowVersion = Enumerable.Repeat((byte)20, 8).ToArray();
             var json = JsonSerializer.Serialize(F.Fields.Where(x => x.SignerId == c.SignerId).OrderBy(x => new SqlGuid(x.Id)).ToArray()); c.UsedAt = at;
             Acceptance = new() { EnvelopeId = c.EnvelopeId, SignerId = c.SignerId, ReviewCandidateId = c.Id, AdoptionId = c.AdoptionId, SourceObjectId = c.SourceObjectId,
@@ -247,22 +260,30 @@ public sealed class ProductionHoldReviewCheckpointReferenceTests
                 SnapshotSha256 = c.SnapshotSha256, PdfSha256 = c.PdfSha256, RecipeSha256 = c.RecipeSha256, FieldsJson = json, FieldsSha256 = SHA256.HashData(Encoding.UTF8.GetBytes(json)),
                 SnapshotVersion = SignerFinish.SnapshotVersion, StatementVersion = SignerFinishStatement.Version, Statement = SignerFinishStatement.Text, StatementSha256 = SignerFinishStatement.Sha256,
                 ProspectiveDate = c.ProspectiveDate, ReviewPreparedAt = c.PreparedAt, ReviewExpiresAt = c.ExpiresAt, FinishedAt = at, RowVersion = new byte[8] };
-            M.Event("signer_finish_accepted", SignerFinish.EvidenceJson(Acceptance), at.AddTicks(1));
+            Finishes.Add(Acceptance); PartyEvent(F.Signers.Single(x => x.Id == c.SignerId), "signer_finish_accepted", SignerFinish.EvidenceJson(Acceptance), at.AddTicks(1));
             F.Work.Add(new() { Id = Acceptance.Id, EnvelopeId = c.EnvelopeId, Kind = WorkKind.Rendering, AvailableAt = at.AddTicks(2),
                 PayloadJson = JsonSerializer.Serialize(new SignerCheckpointPayload(SignerCheckpointJobs.Version, Acceptance.Id)) }); Sync();
         }
         internal void Process()
         {
-            var f = Acceptance!; var at = F.Audits.Last().At.AddSeconds(1); f.ProcessedAt = at; f.NextInvitationId = Guid.NewGuid();
-            var s = F.Signers[0]; s.Status = SignerStatus.Signed; s.SignedAt = f.FinishedAt; s.SignedIp = f.Ip; s.SignedUa = f.UserAgent;
-            F.Envelope.CurrentFinishId = f.Id; F.Envelope.CurrentCopyVersion = 1;
-            M.Event("signer_completed", SignerCheckpointState.PublishedJson(f), at.AddTicks(1)); var due = at.AddTicks(2);
-            F.Mail.Add(new() { Id = f.NextInvitationId.Value, EnvelopeId = f.EnvelopeId, Template = "signer-invitation", To = F.Signers[1].Email, AvailableAt = due,
-                PayloadJson = new SignerInvitationProtection(F.Keys).Protect(new(F.Signers[1].Id, DocumentId: f.PdfObjectId, DocumentSha256: Hex(f.PdfSha256), DisclosureSha256: Hex(f.DisclosureSha256))) });
-            F.Work.Add(new() { Id = f.NextInvitationId.Value, EnvelopeId = f.EnvelopeId, Kind = WorkKind.Email, AvailableAt = due });
+            var f = Acceptance!; var at = F.Audits.Last().At.AddSeconds(1); f.ProcessedAt = at;
+            var s = F.Signers.Single(x => x.Id == f.SignerId); var next = F.Signers.SingleOrDefault(x => x.Order == s.Order + 1);
+            f.NextInvitationId = next is null ? null : Guid.NewGuid(); s.Status = SignerStatus.Signed; s.SignedAt = f.FinishedAt; s.SignedIp = f.Ip; s.SignedUa = f.UserAgent;
+            F.Envelope.CurrentFinishId = f.Id; F.Envelope.CurrentCopyVersion = s.Order;
+            PartyEvent(s, "signer_completed", SignerCheckpointState.PublishedJson(f), at.AddTicks(1)); var due = at.AddTicks(2);
+            if (next is not null)
+            {
+                F.Mail.Add(new() { Id = f.NextInvitationId!.Value, EnvelopeId = f.EnvelopeId, Template = "signer-invitation", To = next.Email, AvailableAt = due,
+                    PayloadJson = new SignerInvitationProtection(F.Keys).Protect(new(next.Id, DocumentId: f.PdfObjectId, DocumentSha256: Hex(f.PdfSha256), DisclosureSha256: Hex(f.DisclosureSha256))) });
+                F.Work.Add(new() { Id = f.NextInvitationId.Value, EnvelopeId = f.EnvelopeId, Kind = WorkKind.Email, AvailableAt = due });
+            }
+            else F.Work.Add(new() { Id = CompletionJobs.WorkId(f.EnvelopeId), EnvelopeId = f.EnvelopeId, Kind = WorkKind.Sealing, AvailableAt = due,
+                PayloadJson = JsonSerializer.Serialize(new CompletionWorkPayload(CompletionJobs.Version, f.Id, F.Signers.Count, Hex(f.PdfSha256), Hex(f.DisclosureSha256))) });
             var work = F.Work.Single(x => x.Id == f.Id); work.Status = WorkStatus.Completed; work.Attempts = 1; work.AvailableAt = due.AddTicks(1); Sync();
         }
-        internal void Sync() { F.Other["SignerReviewCandidates"] = Candidates.Cast<object>().ToArray(); F.Other["SignerFinishAcceptances"] = Acceptance is null ? [] : [Acceptance]; M.Sync(); }
+        internal void PartyEvent(Signer signer, string name, string json, DateTimeOffset at) => F.Audits.Add(new() { EnvelopeId = F.Envelope.Id, Event = name,
+            ActorType = PartyType.Signer, ActorId = signer.Id, ActorEmail = signer.Email, DataJson = json, At = at });
+        internal void Sync() { F.Other["SignerReviewCandidates"] = Candidates.Cast<object>().ToArray(); F.Other["SignerFinishAcceptances"] = Finishes.Cast<object>().ToArray(); M.Sync(); }
         internal HoldReviewCheckpointHistory Demand() { using var sql = F.Sql(); return ProductionHoldReviewCheckpointReferences.ReadVerified(sql.RootElement, F.Objects, F.Keys, Inputs); }
     }
     private static string Reorder(string json) => "{" + string.Join(',', JsonNode.Parse(json)!.AsObject().Reverse().Select(x => JsonSerializer.Serialize(x.Key) + ":" + x.Value!.ToJsonString())) + "}";

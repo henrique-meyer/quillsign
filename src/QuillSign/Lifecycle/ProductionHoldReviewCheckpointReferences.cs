@@ -47,6 +47,12 @@ internal static class ProductionHoldReviewCheckpointReferences
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         if (tables.Values.Any(x => x.ValueKind != JsonValueKind.Array || x.GetArrayLength() > 4096) || tables.Values.Sum(x => x.GetArrayLength()) > 4096) throw Invalid();
         T[] Table<T>(string name, int maximum) { var rows = tables[name]; if (rows.GetArrayLength() > maximum) throw Invalid(); return rows.Deserialize<T[]>(Rows) ?? throw Invalid(); }
+        var orderedParties = Table<Signer>("Signers", 100).OrderBy(x => x.Order).ToArray();
+        if (tables["SignerFinishAcceptances"].GetArrayLength() > 1 ||
+            orderedParties.Skip(1).Any(x => x.Status != SignerStatus.Pending || x.ConsentAt is not null) ||
+            tables["SignaturePreviews"].EnumerateArray().Any(x => x.GetProperty("SignerId").GetGuid() != orderedParties[0].Id) ||
+            orderedParties.Length == 1 && tables["SignerReviewCandidates"].GetArrayLength() != 0)
+            return ProductionHoldSequentialReviewReferences.ReadVerified(sql, objects, keys, inputs);
         var candidates = Table<SignerReviewCandidate>("SignerReviewCandidates", SignerReviewCandidates.MaximumCandidatesPerSigner);
         var finishes = Table<SignerFinishAcceptance>("SignerFinishAcceptances", 1);
         Columns(tables["SignerReviewCandidates"], CandidateColumns); Columns(tables["SignerFinishAcceptances"], FinishColumns);

@@ -139,8 +139,8 @@ public sealed class ProductionHoldSignaturePreviewReferenceTests
     internal sealed class MarksFrame
     {
         internal readonly ProductionHoldSentAuditReferenceTests.Frame F = new(); internal readonly List<SignaturePreview> Previews = [];
-        internal SignaturePreview P => Previews[^1]; internal DocumentField Signature => F.Fields.Single(x => x.Type == FieldType.Signature);
-        internal DocumentField Date => F.Fields.Single(x => x.Type == FieldType.DateSigned);
+        internal SignaturePreview P => Previews[^1]; internal DocumentField Signature => F.Fields.Single(x => x.Type == FieldType.Signature && x.SignerId == F.Signers[0].Id);
+        internal DocumentField Date => F.Fields.Single(x => x.Type == FieldType.DateSigned && x.SignerId == F.Signers[0].Id);
         internal MarksFrame(SignatureMethod method)
         {
             var e = F.Envelope; var signer = F.Signers[0]; signer.RowVersion = Enumerable.Repeat((byte)3, 8).ToArray();

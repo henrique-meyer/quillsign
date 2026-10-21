@@ -253,7 +253,7 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
         HoldWitnessState state,IReadOnlyList<HoldObjectEvidence> inventory,CancellationToken ct)
     {
         var plans=state.ReviewWrites;
-        if(rows.GetArrayLength()>SignerReviewCandidates.MaximumCandidatesPerSigner||rows.GetArrayLength()!=(plans?.Count??0))throw Invalid();
+        if(rows.GetArrayLength()>4096||rows.GetArrayLength()!=(plans?.Count??0)||rows.EnumerateArray().GroupBy(x=>x.GetProperty("SignerId").GetGuid()).Any(x=>x.Count()>SignerReviewCandidates.MaximumCandidatesPerSigner))throw Invalid();
         if(rows.GetArrayLength()==0)return [];
         var source=reviewInputs??objects as IProductionReviewInputSource??throw Invalid();
         var current=await new ProductionHoldSqlInventory(db,keys,time).CaptureLockedAsync(recordId,state.RequestRevision,state.RequestFenceHash!,ct:ct);

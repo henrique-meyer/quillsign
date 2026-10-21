@@ -43,7 +43,13 @@ internal static class ProductionHoldSentAuditReferences
     internal static IReadOnlyList<HoldVerifiedSignaturePreview> ReadVerifiedReviewProjection(JsonElement projection,
         IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, JsonElement typedHistory) => Verify(projection, objects, keys, false, typedHistory);
 
-    private static IReadOnlyList<HoldVerifiedSignaturePreview> Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, bool fullChain, JsonElement? typedHistory = null)
+    // The sequential graph owns EVERY mutable party/job stage separately. This
+    // helper proves only the unchanged original production Send, frozen roster,
+    // saved preparation, disclosure/policy and first invitation source.
+    internal static void DemandFrozenSequentialBaseline(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys)
+        => _ = Verify(sql, objects, keys, true, frozenOnly: true);
+
+    private static IReadOnlyList<HoldVerifiedSignaturePreview> Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, bool fullChain, JsonElement? typedHistory = null, bool frozenOnly = false)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         if (tables.Values.Any(x => x.ValueKind != JsonValueKind.Array || x.GetArrayLength() > 4096) || tables.Values.Sum(x => x.GetArrayLength()) > 4096) throw Invalid();
@@ -55,9 +61,9 @@ internal static class ProductionHoldSentAuditReferences
             !Utc(captured) || !Utc(e.CreatedAt) || !Utc(e.SenderVerifiedAt) || !Utc(e.PreviewConfirmedAt) || !Utc(e.SentAt) ||
             e.CreatedAt > e.SenderVerifiedAt || e.SenderVerifiedAt > e.PreviewConfirmedAt || e.PreviewConfirmedAt > e.SentAt || e.SentAt > captured ||
             !Utc(e.ExclusionsAckAt) || e.ExclusionsAckAt != e.SentAt || e.ExpiresAt is { } expiry && (!Utc(expiry) || expiry <= e.SentAt) ||
-            e.CurrentFinishId is not null || e.CurrentCopyVersion != 0 || e.CompletedAt is not null || e.PurgeAfter is not null ||
+            !frozenOnly && (e.CurrentFinishId is not null || e.CurrentCopyVersion != 0) || e.CompletedAt is not null || e.PurgeAfter is not null ||
             e.FinalBlob is not null || e.FinalSha256 is not null || e.CertificateBlob is not null || e.CertificateSha256 is not null ||
-            e.SealProvider is not null || e.SealCertThumbprint is not null || e.TsaUrl is not null || EmptyTables.Any(x => tables[x].GetArrayLength() != 0)) throw Invalid();
+            e.SealProvider is not null || e.SealCertThumbprint is not null || e.TsaUrl is not null || EmptyTables.Any(x => !(frozenOnly && x is "SignerReviewCandidates" or "SignerFinishAcceptances") && tables[x].GetArrayLength() != 0)) throw Invalid();
         if (fullChain) ProductionHoldAuditChain.Demand(sql);
         ProductionHoldAdmissionAuditReferences.Demand(sql);
         var audits = tables["AuditEvents"].Deserialize<AuditEvent[]>(Rows) ?? throw Invalid();
@@ -84,7 +90,7 @@ internal static class ProductionHoldSentAuditReferences
         if (recipients.Select(x => x.Id).Distinct().Count() != recipients.Length || recipients.Select(x => x.Email).Distinct(StringComparer.OrdinalIgnoreCase).Count() != recipients.Length ||
             recipients.Any(x => x.Id == Guid.Empty || x.EnvelopeId != e.Id || !Address(x.Email) || string.IsNullOrWhiteSpace(x.Name) || x.Name.Length > 512 || x.Name.Any(char.IsControl))) throw Invalid();
         signers = signers.OrderBy(x => x.Order).ToArray();
-        var marks = typedHistory is { } originalHistory
+        var marks = frozenOnly ? new HoldSignatureProgress(HoldInitialSignerStage.Queued, false, [], null) : typedHistory is { } originalHistory
             ? ProductionHoldSignaturePreviewReferences.ReadVerifiedReviewProjection(sql, originalHistory, objects, keys, p.invitationWorkId)
             : ProductionHoldSignaturePreviewReferences.ReadVerified(sql, objects, keys, p.invitationWorkId);
         var progress = marks.Initial;
@@ -93,17 +99,17 @@ internal static class ProductionHoldSentAuditReferences
             var s = signers[i];
             var consented = i == 0 && progress == HoldInitialSignerStage.Consented;
             var status = i != 0 || progress == HoldInitialSignerStage.Queued ? SignerStatus.Pending : consented ? SignerStatus.Viewed : SignerStatus.Notified;
-            if (s.Id == Guid.Empty || s.EnvelopeId != e.Id || s.Order != i + 1 || s.Status != status ||
+            if (s.Id == Guid.Empty || s.EnvelopeId != e.Id || s.Order != i + 1 || !frozenOnly && s.Status != status ||
                 !Address(s.Email) || string.IsNullOrWhiteSpace(s.FullName) || s.FullName.Length > 512 || s.FullName.Any(char.IsControl) ||
-                !consented && (s.ConsentAt is not null || s.ConsentIp is not null || s.ConsentUa is not null) || s.SignedAt is not null || s.SignedIp is not null || s.SignedUa is not null ||
+                !frozenOnly && (!consented && (s.ConsentAt is not null || s.ConsentIp is not null || s.ConsentUa is not null) || s.SignedAt is not null || s.SignedIp is not null || s.SignedUa is not null ||
                 s.DeclineReason is not null || !(i == 0 && marks.HasProgress) && (s.SignatureImageBlob is not null || s.InitialsImageBlob is not null || s.SignatureMethod is not null ||
                 s.SignatureAdoptionId is not null || s.SignatureImageSha256 is not null || s.InitialsImageSha256 is not null || s.SignatureAdoptedAt is not null ||
-                s.SignatureTypedName is not null || s.SignatureTypedInitials is not null || s.SignatureNormalizationVersion is not null || s.SignatureAdoptionVersion is not null)) throw Invalid();
+                s.SignatureTypedName is not null || s.SignatureTypedInitials is not null || s.SignatureNormalizationVersion is not null || s.SignatureAdoptionVersion is not null))) throw Invalid();
         }
         if (tables["Fields"].GetArrayLength() > 200) throw Invalid();
         var fields = tables["Fields"].Deserialize<DocumentField[]>(Rows) ?? throw Invalid();
         foreach (var f in fields)
-            if (f.SignerId is { } signer && (!signers.Any(x => x.Id == signer) || !(marks.HasProgress && signer == signers[0].Id) &&
+            if (f.SignerId is { } signer && (!signers.Any(x => x.Id == signer) || !frozenOnly && !(marks.HasProgress && signer == signers[0].Id) &&
                     (f.Value is not null || f.FilledAt is not null || f.FilledBy is not null || f.SignatureAdoptionId is not null || f.ImageSha256 is not null)) ||
                 f.SignerId is null && (f.Value is null ? f.FilledAt is not null || f.FilledBy is not null :
                     f.FilledBy != PartyType.Sender || !Utc(f.FilledAt) || f.FilledAt < e.PreviewConfirmedAt || f.FilledAt > e.SentAt) ||
@@ -111,12 +117,12 @@ internal static class ProductionHoldSentAuditReferences
         // Progress uses the actual verified saved preparation, never changed
         // current editable values. The existing codec owns SQL ordering,
         // decimal scale, exact field digest, actor/time/hash and event adjacency.
-        ProductionHoldFinalizedFieldReferences.Demand(sql, objects, marks.Prepared ?? fields.Select(f => new FieldInput(f.Id, f.SignerId, f.Type.ToString(),
+        ProductionHoldFinalizedFieldReferences.Demand(sql, objects, frozenOnly ? ProductionHoldPreparationAuditReferences.ReadVerified(sql, ProductionHoldDocumentAuditReferences.ReadVerified(sql, objects)) : marks.Prepared ?? fields.Select(f => new FieldInput(f.Id, f.SignerId, f.Type.ToString(),
             f.Page, f.X, f.Y, f.Width, f.Height, f.Required, f.Label, f.Value)).ToArray());
         if (e.PdfBlob == e.SentPdfBlob) throw Invalid();
         Match("originals", e.OriginalBlob, Hex(e.OriginalSha256)); Match("normalized", e.PdfBlob, p.sourceSha256); Match("normalized", e.SentPdfBlob, p.documentSha256);
 
-        if (tables["EmailOutbox"].GetArrayLength() != 2 || tables["WorkItems"].GetArrayLength() != (e.ExpiresAt is null ? 2 : 3)) throw Invalid();
+        if (!frozenOnly && (tables["EmailOutbox"].GetArrayLength() != 2 || tables["WorkItems"].GetArrayLength() != (e.ExpiresAt is null ? 2 : 3)) || tables["EmailOutbox"].GetArrayLength() > 101 || tables["WorkItems"].GetArrayLength() > 203) throw Invalid();
         var mail = tables["EmailOutbox"].Deserialize<EmailOutbox[]>(Rows) ?? throw Invalid();
         var work = tables["WorkItems"].Deserialize<WorkItem[]>(Rows) ?? throw Invalid();
         if (mail.Select(x => x.Id).Distinct().Count() != mail.Length || work.Select(x => x.Id).Distinct().Count() != work.Length ||
@@ -132,7 +138,7 @@ internal static class ProductionHoldSentAuditReferences
             keys.CreateProtector("QuillSign.SignerInvitationPayload.v1").Unprotect(wrapped.Protected) != JsonSerializer.Serialize(payload) ||
             payload.SignerId != signers[0].Id || payload.ContactRevisionId != Guid.Empty || payload.ContactRevisionNumber != 0 ||
             payload.DocumentId.ToString("N") != e.SentPdfBlob || payload.DocumentSha256 != p.documentSha256 || payload.DisclosureSha256 != p.disclosureSha256) throw Invalid();
-        var verification = mail.Single(x => x.Id != invitation.Id);
+        var verification = mail.Single(x => x.Template == "sender-verification");
         var verificationWork = work.Single(x => x.Id == verification.Id);
         if (verification.Id == Guid.Empty || verification.Template != "sender-verification" || verification.Status != EmailStatus.Sent || verification.To != e.SenderEmail ||
             verification.Attempts < 1 || verification.SubmissionStartedAt is not { } started || !Utc(started) || started < e.CreatedAt || started > e.SenderVerifiedAt ||
