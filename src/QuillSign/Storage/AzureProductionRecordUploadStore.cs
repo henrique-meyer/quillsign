@@ -16,7 +16,7 @@ namespace QuillSign.Storage;
 // Deliberately unregistered. Existing private containers/versioning must already
 // be configured. This client never creates containers, changes protection or
 // borrows a connection string/SAS/shared key. Every SDK request has retries off.
-internal sealed class AzureProductionRecordUploadStore : IProductionRecordUploadStore, IDisposable
+internal sealed class AzureProductionRecordUploadStore : IProductionRecordUploadStore, IProductionRecordSendStore, IDisposable
 {
     private readonly BlobServiceClient service;
     private readonly long maximumBytes;
@@ -45,11 +45,22 @@ internal sealed class AzureProductionRecordUploadStore : IProductionRecordUpload
         service = new(serviceUri, credential, options); this.maximumBytes = maximumBytes;
     }
 
-    public async Task<ProductionRecordWriteReceipt> WriteAsync(ProductionRecordOperation scope, ClaimsPrincipal sender, ProductionRecordWriteDescriptor item,
+    public Task<ProductionRecordWriteReceipt> WriteAsync(ProductionRecordOperation scope, ClaimsPrincipal sender, ProductionRecordWriteDescriptor item,
         Stream source, bool mayWrite, ProductionRecordWriteReceipt? saved, Func<CancellationToken, Task> demand, CancellationToken ct = default)
+        => WriteCoreAsync("sender/upload",scope,sender,item,source,mayWrite,saved,demand,ct);
+
+    Task<ProductionRecordWriteReceipt> IProductionRecordSendStore.WriteAsync(ProductionRecordOperation scope, ClaimsPrincipal sender,
+        ProductionRecordWriteDescriptor item, Stream source, bool mayWrite, ProductionRecordWriteReceipt? saved,
+        Func<CancellationToken, Task> demand, CancellationToken ct)
+        => WriteCoreAsync("sender/send",scope,sender,item,source,mayWrite,saved,demand,ct);
+
+    private async Task<ProductionRecordWriteReceipt> WriteCoreAsync(string expectedKind,ProductionRecordOperation scope, ClaimsPrincipal sender,
+        ProductionRecordWriteDescriptor item,Stream source,bool mayWrite,ProductionRecordWriteReceipt? saved,
+        Func<CancellationToken,Task> demand,CancellationToken ct)
     {
         if (scope is null || item is null || source is null || demand is null || scope.RecordId != item.Blob.EnvelopeId ||
-            scope.OperationId == Guid.Empty || scope.Kind != "sender/upload" || scope.ReservationSequence < 1 ||
+            scope.OperationId == Guid.Empty || scope.Kind != expectedKind || scope.ReservationSequence < 1 ||
+            expectedKind == "sender/send" && item.Blob.Kind != DocumentBlobKind.Normalized ||
             item.Blob.EnvelopeId == Guid.Empty || item.Blob.ObjectId == Guid.Empty ||
             item.Blob.Kind is not (DocumentBlobKind.Original or DocumentBlobKind.Normalized) ||
             item.Length < 1 || item.Length > maximumBytes || item.Sha256 is not { Length: 64 } || !item.Sha256.All(char.IsAsciiHexDigitLower) ||
@@ -162,7 +173,8 @@ internal sealed class AzureProductionRecordUploadStore : IProductionRecordUpload
     }
     internal static string OwnershipBinding(ProductionRecordOperation scope,ProductionRecordWriteDescriptor item)
         => Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {
-            Version="production-record-upload-owner-v1",scope.RecordId,scope.OperationId,scope.ReservationSequence,Item=item
+            Version=scope.Kind=="sender/send"?"production-record-send-owner-v1":"production-record-upload-owner-v1",
+            scope.RecordId,scope.OperationId,scope.ReservationSequence,Item=item
         })));
     private static bool UncertainCommit(Exception error) => error is IOException or HttpRequestException ||
         error is RequestFailedException provider && (provider.Status >= 500 ||

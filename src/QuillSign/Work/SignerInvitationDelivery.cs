@@ -26,7 +26,8 @@ public sealed class SignerInvitationProtection(IDataProtectionProvider provider)
 public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSignals> signals,WorkOptions work,EmailOptions email,
     SignerInvitationProtection protection,TimeProvider time,EmailPilotEnvelopeAccess? pilot=null)
 {
-    public async Task<Guid> PrepareAsync(Guid envelopeId,Guid signerId,string recipient,CancellationToken ct,Guid? invitationId=null)
+    public async Task<Guid> PrepareAsync(Guid envelopeId,Guid signerId,string recipient,CancellationToken ct,Guid? invitationId=null,
+        Func<Guid,DateTimeOffset,CancellationToken,Task>? demandHint=null)
     {
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("Preparing invitations requires a transaction.");
         if (!work.Enabled || !email.Enabled && pilot is null) throw new EmailDisabledException();
@@ -47,7 +48,10 @@ public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSigna
                 ContactRevisionId:contact.RevisionId,ContactRevisionNumber:contact.Number)),AvailableAt = time.GetUtcNow() };
         if(invitationId is Guid id) { if(id==Guid.Empty)throw new ArgumentException("Invalid invitation ID."); row.Id=id; }
         db.EmailOutbox.Add(row); db.WorkItems.Add(new WorkItem { Id = row.Id,EnvelopeId = envelopeId,Kind = WorkKind.Email,AvailableAt = row.AvailableAt });
-        await db.SaveChangesAsync(ct); await signals().PutHintAsync(row.Id,row.AvailableAt,ct);
+        await db.SaveChangesAsync(ct);
+        if(demandHint is not null)await demandHint(row.Id,row.AvailableAt,ct);
+        await signals().PutHintAsync(row.Id,row.AvailableAt,ct);
+        if(demandHint is not null)await demandHint(row.Id,row.AvailableAt,ct);
         if(cohort is not null) {
             var current=await pilot!.RequireSendRosterLockedAsync(envelope,ct);
             if(current.IsEnrolled!=cohort.IsEnrolled || current.RunId!=cohort.RunId || current.RunExpiresAt!=cohort.RunExpiresAt ||

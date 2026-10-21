@@ -33,6 +33,16 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
             // Read-only preflight before taking the worker row lock. Holding that
             // lock while draining another operation could deadlock preservation.
             var candidate = await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+            if (candidate is null)
+            {
+                // A wakeup may precede its transaction's commit. Snapshot absence
+                // cannot discard it. Release this key-only probe before acquiring
+                // any record reservation or parent lock (parent -> work ordering).
+                await using var probe = await db.Database.BeginTransactionAsync(cancellationToken);
+                candidate = await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {id}")
+                    .AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+                await probe.RollbackAsync(cancellationToken);
+            }
             if (candidate is null || candidate.Status is WorkStatus.Completed or WorkStatus.Failed) return new(null, null, true);
             if (candidate.AvailableAt > now) return new(null, candidate.AvailableAt, false);
             if (candidate.Status == WorkStatus.Leased && candidate.LeaseExpiresAt > now) return new(null, candidate.LeaseExpiresAt, false);

@@ -222,12 +222,18 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
         using var sql = ProductionHoldSqlInventory.OpenVerified(snapshot.Sql, keys);
         ProductionHoldAdmissionAuditReferences.Demand(sql.RootElement);
         var tables = sql.RootElement.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
-        if (tables["Envelopes"].EnumerateArray().Single().GetProperty("Status").GetString() != "Draft") throw Invalid();
+        var status = tables["Envelopes"].EnumerateArray().Single().GetProperty("Status").GetString();
+        if (status == "Sent")
+            ProductionHoldSentAuditReferences.Demand(sql.RootElement, ProductionHoldObjectInventory.OpenVerified(snapshot, keys, time), keys);
+        else if (status != "Draft") throw Invalid();
         foreach (var audit in tables["AuditEvents"].EnumerateArray())
+        {
+            if (status == "Sent" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent") continue;
             if (audit.GetProperty("Event").GetString() is not (ProductionRetentionLedger.EnrollmentEvent or
                 "draft_created" or "sender_verification_requested" or "sender_email_verified" or
                 "document_uploaded" or "document_replaced" or "preview_confirmed" or "signer_added" or "signer_updated" or "signer_removed" or
                 "signers_reordered" or "recipient_added" or "recipient_updated" or "recipient_removed" or "envelope_details_updated" or "fields_saved")) throw Invalid();
+        }
     }
 
     internal static Guid Id(Guid owner, string phase)

@@ -13,6 +13,17 @@ namespace QuillSign.Tests;
 
 public sealed class ProductionRecordUploadTransportTests
 {
+    [Theory]
+    [InlineData("normal")][InlineData("lost-ack")]
+    public async Task Frozen_Send_uses_distinct_normalized_scope_binding_and_exact_readonly_recovery(string mode)
+    {
+        using var test=new Provider(mode,send:true);var receipt=await test.Write(true);
+        Assert.Equal(test.Item,receipt.Item);Assert.Equal(1,test.Stages);Assert.Equal(1,test.Commits);
+        Assert.Equal(receipt,await test.Write(false,receipt));Assert.Equal(1,test.Commits);
+        await Assert.ThrowsAsync<InvalidDataException>(()=>test.Store.WriteAsync(test.Scope,test.Sender,test.Item,new MemoryStream(Provider.Bytes),true,null,test.Demand));
+        var wrong=test.Item with{Blob=test.Item.Blob with{Kind=DocumentBlobKind.Original}};
+        await Assert.ThrowsAsync<InvalidDataException>(()=>((IProductionRecordSendStore)test.Store).WriteAsync(test.Scope,test.Sender,wrong,new MemoryStream(Provider.Bytes),true,null,test.Demand));
+    }
     [Fact]
     public async Task Actual_SDK_stage_create_only_commit_and_conditional_exact_version_bytes_produce_a_bound_receipt()
     {
@@ -117,14 +128,14 @@ public sealed class ProductionRecordUploadTransportTests
     }
 
     private sealed record Request(HttpMethod Method,string Version,string Match);
-    private sealed class Provider(string mode="normal") : HttpMessageHandler
+    private sealed class Provider(string mode="normal",bool send=false) : HttpMessageHandler
     {
         internal static readonly byte[] Bytes="Synthetic upload - NO AGREEMENT"u8.ToArray();
         internal const string Version="2030-01-01T00:00:00.0000000Z",Tag="\"synthetic-upload-etag\"";
-        internal readonly ProductionRecordWriteDescriptor Item=new(new(Guid.NewGuid(),DocumentBlobKind.Original,Guid.NewGuid()),Bytes.Length,Convert.ToHexStringLower(SHA256.HashData(Bytes)));
+        internal readonly ProductionRecordWriteDescriptor Item=new(new(Guid.NewGuid(),send?DocumentBlobKind.Normalized:DocumentBlobKind.Original,Guid.NewGuid()),Bytes.Length,Convert.ToHexStringLower(SHA256.HashData(Bytes)));
         internal readonly List<Request> Requests=[];
         private readonly Guid operationId=Guid.NewGuid();
-        internal ProductionRecordOperation Scope=>new(Item.Blob.EnvelopeId,operationId,"sender/upload","synthetic-upload",0,null,new string('a',64),new string('b',64),2);
+        internal ProductionRecordOperation Scope=>new(Item.Blob.EnvelopeId,operationId,send?"sender/send":"sender/upload","synthetic-upload",0,null,new string('a',64),new string('b',64),2);
         internal int Stages,Commits,Demands; internal bool ChangeVersion,Refuse,RefuseAfterCommit;
         private bool exists; private int rootReads;
         internal ClaimsPrincipal Sender => new(new ClaimsIdentity([new(EnvelopeStorageAuthorization.EnvelopeClaim,Item.Blob.EnvelopeId.ToString())],EnvelopeStorageAuthorization.SenderScheme));
@@ -133,7 +144,7 @@ public sealed class ProductionRecordUploadTransportTests
         internal Task Demand(CancellationToken ct)
         { ct.ThrowIfCancellationRequested();Demands++;if(Refuse||RefuseAfterCommit&&Commits>0)throw new UnauthorizedAccessException("Synthetic operation frozen.");return Task.CompletedTask; }
         internal Task<ProductionRecordWriteReceipt> Write(bool mayWrite,ProductionRecordWriteReceipt? saved=null)
-            =>Store.WriteAsync(Scope,Sender,Item,new MemoryStream(Bytes,false),mayWrite,saved,Demand);
+            =>send?((IProductionRecordSendStore)Store).WriteAsync(Scope,Sender,Item,new MemoryStream(Bytes,false),mayWrite,saved,Demand):Store.WriteAsync(Scope,Sender,Item,new MemoryStream(Bytes,false),mayWrite,saved,Demand);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             Assert.Equal("storage.example.invalid",request.RequestUri!.Host);
@@ -142,11 +153,11 @@ public sealed class ProductionRecordUploadTransportTests
             Requests.Add(new(request.Method,Q("versionid"),match));
             if(Q("restype")=="container")
             {
-                Assert.Equal(HttpMethod.Get,request.Method);Assert.Equal("/originals",request.RequestUri.AbsolutePath);
+                Assert.Equal(HttpMethod.Get,request.Method);Assert.Equal(send?"/normalized":"/originals",request.RequestUri.AbsolutePath);
                 if(mode=="redirect"){var redirected=Reply([],HttpStatusCode.TemporaryRedirect);redirected.Headers.Location=new Uri("https://foreign.example.invalid/originals");return redirected;}
                 var result=Reply([]);if(mode=="public")result.Headers.TryAddWithoutValidation("x-ms-blob-public-access","blob");return result;
             }
-            Assert.Equal($"/originals/{Item.Blob.EnvelopeId:N}/{Item.Blob.ObjectId:N}",request.RequestUri.AbsolutePath);
+            Assert.Equal($"/{(send?"normalized":"originals")}/{Item.Blob.EnvelopeId:N}/{Item.Blob.ObjectId:N}",request.RequestUri.AbsolutePath);
             if(request.Method==HttpMethod.Put)
             {
                 if(Q("comp")=="block")

@@ -16,7 +16,8 @@ public sealed class SignerReminderJobs(QuillSignDbContext db,SignerAccess access
     public bool Enabled=>options.Enabled && work.Enabled && email.Enabled;
 
     // Joins Send/checkpoint's parent transaction. No scanner or SQL timer exists.
-    public async Task<IReadOnlyList<ScheduledSignerReminder>> PrepareCurrentLockedAsync(Guid envelopeId,CancellationToken ct)
+    public async Task<IReadOnlyList<ScheduledSignerReminder>> PrepareCurrentLockedAsync(Guid envelopeId,CancellationToken ct,
+        Func<Guid,DateTimeOffset,CancellationToken,Task>? demandHint=null)
     {
         RequireTransaction();var parent=await ParentAsync(envelopeId,ct);if(parent is null)return [];
         var epoch=await CurrentEpochAsync(parent,ct);if(epoch is null)return [];
@@ -47,7 +48,10 @@ public sealed class SignerReminderJobs(QuillSignDbContext db,SignerAccess access
             var item=await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==entry.WorkId,ct);
             if(item.Status is WorkStatus.Failed or WorkStatus.Completed)continue;
             var due=item.Status==WorkStatus.Leased && item.LeaseExpiresAt>item.AvailableAt ? item.LeaseExpiresAt!.Value : item.AvailableAt;
-            await signals().PutHintAsync(item.Id,due,ct);pending.Add(entry with {DueAt=due});
+            if(demandHint is not null)await demandHint(item.Id,due,ct);
+            await signals().PutHintAsync(item.Id,due,ct);
+            if(demandHint is not null)await demandHint(item.Id,due,ct);
+            pending.Add(entry with {DueAt=due});
         }
         return pending;
     }
