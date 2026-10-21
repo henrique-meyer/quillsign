@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Documents;
 using QuillSign.Storage;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Signing;
 
@@ -48,6 +49,7 @@ internal sealed record CurrentSignatureAssets(SignaturePreview Preview,byte[] Si
 public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,IBlobStore blobs,
     SignaturePreviewProtection receipts,AuditWriter audit,TimeProvider time)
 {
+    internal ProductionSignerMutationAdmission? HoldAdmission {get;init;}
     public const int PreviewMinutes = 10;
     public const int MaximumPreviewsPerSigner = 40;
     public const int MaximumActivePreviews = 5;
@@ -107,33 +109,49 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
 
     public async Task<SignaturePreviewData?> ReadAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct = default)
     {
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var context = await access.GetLockedContextAsync(principal,publicId,ct); if (context?.ConsentAt is null) return null;
         var preview = await FindPreview(receipt,context.Identity,ct); if (preview is null) return null;
         var signer = await CurrentSigner(context.Identity,ct);
         if (!MatchesRevision(preview,signer)) return null;
+        if(HoldAdmission is not null)await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);
+        if(HoldAdmission is not null&&(preview.ExpiresAt<=time.GetUtcNow()||!access.IsLive(context)))return null;
         var images = await ReadImages(preview,context.Identity,ct);
         if (preview.ExpiresAt <= time.GetUtcNow() || (await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null) return null;
+        if(HoldAdmission is not null)await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);
+        if(HoldAdmission is not null&&(preview.ExpiresAt<=time.GetUtcNow()||!access.IsLive(context)))return null;
         await access.CommitAsync(transaction,ct);
+        if(HoldAdmission is not null&&(preview.ExpiresAt<=time.GetUtcNow()||!access.IsLive(context)))return null;
         return Data(preview,context.Identity,images.Signature,images.Initials);
     }
 
     public async Task<SignatureAdoptionResult> AdoptAsync(ClaimsPrincipal principal,string publicId,string? receipt,bool acknowledged,
         string? statementVersion,string? ip,string? ua,CancellationToken ct = default)
     {
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var context = await access.GetLockedContextAsync(principal,publicId,ct);
         if (context?.ConsentAt is null) return SignatureAdoptionResult.InvalidContext;
         if (!acknowledged || statementVersion != SignatureAdoptionStatement.Version) return SignatureAdoptionResult.InvalidAcknowledgment;
         var preview = await FindPreview(receipt,context.Identity,ct); if (preview is null) return SignatureAdoptionResult.InvalidPreview;
+        var evidence=HoldAdmission is null?null:receipts.Read(receipt,context.Identity);
+        if(HoldAdmission is not null&&evidence is null)return SignatureAdoptionResult.InvalidPreview;
         var signer = await CurrentSigner(context.Identity,ct);
         if (!MatchesRevision(preview,signer)) return SignatureAdoptionResult.InvalidPreview;
         _ = await ReadImages(preview,context.Identity,ct);
         if (preview.ExpiresAt <= time.GetUtcNow() || (await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null)
             return SignatureAdoptionResult.InvalidContext;
         if (preview.UsedAt is not null) return SignatureAdoptionResult.AlreadyAdopted;
+        ProductionRecordOperation? operation=null;
+        if(HoldAdmission is not null)
+        {
+            try{operation=await HoldAdmission.BeginLockedAsync(db,context.Identity.EnvelopeId,"signer/adopt",context.Identity.SignerId.ToString("N")+"/preview/"+preview.Id.ToString("N"),ct);}
+            catch(ProductionSignerBlockedException){return SignatureAdoptionResult.InvalidContext;}
+            if(receipts.Read(receipt,context.Identity)!=evidence||preview.ExpiresAt<=time.GetUtcNow()||!access.IsLive(context))return SignatureAdoptionResult.InvalidContext;
+        }
         var now = time.GetUtcNow(); var replaced = signer.SignatureAdoptionId;
         var changed = await db.Signers.Where(x => x.Id == signer.Id && x.EnvelopeId == signer.EnvelopeId && x.RowVersion == preview.BaselineSignerVersion)
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.SignatureAdoptionId,preview.Id).SetProperty(x => x.SignatureAdoptedAt,now)
@@ -153,7 +171,19 @@ public sealed class SignatureAdoption(QuillSignDbContext db,SignerAccess access,
                 documentSha256 = context.Identity.DocumentHash,disclosureSha256 = context.Identity.DisclosureHash,
                 serverEvidence = "previewed_assets_bound_to_explicit_adoption_request",identityEvidence = "email_link_session_with_prior_consent" }),PartyType.Signer,signer.Id);
         if(!access.IsLive(context))return SignatureAdoptionResult.InvalidContext;
-        await access.CommitAsync(transaction,ct); return SignatureAdoptionResult.Adopted;
+        if(operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+            if(receipts.Read(receipt,context.Identity)!=evidence||preview.ExpiresAt<=time.GetUtcNow()||!access.IsLive(context))return SignatureAdoptionResult.InvalidContext;
+        }
+        await access.CommitAsync(transaction,ct);
+        if(operation is not null)
+        {
+            await transaction.DisposeAsync();
+            await HoldAdmission!.CompleteAsync(operation,context.Identity,"adopt",preview.Id,ct);
+            if(receipts.Read(receipt,context.Identity)!=evidence||preview.ExpiresAt<=time.GetUtcNow()||!access.IsLive(context))return SignatureAdoptionResult.InvalidContext;
+        }
+        return SignatureAdoptionResult.Adopted;
     }
 
     // Current adopted marks outlive their original preview and may be read from a fresh
