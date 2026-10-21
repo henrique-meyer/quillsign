@@ -5,6 +5,7 @@ namespace QuillSign.Data;
 
 public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> options) : DbContext(options)
 {
+    public DbSet<ProductionOperatorAccessReceipt> ProductionOperatorAccessReceipts => Set<ProductionOperatorAccessReceipt>();
     public DbSet<Envelope> Envelopes => Set<Envelope>();
     public DbSet<DocumentRetentionSnapshot> DocumentRetentionSnapshots => Set<DocumentRetentionSnapshot>();
     public DbSet<ProductionRetentionPolicyRecord> ProductionRetentionPolicies => Set<ProductionRetentionPolicyRecord>();
@@ -243,11 +244,13 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         ProductionRetentionModel.Configure(model);
         ProductionHoldRequestModel.Configure(model);
         ProductionHoldControlModel.Configure(model);
+        ProductionOperatorAccessModel.Configure(model);
     }
 
     private void GuardAuditMutations()
     {
         ChangeTracker.DetectChanges();
+        if(ChangeTracker.Entries<ProductionOperatorAccessReceipt>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))throw new InvalidOperationException("Private operator access receipts are append-only.");
         if (ChangeTracker.Entries<ProductionRetentionPolicyRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<ProductionRetentionTerminalRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Production retention provenance is immutable. Migration and deletion require their separate privileged paths.");

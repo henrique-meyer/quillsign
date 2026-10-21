@@ -26,18 +26,25 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
     TimeProvider time, ProductionHoldWitnessJournal witness)
 {
     internal TimeProvider Clock => time;
+    // Only the closed host composition selects the authenticated demo-origin
+    // alternative. Enabled production retains the original external fence read.
+    internal bool AuthenticatedDemoOrigin { get; init; }
+    internal bool ProductionAdmissionEnabled { get; init; } = true;
     private sealed record HandlerFinalizationPermit(ProductionRecordOperation Scope, Guid TransactionId,
         DbTransaction SqlTransaction, HoldWitnessOutcome HandlerOutcome);
     private readonly ConditionalWeakTable<QuillSignDbContext, HandlerFinalizationPermit> handlerFinalizers = new();
     internal async Task<bool> IsUnenrolledDemoAsync(QuillSignDbContext db, Guid recordId, CancellationToken ct = default)
     {
-        var record = await db.Envelopes.AsNoTracking().Where(x => x.Id == recordId).Select(x => new { x.IsDemo }).SingleOrDefaultAsync(ct)
+        var record = await db.Envelopes.AsNoTracking().SingleOrDefaultAsync(x => x.Id == recordId, ct)
             ?? throw Invalid();
         if (!record.IsDemo) return false;
         // A mutable classification flag cannot downgrade a previously enrolled
         // production record or erase its independently retained external fence.
         if (await db.ProductionRetentionPolicies.AnyAsync(x => x.EnvelopeId == recordId, ct) ||
-            (await witness.ReadAsync(recordId, ct)).Sequence != 0) throw Invalid();
+            await db.ProductionRetentionTerminals.AnyAsync(x=>x.EnvelopeId==recordId,ct) ||
+            await db.AuditEvents.AnyAsync(x=>x.EnvelopeId==recordId&&(x.Event==ProductionRetentionLedger.EnrollmentEvent||x.Event==ProductionRetentionLedger.TerminalEvent),ct))throw Invalid();
+        if(AuthenticatedDemoOrigin&&await ProductionDemoOrigin.DemandOriginalAsync(db,record,keys,ct))return true;
+        if((await witness.ReadAsync(recordId,ct)).Sequence!=0)throw Invalid();
         return true;
     }
 

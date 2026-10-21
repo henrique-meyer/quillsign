@@ -43,7 +43,8 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
         var email = EmailAddress.Normalize(address);
         if (!availability.CanSend) return SenderRequestOutcome.Unavailable;
         if(lifecycle is not null) {
-            try {_=ProductionRetentionAdmission.Prepare(email,time.GetUtcNow(),lifecycle,electronicRecords??new());}
+            try {var admission=ProductionRetentionAdmission.Prepare(email,time.GetUtcNow(),lifecycle,electronicRecords??new());
+                if(!admission.Envelope.IsDemo&&HoldAdmission?.ProductionAdmissionEnabled==false)return SenderRequestOutcome.Unavailable;}
             catch(Exception error) when(error is InvalidOperationException or InvalidDataException or DisclosureRejectedException or ArgumentException)
             {return SenderRequestOutcome.Unavailable;}
         }
@@ -63,14 +64,22 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
             if (await db.Envelopes.CountAsync(x => x.SenderEmail == email && x.CreatedAt >= start, cancellationToken) >= options.DailyRequests ||
                 await db.Suppressions.AnyAsync(x => x.Email == email, cancellationToken)) return SenderRequestOutcome.Neutral;
             Envelope envelope;
+            DemoCreationOrigin? demoOrigin=null;
             if(lifecycle is null) {
                 envelope = new Envelope { SenderEmail = email, CreatedAt = now, IsDemo = true };
-                db.Envelopes.Add(envelope);await db.SaveChangesAsync(cancellationToken);
-            } else envelope=await new ProductionRetentionAdmission(db,audit,time).CreateLockedAsync(email,lifecycle,electronicRecords??new(),cancellationToken);
+                db.Envelopes.Add(envelope);
+                if(HoldAdmission?.AuthenticatedDemoOrigin==true)demoOrigin=ProductionDemoOrigin.CaptureNew(db,envelope,time);
+                await db.SaveChangesAsync(cancellationToken);
+            } else {
+                var admission=new ProductionRetentionAdmission(db,audit,time,HoldAdmission);
+                envelope=await admission.CreateLockedAsync(email,lifecycle,electronicRecords??new(),cancellationToken);
+                demoOrigin=admission.OriginalDemoOrigin;
+            }
             recordId = envelope.Id; production = !envelope.IsDemo;
             await audit.AppendAsync(envelope.Id, "draft_created", email, ip, userAgent, cancellationToken);
             await audit.AppendAsync(envelope.Id, "sender_verification_requested", email, ip, userAgent, cancellationToken);
-            workId = await outbox.PrepareVerificationAsync(envelope.Id, email, cancellationToken);
+            workId = demoOrigin is null ? await outbox.PrepareVerificationAsync(envelope.Id, email, cancellationToken) :
+                await outbox.PrepareInitialDemoVerificationAsync(envelope,demoOrigin,cancellationToken);
             await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,cancellationToken);
         }
         // The durable hint may already exist, but a gated worker cannot claim
