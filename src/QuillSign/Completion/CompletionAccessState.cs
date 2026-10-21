@@ -14,7 +14,8 @@ public sealed class CompletionAccessState(QuillSignDbContext db,CompletionEviden
     {
         if(db.Database.CurrentTransaction is null || id==Guid.Empty)throw Invalid();
         var until=time.GetUtcNow().AddMinutes(2);
-        using var restriction=CompletionReadRestriction.Enter(db,()=>{clocks();ct.ThrowIfCancellationRequested();if(until<=time.GetUtcNow())throw Invalid();});
+        void Original(){clocks();ct.ThrowIfCancellationRequested();if(until<=time.GetUtcNow())throw Invalid();}
+        using var restriction=CompletionReadRestriction.Enter(db,async()=>{Original();await demand(ct);Original();});
         await demand(ct);
         var saved=await CompletionDownloadState.ReadAsync(db,id,time,ct);if(saved is null || saved.PurgeAfter<=time.GetUtcNow())return null;
         until=new[]{until,saved.PurgeAfter??DateTimeOffset.MaxValue}.Min();

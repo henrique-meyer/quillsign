@@ -16,15 +16,21 @@ internal static class CompletionReadRestriction
         if(physical.Connection is null)throw new InvalidOperationException("A live caller transaction is required.");
         var scope=new Scope(db,physical,demand,Current.Value);scope.Demand(db);Current.Value=scope;return scope;
     }
+    internal static IDisposable Enter(QuillSignDbContext db,Func<Task> demand)
+    {
+        var physical=db.Database.CurrentTransaction?.GetDbTransaction()??throw new InvalidOperationException("A live caller transaction is required.");
+        if(physical.Connection is null)throw new InvalidOperationException("A live caller transaction is required.");
+        var scope=new Scope(db,physical,()=>{},Current.Value,demand);scope.Demand(db);Current.Value=scope;return scope;
+    }
     internal static async Task ReadAsync(QuillSignDbContext db,Func<Task> read)
     {
-        var scope=Current.Value;scope?.Demand(db);await read();scope?.Demand(db);
+        var scope=Current.Value;if(scope is not null)await scope.DemandAsync(db);await read();if(scope is not null)await scope.DemandAsync(db);
     }
     internal static async Task<T> ReadAsync<T>(QuillSignDbContext db,Func<Task<T>> read)
     {
-        var scope=Current.Value;scope?.Demand(db);var result=await read();scope?.Demand(db);return result;
+        var scope=Current.Value;if(scope is not null)await scope.DemandAsync(db);var result=await read();if(scope is not null)await scope.DemandAsync(db);return result;
     }
-    private sealed class Scope(QuillSignDbContext db,DbTransaction physical,Action demand,Scope? previous):IDisposable
+    private sealed class Scope(QuillSignDbContext db,DbTransaction physical,Action demand,Scope? previous,Func<Task>? asyncDemand=null):IDisposable
     {
         private bool closed;
         internal void Demand(QuillSignDbContext current)
@@ -33,6 +39,7 @@ internal static class CompletionReadRestriction
                 throw new InvalidDataException("Completion read lifetime is unavailable.");
             demand();
         }
+        internal async Task DemandAsync(QuillSignDbContext current){Demand(current);if(asyncDemand is not null){await asyncDemand();Demand(current);}}
         public void Dispose()
         {
             if(closed)return;

@@ -72,6 +72,7 @@ internal static class ProductionHoldCompletionMailReferences
         if((state.CompletionMailBaselines?.Count??0)>201)throw Invalid();
         ProductionHoldAuditChain.Demand(sql);
         ProductionHoldCompletionNotificationReferences.Demand(sql,objects,keys);
+        var accessHistory=ProductionHoldCompletionAccessReferences.ReadVerified(sql,state);
         var id=sql.GetProperty("RecordId").GetGuid();var captured=sql.GetProperty("CapturedAt").GetDateTimeOffset();
         var tables=sql.GetProperty("Tables").EnumerateArray().ToDictionary(x=>x.GetProperty("Table").GetString()!,x=>x.GetProperty("Rows"));
         T[] Table<T>(string name)=>tables[name].Deserialize<T[]>(Rows)??throw Invalid();
@@ -118,7 +119,7 @@ internal static class ProductionHoldCompletionMailReferences
             var token=tokens.Single(x=>x.Id==tokenId);
             if(token.EnvelopeId!=id||token.Purpose!=TokenPurpose.CompletionAccess||token.PartyType!=current.Party||token.PartyId!=current.PartyId||token.Email!=mail.To||
                 token.CompletionPublicationId!=result.Id||!Same(token.CompletionRecipeSha256,result.RecipeSha256)||Hex(token.CompletionPartySha256??[])!=current.PartyHash||
-                token.ExpiresAt.Offset!=TimeSpan.Zero||token.TokenSha256 is not {Length:32}||token.RowVersion is not {Length:8}||token.UsedAt is not null||token.Ip is not null||token.DocumentId is not null||
+                token.ExpiresAt.Offset!=TimeSpan.Zero||token.TokenSha256 is not {Length:32}||token.RowVersion is not {Length:8}||token.Ip is not null||token.DocumentId is not null||
                 token.DocumentSha256 is not null||token.DisclosureSha256 is not null||token.SignerContactRevisionId is not null||token.EmailPilotLookupRequestId is not null)throw Invalid();
             var issued=Proof("completion_access_issued",CompletionAccess.Issued(token));
             var rawAttempt=audits.Single(x=>x.Event=="completion_notification_attempt"&&NotificationId(x.DataJson)==mail.Id);
@@ -134,9 +135,10 @@ internal static class ProductionHoldCompletionMailReferences
                 Id=item.Id,Owner=operation.OperationId,Kind=WorkKind.Email,Attempt=1,Work=item})));
             if(settled!=receipt)throw Invalid();
         }
-        if(!usedTokens.SetEquals(tokens.Where(x=>x.Purpose==TokenPurpose.CompletionAccess).Select(x=>x.Id)))throw Invalid();
-        var names=new HashSet<string>(["completion_access_issued","completion_notification_attempt","completion_notification_submitted"],StringComparer.Ordinal);
-        if(!proofs.SetEquals(audits.Where(x=>names.Contains(x.Event)).Select(x=>x.Sequence)))throw Invalid();
+        if(!usedTokens.IsSubsetOf(accessHistory.Tokens))throw Invalid();
+        var names=new HashSet<string>(["completion_notification_attempt","completion_notification_submitted"],StringComparer.Ordinal);
+        if(!proofs.Where(x=>!accessHistory.Audits.Contains(x)).ToHashSet().SetEquals(audits.Where(x=>names.Contains(x.Event)).Select(x=>x.Sequence)))throw Invalid();
+        usedTokens.UnionWith(accessHistory.Tokens);proofs.UnionWith(accessHistory.Audits);
         return new Facts(originals,usedTokens,proofs);
 
         AuditEvent Proof(string name,string data)

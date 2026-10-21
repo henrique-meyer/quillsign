@@ -25,6 +25,7 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
     IOptionsMonitor<CookieAuthenticationOptions> cookies,IDataProtectionProvider protection,
     SignerCheckpointReads checkpoints,CompletionEvidenceCollector collector,Func<CompletionPublication> publication,AuditWriter audit,Func<CompletionReaderBrowser> readers,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal ProductionCompletionReadAdmission? HoldAdmission {get;init;}
     public const string Version="final-download-v2";
     private readonly IDataProtector protector=protection.CreateProtector("QuillSign.FinalDownload.v1");
     private sealed record Actor(string Audience,Guid EnvelopeId,PartyType Party,Guid? PartyId,string Email,byte[] Session,byte[]? Acceptance,DateTimeOffset Until);
@@ -50,7 +51,8 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         if(ParseKind(kind) is not { } selected)return null;
         var actor=await Authenticate(http,publicId,party,ct,reader); if(actor is null)return null;
         var saved=await CompletionDownloadState.ReadAsync(db,actor.EnvelopeId,time,ct); if(saved is null || saved.PurgeAfter<=time.GetUtcNow())return null;
-        var verified=await publication().ReadAsync(actor.EnvelopeId,ct); if(verified is null || !saved.Matches(verified))throw Invalid();
+        var prepared=HoldAdmission is null?null:await HoldAdmission.PrepareAsync(db,new(db,collector,publication,time,pilotBounds),actor.EnvelopeId,ct);
+        var verified=HoldAdmission is null?await publication().ReadAsync(actor.EnvelopeId,ct):prepared?.Verified; if(verified is null || !saved.Matches(verified))throw Invalid();
         var again=await Authenticate(http,publicId,party,ct,reader); if(!SameActor(actor,again))return null;
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
         var deadline=await Recheck(saved,actor,http,publicId,ct);
@@ -60,6 +62,7 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         var proof=new Proof(Version,actor.Audience,actor.EnvelopeId,publicId,actor.Party,actor.PartyId,actor.Session,actor.Acceptance,saved.Id,saved.Recipe,saved.Revision,
             selected,DownloadPublication.Reference(file),Guid.NewGuid(),now,until);
         var encoded=protector.Protect(JsonSerializer.Serialize(proof)); if(encoded.Length>3800)throw Invalid();
+        var operation=HoldAdmission is null?null:await HoldAdmission.BeginLockedAsync(db,actor.EnvelopeId,"completion/download",proof.Nonce.ToString("N"),ct);
         await audit.AppendAsync(actor.EnvelopeId,"final_download_prepared",actor.Email,null,null,ct,JsonSerializer.Serialize(new {
             version=Version,publicationId=saved.Id,kind,fileSha256=Convert.ToHexStringLower(file.Sha256),nonce=proof.Nonce,
             referenceSha256=Convert.ToHexStringLower(proof.Reference),expiresAt=until,meaning="Verified download prepared; receipt or saving is not confirmed."
@@ -68,7 +71,10 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         if(actor.Until<=time.GetUtcNow() || saved.PurgeAfter<=time.GetUtcNow())throw Invalid();
         // An unknown commit outcome returns no grant. Retrying may record another explicit
         // preparation, but cannot regenerate or replace the immutable final packet.
-        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
+        if(HoldAdmission is not null)await HoldAdmission.OutcomeLockedAsync(db,operation,ct);
+        if(actor.Until<=time.GetUtcNow()||until<=time.GetUtcNow())throw Invalid();
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);await transaction.DisposeAsync();
+        if(HoldAdmission is not null){await HoldAdmission.CompleteAsync(operation,ct);await HoldAdmission.DemandAsync(actor.EnvelopeId,until,ct);}
         var options=Options(http,publicId,actor.Audience); options.MaxAge=until-time.GetUtcNow();
         if(options.MaxAge<=TimeSpan.Zero)return null;
         http.Response.Cookies.Append(Cookie(actor.Audience,selected),encoded,options);
@@ -86,11 +92,13 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         var proof=ReadProof(http,publicId,audience,selected); if(proof is null)return null;
         var actor=await Authenticate(http,publicId,party,ct,reader); if(!Matches(proof,actor))return null;
         var saved=await CompletionDownloadState.ReadAsync(db,actor!.EnvelopeId,time,ct); if(!Matches(proof,saved))return null;
-        var verified=await publication().ReadAsync(actor.EnvelopeId,ct); if(verified is null || !saved!.Matches(verified))throw Invalid();
+        var prepared=HoldAdmission is null?null:await HoldAdmission.PrepareAsync(db,new(db,collector,publication,time,pilotBounds),actor.EnvelopeId,ct);
+        var verified=HoldAdmission is null?await publication().ReadAsync(actor.EnvelopeId,ct):prepared?.Verified; if(verified is null || !saved!.Matches(verified))throw Invalid();
         var again=await Authenticate(http,publicId,party,ct,reader); if(!Matches(proof,again) || !SameActor(actor,again))return null;
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
         var deadline=await Recheck(saved,actor,http,publicId,ct); if(proof.ExpiresAt<=time.GetUtcNow())return null;
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
+        await transaction.DisposeAsync();if(HoldAdmission is not null)await HoldAdmission.DemandAsync(actor.EnvelopeId,proof.ExpiresAt,ct);
         DocumentRetentionAccess.Check(deadline,time);if(proof.ExpiresAt<=time.GetUtcNow())return null;
         // Clearing is a convenience for this browser, not global replay prevention. An
         // authenticated clone can repeat this read until the original short expiry.
@@ -136,7 +144,8 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         if(e?.PublicId!=publicId || e.Status!=EnvelopeStatus.Completed || e.PurgeAfter<=time.GetUtcNow() ||
             sender is not null && (e.SenderEmail!=sender || e.SenderVerifiedAt is null))return null;
         var deadline=await SenderPreparationRetention.ReadAsync(db,e,time,ct,pilotBounds);
-        if(owned is not null)await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,owned,ct);
+        if(HoldAdmission is not null)await HoldAdmission.DemandLockedAsync(db,id,deadline??time.GetUtcNow().AddMinutes(2),ct);
+        if(owned is not null){await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,owned,ct);await owned.DisposeAsync();if(HoldAdmission is not null)await HoldAdmission.DemandAsync(id,deadline??time.GetUtcNow().AddMinutes(2),ct);}
         DocumentRetentionAccess.Check(deadline,time);return new(e,deadline);
     }
     private static DateTimeOffset? Earlier(DateTimeOffset? saved,DateTimeOffset? deadline)=>
@@ -147,6 +156,7 @@ public sealed class CompletionDownloads(QuillSignDbContext db,TimeProvider time,
         var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={saved.EnvelopeId}").AsNoTracking().SingleOrDefaultAsync(ct);
         if(e is null || actor.Until<=time.GetUtcNow() || e.PurgeAfter<=time.GetUtcNow())throw Invalid();
         var deadline=await SenderPreparationRetention.ReadAsync(db,e,time,ct,pilotBounds);
+        if(HoldAdmission is not null)await HoldAdmission.DemandLockedAsync(db,actor.EnvelopeId,actor.Until,ct);
         var current=await CompletionDownloadState.ReadAsync(db,saved.EnvelopeId,time,ct);
         if(current is null || current.Id!=saved.Id || !Same(current.Recipe,saved.Recipe) || !current.Revision.AsSpan().SequenceEqual(saved.Revision))throw Invalid();
         await CompletionDownloadState.RecheckSourceAsync(collector,saved,ct);

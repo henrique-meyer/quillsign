@@ -21,6 +21,7 @@ internal sealed record CompletionReaderPreparation(CompletionReaderSession Sessi
 public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState state,CompletionAccessProtection protection,
     CompletionAccessOptions options,AuditWriter audit,TimeProvider time,Func<CompletionPublication> publication,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal ProductionCompletionReadAdmission? HoldAdmission {get;init;}
     private sealed record SessionScope(DownloadPublication Saved,DateTimeOffset? Deadline)
     {
         internal CompletionReaderView View(CompletionReaderIdentity identity)=>new(identity,Saved.Title,Saved.CompletedAt,
@@ -34,20 +35,26 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
     }
     private async Task<CompletionAccessLink?> IssueCore(Guid envelopeId,PartyType party,Guid? partyId,CancellationToken ct)
     {
-        options.Validate(); var prepared=await state.PrepareAsync(envelopeId,ct); if(prepared is null)return null;
+        options.Validate(); var prepared=await PrepareAsync(envelopeId,ct); if(prepared is null)return null;
         await using var tx=await db.Database.BeginTransactionAsync(ct);
-        var link=await PrepareLockedAsync(prepared,party,partyId,ct); if(link is null)return null;
+        if(await state.PartyLockedAsync(prepared.Saved,party,partyId,ct) is null)return null;
+        var tokenId=Guid.NewGuid();
+        var operation=HoldAdmission is null?null:await HoldAdmission.BeginLockedAsync(db,envelopeId,"completion/issue",tokenId.ToString("N"),ct);
+        var link=await PrepareBoundedLockedAsync(prepared,party,partyId,ct,null,tokenId); if(link is null){if(operation is null)return null;throw Invalid();}
+        if(HoldAdmission is not null)await HoldAdmission.OutcomeLockedAsync(db,operation,ct);
+        if(prepared.Until<=time.GetUtcNow()||link.ExpiresAt<=time.GetUtcNow())throw Invalid();
         // Unknown commits return no plaintext transport. An unused hash may expire safely.
-        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct); return link;
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);await tx.DisposeAsync();
+        if(HoldAdmission is not null){await HoldAdmission.CompleteAsync(operation,ct);await HoldAdmission.DemandAsync(envelopeId,prepared.Until,ct);}return link;
     }
 
     // Delivery verifies before its transaction and returns raw transport only in memory.
     // The caller owns issuance, submission-intent commit and uncertain-outcome recovery.
-    internal Task<CompletionAccessPreparation?> PrepareAsync(Guid envelopeId,CancellationToken ct)=>state.PrepareAsync(envelopeId,ct);
+    internal Task<CompletionAccessPreparation?> PrepareAsync(Guid envelopeId,CancellationToken ct)=>HoldAdmission is null?state.PrepareAsync(envelopeId,ct):HoldAdmission.PrepareAsync(db,state,envelopeId,ct);
     internal Task<CompletionAccessLink?> PrepareLockedAsync(CompletionAccessPreparation prepared,PartyType party,Guid? partyId,CancellationToken ct)=>
         PrepareBoundedLockedAsync(prepared,party,partyId,ct,null);
 
-    internal async Task<CompletionAccessLink?> PrepareBoundedLockedAsync(CompletionAccessPreparation prepared,PartyType party,Guid? partyId,CancellationToken ct,DateTimeOffset? authorityLimit)
+    internal async Task<CompletionAccessLink?> PrepareBoundedLockedAsync(CompletionAccessPreparation prepared,PartyType party,Guid? partyId,CancellationToken ct,DateTimeOffset? authorityLimit,Guid? tokenId=null)
     {
         options.Validate(); if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Completion token preparation requires its caller's transaction.");
         if(prepared.Until<=time.GetUtcNow())return null;
@@ -59,7 +66,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         var member=await state.PartyLockedAsync(prepared.Saved,party,partyId,ct); if(member is null)return null;
         var now=time.GetUtcNow(); var until=new[]{now.AddHours(options.LinkHours),prepared.Saved.PurgeAfter??DateTimeOffset.MaxValue,authorityLimit??DateTimeOffset.MaxValue}.Min(); if(until<=now)return null;
         var raw=WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-        var token=new AuthToken {EnvelopeId=prepared.Saved.EnvelopeId,PartyType=party,PartyId=partyId,Email=member.Email,Purpose=TokenPurpose.CompletionAccess,
+        var token=new AuthToken {Id=tokenId??Guid.NewGuid(),EnvelopeId=prepared.Saved.EnvelopeId,PartyType=party,PartyId=partyId,Email=member.Email,Purpose=TokenPurpose.CompletionAccess,
             CompletionPublicationId=prepared.Saved.Id,CompletionRecipeSha256=prepared.Saved.Recipe.ToArray(),CompletionPartySha256=member.Sha256.ToArray(),
             TokenSha256=SHA256.HashData(Encoding.UTF8.GetBytes(raw)),ExpiresAt=until};
         db.AuthTokens.Add(token); await db.SaveChangesAsync(ct);
@@ -80,11 +87,18 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         var located=await db.AuthTokens.AsNoTracking().SingleOrDefaultAsync(x=>x.TokenSha256==hash,ct);
         if(!Shape(located) || located!.UsedAt is not null || located.ExpiresAt<=time.GetUtcNow())return null;
-        var prepared=await state.PrepareAsync(located.EnvelopeId!.Value,ct); if(prepared is null)return null;
+        var prepared=await PrepareAsync(located.EnvelopeId!.Value,ct); if(prepared is null)return null;
         await using var tx=await db.Database.BeginTransactionAsync(ct);
-        var reader=await RedeemLockedAsync(prepared,new(located.Id,raw!,located.ExpiresAt),null,ct); if(reader is null)return null;
+        await state.RecheckLockedAsync(prepared.Saved,ct);
+        var current=await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==located.Id,ct);
+        if(current.UsedAt is not null||current.ExpiresAt<=time.GetUtcNow()||!Same(current.TokenSha256,hash)||await Member(current,prepared.Saved,ct) is null||!await Issuance(current,ct))return null;
+        var operation=HoldAdmission is null?null:await HoldAdmission.BeginLockedAsync(db,located.EnvelopeId.Value,"completion/redeem",located.Id.ToString("N"),ct);
+        var reader=await RedeemLockedAsync(prepared,new(located.Id,raw!,located.ExpiresAt),null,ct); if(reader is null){if(operation is null)return null;throw Invalid();}
+        if(HoldAdmission is not null)await HoldAdmission.OutcomeLockedAsync(db,operation,ct);
+        DocumentRetentionAccess.Check(reader.Deadline,time);if(prepared.Until<=time.GetUtcNow()||reader.Session.Identity.ExpiresAt<=time.GetUtcNow())throw Invalid();
         // Never recover an unknown commit by replaying this consumed link into another session.
-        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);DocumentRetentionAccess.Check(reader.Deadline,time);
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);await tx.DisposeAsync();
+        if(HoldAdmission is not null){await HoldAdmission.CompleteAsync(operation,ct);await HoldAdmission.DemandAsync(located.EnvelopeId.Value,reader.Session.Identity.ExpiresAt,ct);}DocumentRetentionAccess.Check(reader.Deadline,time);
         return reader.Session.Identity.ExpiresAt>time.GetUtcNow() ? reader.Session : null;
     }
 
@@ -118,8 +132,10 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
         var i=protection.Read(receipt); if(i?.PublicId!=publicId || !CompletionAccessProtection.Matches(principal,i))return null;
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
         await using var tx=await db.Database.BeginTransactionAsync(ct);
+        if(HoldAdmission is not null)await HoldAdmission.DemandLockedAsync(db,i.EnvelopeId,i.ExpiresAt,ct);
         var saved=await SessionLocked(i,ct); if(saved is null)return null;
-        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);DocumentRetentionAccess.Check(saved.Deadline,time);return i.ExpiresAt>time.GetUtcNow() ? saved.View(i) : null;
+        await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);await tx.DisposeAsync();
+        if(HoldAdmission is not null)await HoldAdmission.DemandAsync(i.EnvelopeId,i.ExpiresAt,ct);DocumentRetentionAccess.Check(saved.Deadline,time);return i.ExpiresAt>time.GetUtcNow() ? saved.View(i) : null;
     }
 
     // Download transactions already hold the parent lock; never open a nested transaction.
@@ -127,6 +143,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
     {
         if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Completion session validation requires its parent transaction.");
         var i=protection.Read(receipt); if(i?.PublicId!=publicId || !CompletionAccessProtection.Matches(principal,i))return null;
+        if(HoldAdmission is not null)await HoldAdmission.DemandLockedAsync(db,i.EnvelopeId,i.ExpiresAt,ct);
         var saved=await SessionLocked(i,ct); return saved?.View(i);
     }
 
@@ -134,12 +151,14 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
     {
         if(kind is not (FinalDocumentKind.Executed or FinalDocumentKind.Certificate))return null;
         var authenticated=await AuthenticateAsync(principal,publicId,receipt,ct); if(authenticated is null)return null;
-        var verified=await publication().ReadAsync(authenticated.Identity.EnvelopeId,ct); if(verified is null)return null;
+        var verified=HoldAdmission is null?await publication().ReadAsync(authenticated.Identity.EnvelopeId,ct):(await PrepareAsync(authenticated.Identity.EnvelopeId,ct))?.Verified; if(verified is null)return null;
         if(protection.Read(receipt) is not { } identity || !CompletionAccessProtection.Matches(principal,identity))return null;
-        await using var tx=await db.Database.BeginTransactionAsync(ct); var saved=await SessionLocked(identity,ct);
+        await using var tx=await db.Database.BeginTransactionAsync(ct);
+        if(HoldAdmission is not null)await HoldAdmission.DemandLockedAsync(db,identity.EnvelopeId,identity.ExpiresAt,ct);var saved=await SessionLocked(identity,ct);
         if(saved is null)return null; if(!saved.Saved.Matches(verified))throw Invalid();
         if(identity.ExpiresAt<=time.GetUtcNow())return null;
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);
+        await tx.DisposeAsync();if(HoldAdmission is not null)await HoldAdmission.DemandAsync(identity.EnvelopeId,identity.ExpiresAt,ct);
         DocumentRetentionAccess.Check(saved.Deadline,time);if(identity.ExpiresAt<=time.GetUtcNow())return null;
         return new(kind==FinalDocumentKind.Executed ? verified.ExecutedBytes : verified.CertificateBytes,saved.Saved.Title,
             Hex(kind==FinalDocumentKind.Executed ? verified.Executed.Sha256 : verified.Certificate.Sha256),kind);
@@ -190,7 +209,7 @@ public sealed class CompletionAccess(QuillSignDbContext db,CompletionAccessState
     internal static string Issued(AuthToken t)=>JsonSerializer.Serialize(new {version=CompletionAccessProtection.Version,tokenId=t.Id,t.EnvelopeId,purpose=t.Purpose.ToString(),
         party=t.PartyType.ToString(),t.PartyId,t.Email,publicationId=t.CompletionPublicationId,recipeSha256=Hex(t.CompletionRecipeSha256!),partySha256=Hex(t.CompletionPartySha256!),
         tokenSha256=Hex(t.TokenSha256),t.ExpiresAt});
-    private static string Consumed(CompletionReaderIdentity i)=>JsonSerializer.Serialize(new {version=CompletionAccessProtection.Version,tokenId=i.TokenId,i.EnvelopeId,
+    internal static string Consumed(CompletionReaderIdentity i)=>JsonSerializer.Serialize(new {version=CompletionAccessProtection.Version,tokenId=i.TokenId,i.EnvelopeId,
         publicationId=i.PublicationId,i.TokenRevision,party=i.Party.ToString(),i.PartyId,i.Email,i.RecipeSha256,i.PartySha256,i.SessionId,i.RedeemedAt,i.ExpiresAt,
         authentication="single_use_party_scoped_link",authority="readonly_published_final_pair"});
     private static bool Shape(AuthToken? t)=>t is not null && t.Id!=Guid.Empty && t.EnvelopeId is { } e && e!=Guid.Empty && t.Purpose==TokenPurpose.CompletionAccess &&
