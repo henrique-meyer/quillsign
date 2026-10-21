@@ -170,4 +170,12 @@ Consent binds the frozen disclosure, unique saved receipt UUID, preview/download
 
 All 668 focused local cases pass warning-free after a full Release rebuild. The 51 new pure cases cover both link schemas, original expirations, canonical/unknown/rehashed faults, omitted evidence, action ordering, corrected epochs and session binding. The real local fixture redeems a captured invitation, prepares and hashes the exact PDF, records deliberate consent, then declines; actual authenticated SQL capture and reopening preserve token deadlines and state. This is historical evidence, not full lifecycle or hosted acceptance. Unknown-event registry, remaining Send/review/Finish/publication/access graphs, complete lifecycle receipts, external restore witnesses and every mutation/deletion/effective-release boundary remain required.
 
+## Frozen field snapshot binding
+
+The original three-property `fields_finalized` schema now binds the exact historical prepared fields to the retained sent PDF. Capture and authenticated manifest replay require one matching Send event, the owning verified sender, original acknowledgement/time/order and predecessor hash, the exact count and snapshot digest, and both original and frozen normalized object hashes. Unknown or ambiguous finalization fields fail closed.
+
+The snapshot retains the original producer's numeric field enums, SQL uniqueidentifier ordering and database decimal scale. Earlier `fields_saved` JSON can use another decimal scale; numeric equality alone must not change the hashed producer bytes. Later signer values and server dates do not replace the original empty assigned fields; generic UUID-like text remains literal text. This is a field-finalization contract, not complete Send, signing or lifecycle authority. No routes, grants or provider registration change.
+
+The warning-free Release build and 42 new focused cases pass. The broader local run was stopped when the relocated storage emulator was unavailable; integration acceptance is pending fresh CI. The existing genuine local Send/consent/decline SQL case now also checks finalized fields against both real source and sent bytes and reopens the authenticated capture, without renewing token state. Do not count that new integration assertion as passed until it executes successfully.
+
 Source work is paused at the owner's request for repository maintenance. The unfinished draft PR is closed without merging; its pushed branch and evidence are retained. No production activation is claimed.

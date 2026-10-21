@@ -101,6 +101,7 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
             ProductionHoldAuditChain.Demand(sql.RootElement);
             var documents = ProductionHoldDocumentAuditReferences.ReadVerified(sql.RootElement, objects);
             var fields = ProductionHoldPreparationAuditReferences.ReadVerified(sql.RootElement, documents);
+            ProductionHoldFinalizedFieldReferences.Demand(sql.RootElement, objects, fields);
             var adoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(sql.RootElement, objects);
             ProductionHoldFieldAuditReferences.Demand(sql.RootElement, objects, fields, adoptions);
             ProductionHoldConsentAuditReferences.Demand(sql.RootElement, objects);
@@ -132,6 +133,7 @@ internal sealed class ProductionHoldObjectInventory(QuillSignDbContext db, IData
             ProductionHoldAuditChain.Demand(verified.RootElement);
             var documents = ProductionHoldDocumentAuditReferences.ReadVerified(verified.RootElement, evidence);
             var fields = ProductionHoldPreparationAuditReferences.ReadVerified(verified.RootElement, documents);
+            ProductionHoldFinalizedFieldReferences.Demand(verified.RootElement, evidence, fields);
             var adoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(verified.RootElement, evidence);
             ProductionHoldFieldAuditReferences.Demand(verified.RootElement, evidence, fields, adoptions);
             ProductionHoldConsentAuditReferences.Demand(verified.RootElement, evidence);

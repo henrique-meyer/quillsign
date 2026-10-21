@@ -285,6 +285,7 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
             principal, h.Envelope.PublicId, receipt, true, true, "download", null, null));
         Assert.NotNull(await services.ServiceProvider.GetRequiredService<SignerConsent>().DeclineAsync(
             SignerAccessConfiguration.Principal(identity), h.Envelope.PublicId, "Synthetic refusal", null, null));
+        var original = await h.Read(Guid.ParseExact(h.Envelope.PdfBlob!, "N"));
         var protection = services.ServiceProvider.GetRequiredService<IDataProtectionProvider>();
         var request = await Hold(h.Envelope.Id, h.Clock, protection);
         await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
@@ -294,13 +295,20 @@ public sealed class ProductionHoldObjectInventoryTests(SqlDatabaseFixture fixtur
         var objects = new List<HoldObjectEvidence> { new(new("normalized", $"{h.Envelope.Id:N}/{identity.DocumentId:N}", "historical", "", "\"etag\"", pdf.LongLength), identity.DocumentHash) };
         ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, objects, protection);
         ProductionHoldConsentAuditReferences.Demand(sql.RootElement, objects);
+        var prepared = (await db.Fields.AsNoTracking().Where(x => x.EnvelopeId == h.Envelope.Id).ToArrayAsync())
+            .Select(x => new FieldInput(x.Id, x.SignerId, x.Type.ToString(), x.Page, x.X, x.Y, x.Width, x.Height, x.Required, x.Label, x.Value)).ToArray();
+        objects.Add(new(new("normalized", $"{h.Envelope.Id:N}/{h.Envelope.PdfBlob}", "source", "", "\"source-etag\"", original.LongLength), Convert.ToHexStringLower(SHA256.HashData(original))));
+        ProductionHoldFinalizedFieldReferences.Demand(sql.RootElement, objects, prepared);
         // Reopen the actual authenticated SQL capture again; neither old token
         // nor consent timestamps are renewed by this historical graph reader.
-        using (var replay = ProductionHoldSqlInventory.OpenVerified(snapshot, protection))
+        using (var replay = ProductionHoldSqlInventory.OpenVerified(snapshot, protection)) {
             ProductionHoldConsentAuditReferences.Demand(replay.RootElement, objects);
+            ProductionHoldFinalizedFieldReferences.Demand(replay.RootElement, objects, prepared);
+        }
         objects.Clear();
         Assert.Throws<InvalidDataException>(() => ProductionHoldDecisionNotificationReferences.Demand(sql.RootElement, objects, protection));
         Assert.Throws<InvalidDataException>(() => ProductionHoldConsentAuditReferences.Demand(sql.RootElement, objects));
+        Assert.Throws<InvalidDataException>(() => ProductionHoldFinalizedFieldReferences.Demand(sql.RootElement, objects, prepared));
         var tokenAfter = await db.AuthTokens.AsNoTracking().SingleAsync(x => x.Id == tokenBefore.Id);
         Assert.Equal(tokenBefore.ExpiresAt, tokenAfter.ExpiresAt); Assert.Equal(tokenBefore.UsedAt, tokenAfter.UsedAt);
     }
