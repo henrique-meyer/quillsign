@@ -91,7 +91,7 @@ Detailed protocol: [production legal holds](production-legal-holds.md).
 
 ## QUILS-148: Add private production retention and legal-hold operator controls
 
-Status: To Do. Assigned to ChatGPT Codex. Required for production self-hosting readiness; no implementation or hosted activation claimed.
+Status: In Progress. Assigned to ChatGPT Codex. Connected source implementation; no hosted activation claimed.
 
 Dependencies: QUILS-146, QUILS-147.
 
@@ -100,6 +100,14 @@ Build the minimal privileged self-hosting operator workflow on the production po
 Display ordinary retention, blocked deletion, active holds and actual storage protection accurately. Separate permission to administer a hold from authority to read sensitive document contents. Restrict operator identity/reasons/references and exports; use clean URLs, no-store/noindex/no-referrer responses, request bounds, rate limits, CSRF, expiring purpose-bound confirmations and immutable audit. No raw provider IDs/capabilities or actions in query strings, no implicit action on GET, bulk destructive defaults or record/session resurrection.
 
 Acceptance: real synthetic desktop/mobile/keyboard flows cover authorized status, export, hold, release and missing/wrong/expired privilege, stale state, replay, concurrency and unknown outcomes; unauthenticated/default-disabled routes expose no record metadata. Follow the local page/metadata regression runbook when implementing visible routes. This is a required production operator capability, not a demo participant feature. Keep deployment private settings and operator access configuration out of Git.
+
+Connected source protocol: separate default-disabled ASP.NET Core OIDC authorization-code middleware with PKCE, state/correlation/nonce, exact configured issuer and audience, signed-token validation, no automatic participant-scheme challenge, and a dedicated HttpOnly Secure SameSite protected operator cookie with a short absolute lifetime and no sliding renewal. Map authority only from exact configured issuer+subject grants, separately for status, place, release and sensitive-read. Email, roles, participant tickets and an internal ticket alone grant no operator authority. Configuration contains placeholders and explicit policy/store settings; no production identity or hold lifetime is invented.
+
+Provide private no-store/noindex/no-referrer bounded exact-record selection/status and explicit fresh protection inspection; authenticated evidence inventory/export requires the distinct sensitive-read permission. Place and exact independent release use separate CSRF-protected review/confirmation posts, purpose/session/command/body/head-bound expiring confirmations, idempotent exact command identities, original policy clocks and authoritative Q147 same-parent/request/witness controls. Stale/replayed/unknown outcomes never imply success or permit retries that create new effects. Private actors/reasons/references remain outside participant pages/audits/PDFs/logs. No GET effects, general record browsing, public signup, bulk destruction, callback URL/redirect injection or default DI activation of real cloud resources.
+
+Acceptance uses genuine local synthetic IdP through actual OIDC middleware, native disposable SQL/memory provider facts and connected exact-record status/export/place/separate release. Verify desktop/mobile/keyboard visible workflows, missing/wrong/expired issuer/subject/grant, CSRF, cookie/confirmation expiry, stale/concurrent/replay/unknown outcomes, default-disabled privacy and local private-page metadata. No unrelated UI rerun, emulator restart, live mail/TSA, cloud rollout, new service or recurring cost. Q149 deletion and Q150 hosted/restore acceptance remain separate dependencies. Keep draft until the full source scope and every actual-head check pass.
+
+Enabled composition is part of this connected milestone: register the Q147 authoritative coordinator/witness/archive and all completed participant/worker admission adapters together only after complete explicit operator/storage/retention configuration is validated. A private UI alone must never activate holds while ordinary business paths remain unfenced. Keep one central default-off composition module, no new cloud permission or policy assumptions; focused enabled/default-disabled composition verification reuses existing backend proofs. OIDC/browser/facade and central DI implementation may proceed on independent branches and integrate before source acceptance.
 
 ## QUILS-149: Delete expired production records with hold-aware durable recovery
 
