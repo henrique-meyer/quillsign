@@ -17,8 +17,13 @@ public sealed class TimestampAuthority(SealOptions options,IHostEnvironment envi
 {
     private readonly HttpClient http=new(new HttpClientHandler { AllowAutoRedirect=false,UseCookies=false }) { Timeout=Timeout.InfiniteTimeSpan };
     private readonly HttpClient restrictedHttp=new(new HttpClientHandler { AllowAutoRedirect=false,UseCookies=false,UseProxy=false }) { Timeout=Timeout.InfiniteTimeSpan };
-    public async Task<VerifiedTimestamp> RequestAsync(SignerInfo signature,DateTimeOffset startedAt,CancellationToken ct,
+    public Task<VerifiedTimestamp> RequestAsync(SignerInfo signature,DateTimeOffset startedAt,CancellationToken ct,
         CompletionTimestampArtifact? timestampContext=null)
+        =>RequestCoreAsync(signature,startedAt,ct,timestampContext,null);
+    internal Task<VerifiedTimestamp> RequestAdmittedAsync(SignerInfo signature,DateTimeOffset startedAt,IProductionSealBoundary admission,CancellationToken ct)
+        =>RequestCoreAsync(signature,startedAt,ct,null,admission??throw new ArgumentNullException(nameof(admission)));
+    private async Task<VerifiedTimestamp> RequestCoreAsync(SignerInfo signature,DateTimeOffset startedAt,CancellationToken ct,
+        CompletionTimestampArtifact? timestampContext,IProductionSealBoundary? admission)
     {
         ct.ThrowIfCancellationRequested();
         if(pilotPolicy is not null && timestampContext is null)throw new PilotTimestampDeniedException();
@@ -30,8 +35,13 @@ public sealed class TimestampAuthority(SealOptions options,IHostEnvironment envi
         var request=Rfc3161TimestampRequest.CreateFromSignerInfo(signature,HashAlgorithmName.SHA256,
             nonce:RandomNumberGenerator.GetBytes(16),requestSignerCertificates:true);
         var encodedRequest=request.Encode();
+        var factualRequest=admission is null ? null : new ProductionTimestampRequest(
+            Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(address.AbsoluteUri))),
+            Convert.ToBase64String(encodedRequest),Convert.ToHexStringLower(SHA256.HashData(encodedRequest)),startedAt);
+        if(admission is not null)await admission.DemandAsync(ct);
         await using var lease=options.TimestampCoordination.Enabled
             ? await (coordinator?.Invoke() ?? throw new SealUnavailableException("Shared timestamp coordination is not configured.")).AcquireAsync(address,ct) : null;
+        if(admission is not null)await admission.DemandAsync(ct);
         var remaining=timestampContext is null ? TimeSpan.Zero : timestampContext.Until-timestampContext.Clock.GetUtcNow();
         using var scopeDeadline=timestampContext is null ? null : new CancellationTokenSource(remaining>TimeSpan.Zero ? remaining : TimeSpan.Zero,timestampContext.Clock);
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct,lease?.Token ?? CancellationToken.None,scopeDeadline?.Token ?? CancellationToken.None);
@@ -46,22 +56,54 @@ public sealed class TimestampAuthority(SealOptions options,IHostEnvironment envi
                 if(lease is not null)await lease.EnsureOwnedAsync(timeout.Token);
                 await permit.DemandSendAsync(encodedRequest,timeout.Token);
             }
-            if(timestampContext?.Work.KnownPilot==true)
+            IProductionTimestampPermit? admittedPermit=null;
+            if(admission is not null)
+            {
+                admittedPermit=await admission.BeginTimestampAsync(factualRequest!,timeout.Token)
+                    ??throw new SealUnavailableException("The exact timestamp request is not admitted.");
+                if(lease is not null)await lease.EnsureOwnedAsync(timeout.Token);
+                await admission.DemandAsync(timeout.Token);
+                await admittedPermit.DemandSendAsync(factualRequest!,timeout.Token);
+            }
+            if(timestampContext?.Work.KnownPilot==true || admission is not null)
             {
                 message.Version=System.Net.HttpVersion.Version11;message.VersionPolicy=HttpVersionPolicy.RequestVersionExact;
                 message.Headers.ConnectionClose=true;
             }
             timeout.Token.ThrowIfCancellationRequested();
-            using var response=await (timestampContext?.Work.KnownPilot==true ? restrictedHttp : http).SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
+            using var response=await (timestampContext?.Work.KnownPilot==true || admission is not null ? restrictedHttp : http).SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token);
+            if(admission is not null)await admission.DemandAsync(timeout.Token);
             if(response.StatusCode!=System.Net.HttpStatusCode.OK || !string.Equals(response.Content.Headers.ContentType?.MediaType,"application/timestamp-reply",StringComparison.OrdinalIgnoreCase) ||
                 response.Content.Headers.ContentEncoding.Count!=0 || response.Content.Headers.ContentLength>options.TsaMaximumResponseBytes)
                 throw new SealUnavailableException("The timestamp service did not return a bounded timestamp response.");
             await using var input=await response.Content.ReadAsStreamAsync(timeout.Token); using var memory=new MemoryStream();
-            await input.CopyToAsync(new BoundedDocumentStream(memory,options.TsaMaximumResponseBytes),timeout.Token);
+            if(admission is not null)await admission.DemandAsync(timeout.Token);
+            if(admission is null)await input.CopyToAsync(new BoundedDocumentStream(memory,options.TsaMaximumResponseBytes),timeout.Token);
+            else
+            {
+                var buffer=new byte[16*1024];var bounded=new BoundedDocumentStream(memory,options.TsaMaximumResponseBytes);
+                while(true)
+                {
+                    await admission.DemandAsync(timeout.Token);
+                    var count=await input.ReadAsync(buffer,timeout.Token);
+                    await admission.DemandAsync(timeout.Token);
+                    if(count==0)break;
+                    await bounded.WriteAsync(buffer.AsMemory(0,count),timeout.Token);
+                }
+            }
+            if(admission is not null)await admission.DemandAsync(timeout.Token);
             var encoded=memory.ToArray(); var token=request.ProcessResponse(encoded,out var consumed);
             if(consumed!=encoded.Length)throw new CryptographicException();
             var result=await ValidateAsync(token.AsSignedCms().Encode(),signature,startedAt,timeout.Token);
             if(timestampContext is not null)await timestampContext.DemandAsync(timestampContext.SourceHash,timeout.Token);
+            if(admission is not null)
+            {
+                await admission.DemandAsync(timeout.Token);
+                await admittedPermit!.RecordVerifiedAsync(factualRequest!,new(Convert.ToBase64String(encoded),
+                    Convert.ToHexStringLower(SHA256.HashData(encoded)),Convert.ToBase64String(result.Encoded),
+                    Convert.ToHexStringLower(SHA256.HashData(result.Encoded)),result.At,result.CertificateSha256,result.Policy),timeout.Token);
+                await admission.DemandAsync(timeout.Token);
+            }
             return result;
         }
         catch(OperationCanceledException) when(!ct.IsCancellationRequested) { throw new SealUnavailableException("The timestamp service timed out; no seal was returned."); }

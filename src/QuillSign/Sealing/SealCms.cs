@@ -98,10 +98,11 @@ public sealed class SealCms(SealOptions options,TimestampAuthority timestamp)
     }
 
     internal sealed class Signer(SealOptions options,SealCertificateMaterial material,TimestampAuthority authority,DateTimeOffset now,CancellationToken ct,
-        CompletionTimestampArtifact? timestampContext=null) : IDigitalSigner
+        CompletionTimestampArtifact? timestampContext=null,IProductionSealBoundary? admission=null) : IDigitalSigner
     {
         public string CertificateName=>"QuillSign platform seal";
         private int? reservedCapacity;
+        private int admittedSignatureStarted;
         public Task<int> GetSignatureSizeAsync()
         {
             ct.ThrowIfCancellationRequested();
@@ -118,12 +119,15 @@ public sealed class SealCms(SealOptions options,TimestampAuthority timestamp)
         }
         public async Task<byte[]> GetSignatureAsync(Stream stream)
         {
+            if(admission is not null && Interlocked.Exchange(ref admittedSignatureStarted,1)!=0)
+                throw new SealUnavailableException("The admitted seal request was already consumed.");
             ct.ThrowIfCancellationRequested(); if(stream.Length is <=0 || stream.Length>options.MaximumBytes)throw new SealUnavailableException("The signed byte ranges exceed their limits.");
             // PDFsharp's RangedStream throws from CanSeek. Rewind directly and read complete bounded ranges.
             var bytes=new byte[checked((int)stream.Length)]; stream.Position=0; var offset=0;
             while(offset<bytes.Length) { ct.ThrowIfCancellationRequested(); var read=stream.Read(bytes,offset,bytes.Length-offset); if(read==0)throw new EndOfStreamException(); offset+=read; }
             var capacity=await GetSignatureSizeAsync(); var cms=CreateCms(bytes);
-            var timestamp=await authority.RequestAsync(cms.SignerInfos[0],now,ct,timestampContext);
+            var timestamp=admission is null ? await authority.RequestAsync(cms.SignerInfos[0],now,ct,timestampContext) :
+                await authority.RequestAdmittedAsync(cms.SignerInfos[0],now,admission,ct);
             cms.SignerInfos[0].AddUnsignedAttribute(new AsnEncodedData(new Oid(TimestampOid),timestamp.Encoded));
             var result=cms.Encode(); if(result.Length>capacity)throw new SealUnavailableException("The seal exceeds its reserved signature capacity."); return result;
         }
