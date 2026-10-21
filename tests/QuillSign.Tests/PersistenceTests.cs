@@ -23,7 +23,9 @@ public sealed class PersistenceTests(SqlDatabaseFixture fixture) : IClassFixture
         await using var db = fixture.Open();
         Assert.False(db.Database.HasPendingModelChanges());
         Assert.Empty(await db.Database.GetPendingMigrationsAsync());
-        Assert.Equal(26, db.Model.GetEntityTypes().Count());
+        Assert.Equal(28, db.Model.GetEntityTypes().Count());
+        Assert.Equal("EmailPilotCloseouts", db.Model.FindEntityType(typeof(EmailPilotCloseoutHeaderRecord))!.GetTableName());
+        Assert.Equal("EmailPilotCloseoutOperations", db.Model.FindEntityType(typeof(EmailPilotCloseoutOperationRecord))!.GetTableName());
     }
 
     [Fact]
