@@ -16,7 +16,7 @@ namespace QuillSign.Lifecycle;
 internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness, IProductionHoldObjectSource objects,
     AzureProductionHoldArchiveWriter archive, AzureProductionHoldArchiveReleaseStore releases,
-    IProductionReviewInputSource? reviewInputs=null) : IProductionHoldReleaseFence
+    IProductionReviewInputSource? reviewInputs=null, IProductionCompletionInputSource? completionInputs=null) : IProductionHoldReleaseFence
 {
     private static readonly JsonSerializerOptions PreviewRows=new(){Converters={new JsonStringEnumConverter()}};
     internal async Task<HoldWitnessState> SubmitAsync(ProductionOperatorAuthority authority, ProductionOperatorPolicy operators,
@@ -227,23 +227,58 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
         ProductionHoldAdmissionAuditReferences.Demand(sql.RootElement);
         var tables = sql.RootElement.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         var status = tables["Envelopes"].EnumerateArray().Single().GetProperty("Status").GetString();
-        if (status == "Sent")
+        if (status is "Sent" or "Completed")
         {
             var inventory=ProductionHoldObjectInventory.OpenVerified(snapshot,keys,time);
             var inputs=await ReadReviewInputs(db,snapshot.RecordId,tables["SignerReviewCandidates"],state,inventory,ct);
-            var history=ProductionHoldReviewCheckpointReferences.ReadVerified(sql.RootElement,inventory,keys,inputs);
+            var history=status=="Completed"
+                ?ProductionHoldCompletionStageReferences.ReadVerified(sql.RootElement,inventory,keys,inputs,
+                    await ReadCompletionInputs(db,snapshot.RecordId,state,inventory,ct),state)
+                :ProductionHoldReviewCheckpointReferences.ReadVerified(sql.RootElement,inventory,keys,inputs);
             DemandPreviewPlans(tables["SignaturePreviews"],history.Previews,state,inventory);
         }
         else if (status != "Draft"||(state.ReviewWrites?.Count??0)!=0) throw Invalid();
         foreach (var audit in tables["AuditEvents"].EnumerateArray())
         {
-            if (status == "Sent" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given" or
+            if (status is "Sent" or "Completed" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given" or
                 "signature_adopted" or "field_filled" or "field_cleared" or "signer_review_prepared" or "signer_finish_accepted" or "signer_completed") continue;
+            if (status=="Completed"&&audit.GetProperty("Event").GetString() is "completion_prepared" or "completion_executed_sealed" or "completion_certificate_sealed" or
+                "completion_publication_prepared" or "completed" or ProductionRetentionLedger.TerminalEvent or "completion_notification_queued") continue;
             if (audit.GetProperty("Event").GetString() is not (ProductionRetentionLedger.EnrollmentEvent or
                 "draft_created" or "sender_verification_requested" or "sender_email_verified" or
                 "document_uploaded" or "document_replaced" or "preview_confirmed" or "signer_added" or "signer_updated" or "signer_removed" or
                 "signers_reordered" or "recipient_added" or "recipient_updated" or "recipient_removed" or "envelope_details_updated" or "fields_saved")) throw Invalid();
         }
+    }
+
+    private async Task<IReadOnlyList<VerifiedCompletionInput>> ReadCompletionInputs(QuillSignDbContext db,Guid recordId,
+        HoldWitnessState state,IReadOnlyList<HoldObjectEvidence> inventory,CancellationToken ct)
+    {
+        _=ProductionHoldCompletionStageReferences.DemandSettled(recordId,state);
+        var references=ProductionHoldCompletionInputReferences.References(recordId,state);
+        ProductionCompletionInputCodec.DemandAggregate(references.Select(x=>x.Item.Length));
+        ProductionHoldCompletionInputReferences.DemandCensus(recordId,references,inventory);
+        if(references.Length!=Enum.GetValues<CompletionInputKind>().Length)throw Invalid();
+        var source=completionInputs??objects as IProductionCompletionInputSource??throw Invalid();
+        // Reopened plans keep their ORIGINAL bytes and clocks but need a fresh
+        // CURRENT same-parent hold scope; never resurrect the worker's lease.
+        var current=await new ProductionHoldSqlInventory(db,keys,time).CaptureLockedAsync(recordId,state.RequestRevision,state.RequestFenceHash!,ct:ct);
+        var scope=ProductionHoldObjectScope.FromVerified(current,keys,time);
+        var result=new List<VerifiedCompletionInput>();
+        foreach(var reference in references)
+        {
+            var evidence=inventory.Single(x=>x.Address.Area=="normalized"&&x.Address.Name==$"{recordId:N}/completion-inputs/{reference.Item.Blob.ObjectId:N}"&&
+                x.Address.VersionId==reference.Receipt.VersionId&&x.Address.Snapshot.Length==0&&x.Address.ETag==reference.Receipt.ETag&&
+                x.Address.Length==reference.Item.Length&&x.Sha256==reference.Item.Sha256);
+            var read=ProductionCompletionInputReadScope.FromHold(scope,reference.Context,reference.Kind,reference.Item,reference.Receipt,evidence);
+            try
+            {
+                var bytes=await source.ReadAsync(read,ct);read.Demand(ct);
+                result.Add(ProductionCompletionInputCodec.OpenVerified(keys,recordId,reference.Context,reference.Kind,reference.Item,bytes));
+            }
+            finally {read.Close();}
+        }
+        return result;
     }
 
     // The old frozen capture is evidence, not a fresh IO capability. Reopened

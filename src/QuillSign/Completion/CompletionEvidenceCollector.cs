@@ -134,7 +134,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
         _=Id(e.OriginalBlob); _=Id(e.PdfBlob); _=Id(e.SentPdfBlob);
         if(e.OriginalSha256 is not {Length:32} || e.PdfSha256 is not {Length:32} || e.PageCount is not >0 || e.PageSizesJson is null)throw Invalid();
         var previews=adoptions.OrderBy(x=>x.Id).ToArray();
-        var frozen=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {e,signers,recipients,fields,finishes,previews}));
+        var frozen=FrozenState(e,signers,recipients,fields,finishes,previews);
         var binding=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {frozen,auditAnchor=previous}));
         var frame=new Frame(e,signers,recipients,fields,finishes,previews,events,binding,frozen,contacts);
         // Project validates semantic link/consent/publication evidence while the frozen frame is locked.
@@ -197,6 +197,15 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
         }
         throw Invalid();
     }
+    // Pure producer formulas reused by the closed historical hold graph AFTER
+    // that graph authenticates the exact original rows and their audit cut.
+    // These factual inputs issue no SQL, participant or provider capability.
+    internal static byte[] FrozenState(Envelope e,Signer[] signers,Recipient[] recipients,DocumentField[] fields,
+        SignerFinishAcceptance[] finishes,SignaturePreview[] previews)
+        =>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {e,signers,recipients,fields,finishes,previews}));
+    internal static CompletionEvidence ProjectHistorical(Envelope e,Signer[] signers,Recipient[] recipients,DocumentField[] fields,
+        SignerFinishAcceptance[] finishes,SignaturePreview[] previews,AuditEvent[] events,Dictionary<Guid,SignerPdfMarks> marks,DateTimeOffset prepared)
+        =>Project(new(e,signers,recipients,fields,finishes,previews,events,[],[],null),marks,prepared);
     private static CompletionEvidence Project(Frame frame,Dictionary<Guid,SignerPdfMarks> marks,DateTimeOffset prepared)
     {
         var e=frame.Envelope; var sender=One(frame.Events,"sender_email_verified",PartyType.Sender,null,e.SenderEmail);
