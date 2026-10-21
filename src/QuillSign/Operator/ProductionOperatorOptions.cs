@@ -23,6 +23,7 @@ public sealed class ProductionOperatorOptions
         var p=new HashSet<ProductionOperatorPermission>();
         if(g.Status)p.Add(ProductionOperatorPermission.Status);if(g.PlaceHold)p.Add(ProductionOperatorPermission.PlaceHold);
         if(g.ReleaseHold)p.Add(ProductionOperatorPermission.ReleaseHold);if(g.ReadEvidence)p.Add(ProductionOperatorPermission.ReadEvidence);
+        if(g.AuthorizeDeletion)p.Add(ProductionOperatorPermission.AuthorizeDeletion);
         return p.Count>0?p:throw Invalid();
     }
     internal static InvalidOperationException Invalid()=>new("Configure the complete private operator identity and storage boundary before enabling it.");
@@ -34,4 +35,5 @@ public sealed class ProductionOperatorIdentity
     public bool PlaceHold { get; set; }
     public bool ReleaseHold { get; set; }
     public bool ReadEvidence { get; set; }
+    public bool AuthorizeDeletion { get; set; }
 }

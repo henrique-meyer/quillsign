@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 
 namespace QuillSign.Lifecycle;
 
-internal enum ProductionOperatorPermission { Status, PlaceHold, ReleaseHold, ReadEvidence }
+internal enum ProductionOperatorPermission { Status, PlaceHold, ReleaseHold, ReadEvidence, AuthorizeDeletion }
 internal sealed record ProductionOperatorGrant(string Issuer, string Subject, IReadOnlySet<ProductionOperatorPermission> Permissions);
 internal sealed record ProductionOperatorPolicy(bool Enabled, IReadOnlyList<ProductionOperatorGrant> Grants);
 
@@ -19,11 +19,12 @@ internal sealed class ProductionOperatorAuthority
     internal string Issuer { get; }
     internal string Subject { get; }
     internal DateTimeOffset ExpiresAt { get; }
-    private DateTimeOffset IssuedAt { get; }
+    internal DateTimeOffset IssuedAt { get; }
+    internal string? SessionId { get; }
     internal ProductionOperatorPermission Permission { get; }
 
-    private ProductionOperatorAuthority(string issuer, string subject, DateTimeOffset issuedAt, DateTimeOffset expiresAt, ProductionOperatorPermission permission)
-        => (Issuer, Subject, IssuedAt, ExpiresAt, Permission) = (issuer, subject, issuedAt, expiresAt, permission);
+    private ProductionOperatorAuthority(string issuer, string subject, DateTimeOffset issuedAt, DateTimeOffset expiresAt, ProductionOperatorPermission permission, string? sessionId)
+        => (Issuer, Subject, IssuedAt, ExpiresAt, Permission, SessionId) = (issuer, subject, issuedAt, expiresAt, permission, sessionId);
 
     internal static ProductionOperatorAuthority FromValidatedTicket(AuthenticationTicket ticket, ProductionOperatorPolicy policy,
         ProductionOperatorPermission permission, TimeProvider time)
@@ -37,7 +38,13 @@ internal sealed class ProductionOperatorAuthority
         var issuer = One(identities[0], "iss");
         var subject = One(identities[0], "sub");
         if (subject.Issuer != issuer.Value || issuer.Issuer != issuer.Value) throw Denied();
-        var result = new ProductionOperatorAuthority(issuer.Value, subject.Value, issued, expiry, permission);
+        string? sessionId = null;
+        if (permission == ProductionOperatorPermission.AuthorizeDeletion)
+        {
+            sessionId = One(identities[0], QuillSign.Operator.ProductionOperatorAuthentication.SessionClaim).Value;
+            if (!Guid.TryParseExact(sessionId, "N", out var session) || session == Guid.Empty) throw Denied();
+        }
+        var result = new ProductionOperatorAuthority(issuer.Value, subject.Value, issued, expiry, permission, sessionId);
         result.Demand(policy, permission, time);
         return result;
     }
@@ -49,7 +56,7 @@ internal sealed class ProductionOperatorAuthority
         if (!policy.Enabled || required != Permission || !Enum.IsDefined(required) || ExpiresAt <= time.GetUtcNow() || IssuedAt > time.GetUtcNow() ||
             policy.Grants is null || policy.Grants.Count is < 1 or > 256 || !ValidIssuer(Issuer) || !Text(Subject, 256)) throw Denied();
         var matching = policy.Grants.Where(x => x is not null && x.Issuer == Issuer && x.Subject == Subject).ToArray();
-        if (matching.Length != 1 || matching[0].Permissions is null || matching[0].Permissions.Count is < 1 or > 4 ||
+        if (matching.Length != 1 || matching[0].Permissions is null || matching[0].Permissions.Count is < 1 or > 5 ||
             matching[0].Permissions.Any(x => !Enum.IsDefined(x)) || !matching[0].Permissions.Contains(required)) throw Denied();
     }
 
