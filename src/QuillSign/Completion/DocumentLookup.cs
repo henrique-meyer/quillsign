@@ -18,6 +18,7 @@ public sealed record DocumentLookupPage(IReadOnlyList<DocumentLookupEntry> Entri
 public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState state, DocumentLookupProtection protection,
     DocumentLookupOptions options, TimeProvider time, Email.Pilot.EmailPilotLookupAccess? pilot = null)
 {
+    internal ProductionCompletionReadAdmission? HoldAdmission {get;init;}
     internal bool RequiresCohortExclusion => pilot is not null;
     internal Task<Email.Pilot.EmailPilotLookupTokenScope> RestrictionAsync(DocumentLookupIdentity identity, CancellationToken ct) => pilot is null
         ? Task.FromResult(new Email.Pilot.EmailPilotLookupTokenScope(false, true)) : pilot.TokenAsync(identity.TokenId, identity.Email, ct);
@@ -145,7 +146,7 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
         foreach (var candidate in candidates.Take(options.PageSize))
         {
             // Verification reads the exact immutable final pair, never reseals or grants storage access.
-            var prepared = await state.PrepareAsync(candidate.Id, ct); if (prepared is null) continue;
+            var prepared = HoldAdmission is null?await state.PrepareAsync(candidate.Id,ct):await HoldAdmission.PrepareAsync(db,state,candidate.Id,ct); if (prepared is null) continue;
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             await state.RecheckLockedAsync(prepared.Saved, ct);
             var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == candidate.Id, ct);
@@ -160,6 +161,7 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
             foreach (var item in saved)
             {
                 if (item.Until <= time.GetUtcNow()) throw Invalid();
+                if(HoldAdmission is not null)await HoldAdmission.DemandLockedAsync(db,item.Publication.EnvelopeId,i.ExpiresAt,ct);
                 await state.RecheckLockedAsync(item.Publication, ct);
                 if (!await OwnedLocked(item.Publication, i.Email, ct)) throw Invalid();
                 var envelope = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == item.Publication.EnvelopeId, ct);
@@ -171,6 +173,7 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
         }
         if (i.ExpiresAt <= time.GetUtcNow() || restriction.IsPilot &&
             (restriction.Request!.ExpiresAt <= time.GetUtcNow() || !pilot!.Live(restriction.Manifest!))) return null;
+        if(HoldAdmission is not null)foreach(var item in saved)await HoldAdmission.DemandAsync(item.Publication.EnvelopeId,i.ExpiresAt,ct);
         var entries = saved.Select(x => new DocumentLookupEntry(x.Publication.PublicId, x.Publication.Title, x.Publication.CompletedAt,
             Min(x.Publication.PurgeAfter, x.Deadline))).ToArray();
         foreach (var entry in entries) DocumentRetentionAccess.Check(entry.RetainedUntil, time);

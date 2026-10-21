@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Completion;
 using QuillSign.Data;
+using QuillSign.Storage;
 
 namespace QuillSign.Work;
 
@@ -31,29 +32,53 @@ public sealed class CompletionNotificationJobs(QuillSignDbContext db,CompletionA
     Func<IWorkSignals> signals,WorkOptions work,AuditWriter audit,TimeProvider time)
 {
     public const string Version="completion-notification-v1",Template="completion-ready";
-    internal static Guid Id(CompletionNotificationPayload p)=>new(SHA256.HashData(Encoding.UTF8.GetBytes(Version+":"+p.PublicationId.ToString("N")+":"+p.Party+":"+(p.PartyId?.ToString("N")??"sender"))).AsSpan(0,16));
+    internal bool Enabled=>work.Enabled;
+    internal bool UsesContext(QuillSignDbContext value)=>ReferenceEquals(db,value);
+    internal static Guid Id(CompletionNotificationPayload p)=>Id(p.PublicationId,p.Party,p.PartyId);
+    internal static Guid Id(Guid publicationId,PartyType type,Guid? partyId)=>new(SHA256.HashData(Encoding.UTF8.GetBytes(Version+":"+publicationId.ToString("N")+":"+type+":"+(partyId?.ToString("N")??"sender"))).AsSpan(0,16));
     internal static string Digest(CompletionNotificationPayload p)=>Hex(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(p with {LastTokenId=null})));
     internal static string WorkJson(Guid id)=>JsonSerializer.Serialize(new {version=Version,notificationId=id});
     internal static string Queued(Guid id,string to,CompletionNotificationPayload p)=>JsonSerializer.Serialize(new {version=Version,notificationId=id,
         publicationId=p.PublicationId,scopeSha256=Digest(p),recipient=to,meaning="Notification queued; submission and delivery are not confirmed."});
 
-    internal async Task<Guid[]> PrepareLockedAsync(Guid envelopeId,CancellationToken ct)
+    internal static CompletionNotificationPayload Payload(DownloadPublication saved,CompletionAccessParty member,bool isDemo)
+        =>Payload(saved.EnvelopeId,saved.Id,saved.Recipe,saved.Revision,saved.Executed,saved.Certificate,member,isDemo);
+    internal static CompletionNotificationPayload Payload(Guid envelopeId,Guid publicationId,byte[] recipe,byte[] revision,
+        FinalStoredDocument executed,FinalStoredDocument certificate,CompletionAccessParty member,bool isDemo)
+        =>new(Version,envelopeId,publicationId,Hex(recipe),Convert.ToBase64String(revision),member.Type,member.Id,
+            Hex(member.Sha256),Hex(DownloadPublication.Reference(executed)),Hex(DownloadPublication.Reference(certificate)),isDemo);
+    internal static async Task<CompletionNotificationRosterMember[]> FreezeRosterLockedAsync(QuillSignDbContext db,Guid envelopeId,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Frozen notification parties require their parent transaction.");
+        var e=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==envelopeId,ct);
+        var signers=await db.Signers.AsNoTracking().Where(x=>x.EnvelopeId==envelopeId).OrderBy(x=>x.Order).Take(101).ToArrayAsync(ct);
+        var recipients=await db.Recipients.AsNoTracking().Where(x=>x.EnvelopeId==envelopeId).OrderBy(x=>x.Id).Take(101).ToArrayAsync(ct);
+        if(signers.Length is <1 or >100||recipients.Length>100)throw Invalid();
+        var all=new List<CompletionNotificationRosterMember>{new(PartyType.Sender,null,e.SenderName,e.SenderEmail,null)};
+        all.AddRange(signers.Select(x=>new CompletionNotificationRosterMember(PartyType.Signer,x.Id,x.FullName,x.Email,x.Order)));
+        all.AddRange(recipients.Select(x=>new CompletionNotificationRosterMember(PartyType.Recipient,x.Id,x.Name,x.Email,null)));
+        return all.GroupBy(x=>x.Email,StringComparer.OrdinalIgnoreCase).Select(x=>x.First()).ToArray();
+    }
+
+    internal async Task<Guid[]> PrepareLockedAsync(Guid envelopeId,CancellationToken ct,
+        Func<Guid,DateTimeOffset,CancellationToken,Task>? demandHint=null,DateTimeOffset? recordedAt=null)
     {
         if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("Completion notification preparation requires its parent's transaction.");
         if(!work.Enabled)return [];
         var saved=await CompletionDownloadState.ReadAsync(db,envelopeId,time,ct);if(saved is null || saved.PurgeAfter<=time.GetUtcNow())throw Invalid();
         await state.RecheckLockedAsync(saved,ct);var isDemo=await db.Envelopes.Where(x=>x.Id==envelopeId).Select(x=>x.IsDemo).SingleAsync(ct);
+        if(recordedAt is {} at&&(at.Offset!=TimeSpan.Zero||at>time.GetUtcNow()))throw Invalid();
+        var writer=recordedAt is {} fixedAt?new AuditWriter(db,new CompletionRecordedTime(fixedAt)):audit;
         var ids=new List<Guid>();
         foreach(var member in await MembersLocked(saved,ct)) {
-            var p=new CompletionNotificationPayload(Version,envelopeId,saved.Id,Hex(saved.Recipe),Convert.ToBase64String(saved.Revision),member.Type,member.Id,
-                Hex(member.Sha256),Hex(DownloadPublication.Reference(saved.Executed)),Hex(DownloadPublication.Reference(saved.Certificate)),isDemo);
+            var p=Payload(saved,member,isDemo);
             var id=Id(p);var email=await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id,ct);
             var item=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id,ct);
             if(email is null && item is null) {
-                email=new() {Id=id,EnvelopeId=envelopeId,To=member.Email,Template=Template,PayloadJson=protection.Protect(p),AvailableAt=time.GetUtcNow()};
+                email=new() {Id=id,EnvelopeId=envelopeId,To=member.Email,Template=Template,PayloadJson=protection.Protect(p),AvailableAt=recordedAt??time.GetUtcNow()};
                 item=new() {Id=id,EnvelopeId=envelopeId,Kind=WorkKind.Email,PayloadJson=WorkJson(id),AvailableAt=email.AvailableAt};
                 db.EmailOutbox.Add(email);db.WorkItems.Add(item);await db.SaveChangesAsync(ct);
-                await audit.AppendAsync(envelopeId,"completion_notification_queued",null,null,null,ct,Queued(id,member.Email,p),PartyType.System);
+                await writer.AppendAsync(envelopeId,"completion_notification_queued",null,null,null,ct,Queued(id,member.Email,p),PartyType.System);
             } else {
                 if(email is null || item is null || email.EnvelopeId!=envelopeId || email.To!=member.Email || email.Template!=Template || email.AttachmentsJson!="[]" ||
                     item.EnvelopeId!=envelopeId || item.Kind!=WorkKind.Email || item.PayloadJson!=WorkJson(id) || Digest(protection.Read(email.PayloadJson))!=Digest(p) ||
@@ -61,7 +86,11 @@ public sealed class CompletionNotificationJobs(QuillSignDbContext db,CompletionA
             }
             // Preserve terminal outcomes and existing leases, including ambiguous submissions.
             if(item.Status is WorkStatus.Completed or WorkStatus.Failed)continue;
-            await signals().PutHintAsync(id,item.Status==WorkStatus.Leased && item.LeaseExpiresAt is DateTimeOffset until ? until : item.AvailableAt,ct);ids.Add(id);
+            var due=item.Status==WorkStatus.Leased&&item.LeaseExpiresAt is DateTimeOffset until?until:item.AvailableAt;
+            if(demandHint is not null)await demandHint(id,due,ct);
+            await signals().PutHintAsync(id,due,ct);
+            if(demandHint is not null)await demandHint(id,due,ct);
+            ids.Add(id);
         }
         await state.RecheckLockedAsync(saved,ct);return ids.ToArray();
     }

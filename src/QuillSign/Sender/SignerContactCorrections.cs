@@ -5,6 +5,7 @@ using QuillSign.Documents;
 using QuillSign.Email;
 using QuillSign.Signing;
 using QuillSign.Work;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Sender;
 
@@ -14,6 +15,7 @@ public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContac
     EmailOptions email, WorkOptions work, SignerAccess access, InvitationLineage lineage,
     InvitationSuccessorJobs jobs, AuditWriter audit, TimeProvider time,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal ProductionTerminalMutationAdmission? HoldAdmission {get;init;}
     private bool Enabled => options.Enabled && email.Enabled && work.Enabled;
     private readonly SignerContactCorrectionPolicy policy = new(db, options, email, work, time);
     private readonly SignerContactState contacts = new(db, time);
@@ -38,6 +40,7 @@ public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContac
         else if (!await CanRetireAsync(scope.Invitations.Latest, ct)) blocked = SignerContactCorrectionOutcome.Busy;
         if (ticketExpiresAt <= time.GetUtcNow() || envelope!.ExpiresAt <= time.GetUtcNow()) return null;
         DocumentRetentionAccess.Check(scope.Retention, time);
+        if(HoldAdmission is not null)await HoldAdmission.DemandReadLockedAsync(db,envelope.Id,ticketExpiresAt,ct);
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);
         DocumentRetentionAccess.Check(scope.Retention, time);
         return Enabled && ticketExpiresAt > time.GetUtcNow() ? new(envelope.Title!, Review(scope, address), blocked) { RetentionDeadline = scope.Retention } : null;
@@ -57,19 +60,23 @@ public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContac
         try { if (EmailAddress.Normalize(reviewed.NewEmail) != reviewed.NewEmail) return SignerContactCorrectionOutcome.Conflict; }
         catch (ArgumentException) { return SignerContactCorrectionOutcome.Conflict; }
         var ipHash = InvitationResendProtection.IpHash(ip); Clean();
-        try { return await CoreAsync(identity.Value.Id, identity.Value.Email, publicId, ticketExpiresAt.ToUniversalTime(), requestId,
-            reviewed, ipHash, ip, userAgent, reviewExpiresAt?.ToUniversalTime(), ct); }
+        Task<SignerContactCorrectionOutcome> Execute(ProductionRecordOperation? operation)=>CoreAsync(identity.Value.Id, identity.Value.Email, publicId, ticketExpiresAt.ToUniversalTime(), requestId,
+            reviewed, ipHash, ip, userAgent, reviewExpiresAt?.ToUniversalTime(), ct,operation);
+        try { return HoldAdmission is null?await Execute(null):await HoldAdmission.ExecuteAsync(db,identity.Value.Id,"contact",requestId.ToString("N"),Execute,ct); }
+        catch(Exception error)when(HoldAdmission is not null&&error is InvalidDataException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {return SignerContactCorrectionOutcome.Unavailable;}
         finally { db.ChangeTracker.Clear(); }
     }
 
     private async Task<SignerContactCorrectionOutcome> CoreAsync(Guid envelopeId, string sender, string publicId, DateTimeOffset until,
-        Guid id, SignerContactCorrectionReview reviewed, string ipHash, string? ip, string? ua, DateTimeOffset? reviewUntil, CancellationToken ct)
+        Guid id, SignerContactCorrectionReview reviewed, string ipHash, string? ip, string? ua, DateTimeOffset? reviewUntil, CancellationToken ct,ProductionRecordOperation? operation)
     {
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
         Guid queued;
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
             var envelope = await EnvelopeAsync(envelopeId, sender, publicId, ct); if (envelope is null) return SignerContactCorrectionOutcome.Closed;
+            if(operation is not null)await HoldAdmission!.DemandStartingLockedAsync(db,operation,ct);
             // Lock before inserting any envelope-local reservation: another
             // envelope's cap scan must never wait on our uncommitted evidence.
             await SignerContactCorrectionPolicy.LockAsync(db, ct);
@@ -141,6 +148,12 @@ public sealed class SignerContactCorrections(QuillSignDbContext db, SignerContac
             if (reviewUntil <= time.GetUtcNow() || dayEnd <= time.GetUtcNow()) return SignerContactCorrectionOutcome.Conflict;
             DocumentRetentionAccess.Check(scope.Retention, time);
             if (updated.ExpiresAt <= time.GetUtcNow()) return SignerContactCorrectionOutcome.Closed;
+            if(operation is not null)
+            {
+                await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+                if(until<=time.GetUtcNow()||reviewUntil<=time.GetUtcNow()||updated.ExpiresAt<=time.GetUtcNow())return SignerContactCorrectionOutcome.Closed;
+                DocumentRetentionAccess.Check(scope.Retention,time);
+            }
             await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);
         }
         await jobs.PublishAsync(queued, ct);

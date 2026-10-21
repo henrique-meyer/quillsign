@@ -7,6 +7,7 @@ using QuillSign.Email;
 using QuillSign.Sender;
 using QuillSign.Storage;
 using QuillSign.Documents;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Signing;
 
@@ -26,6 +27,7 @@ public sealed record SignerChangeResult(SignerSetupError Error, string? Message 
 
 public sealed class SignerSetup(QuillSignDbContext db, AuditWriter audit, SignerSetupOptions options,TimeProvider? time=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal ProductionSenderPreparationAdmission? HoldAdmission { get; init; }
     public async Task<SignerSetupSnapshot?> GetAsync(ClaimsPrincipal sender, string publicId,
         CancellationToken cancellationToken = default)
     {
@@ -50,12 +52,23 @@ public sealed class SignerSetup(QuillSignDbContext db, AuditWriter audit, Signer
     {
         var identity = SenderIdentity(sender, publicId);
         if (identity is null) return new(SignerSetupError.NotFound);
+        if (HoldAdmission is null) return await ChangeCoreAsync(sender, publicId, change, ip, userAgent, cancellationToken);
+        return await HoldAdmission.ExecuteAsync(db, identity.Value.Id, identity.Value.Email, publicId, "sender/signers",
+            operation => ChangeCoreAsync(sender, publicId, change, ip, userAgent, cancellationToken, operation),
+            new(SignerSetupError.NotFound), new(SignerSetupError.Conflict, "This draft changed. Reload the signer list before trying again."), cancellationToken);
+    }
+
+    private async Task<SignerChangeResult> ChangeCoreAsync(ClaimsPrincipal sender, string publicId, SignerChange change,
+        string? ip, string? userAgent, CancellationToken cancellationToken, ProductionRecordOperation? operation = null)
+    {
+        var identity = SenderIdentity(sender, publicId); if (identity is null) return new(SignerSetupError.NotFound);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(cancellationToken), cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         // The same envelope lock serializes upload/confirmation, signer-list changes, and audit sequencing.
         var envelope = await db.Envelopes.FromSqlInterpolated(
             $"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {identity.Value.Id}")
             .SingleOrDefaultAsync(cancellationToken);
+        if (operation is not null) await HoldAdmission!.DemandStartingLockedAsync(db, operation, cancellationToken);
         if (envelope is null || envelope.PublicId != publicId || envelope.SenderVerifiedAt is null ||
             envelope.Status != EnvelopeStatus.Draft || !string.Equals(envelope.SenderEmail, identity.Value.Email, StringComparison.OrdinalIgnoreCase))
             return new(SignerSetupError.NotFound);
@@ -133,6 +146,11 @@ public sealed class SignerSetup(QuillSignDbContext db, AuditWriter audit, Signer
         });
         await audit.AppendAsync(envelope.Id, eventName, identity.Value.Email, ip, userAgent, cancellationToken, data);
         DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);
+        if (operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db, operation, cancellationToken);
+            DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);
+        }
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,cancellationToken);
         return new(SignerSetupError.None);
     }

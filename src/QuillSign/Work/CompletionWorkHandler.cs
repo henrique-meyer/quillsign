@@ -6,11 +6,14 @@ using QuillSign.Documents;
 using QuillSign.Email.Pilot;
 using QuillSign.Sealing;
 using QuillSign.Signing;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Work;
 
 public sealed class CompletionPipeline(CompletionCandidates candidates,CompletionSealOutputs seals,CompletionPublication publication)
 {
+    internal Task<PublishedCompletion> RunAdmittedAsync(QuillSignDbContext db,ProductionCompletionAdmission admission,WorkLease lease,Guid id,CancellationToken ct)
+        =>admission.RunAsync(db,candidates,seals,publication,lease,id,ct);
     internal async Task<PublishedCompletion?> RunAsync(Guid id,CancellationToken ct,CompletionTimestampWork? timestampWork=null)
     {
         var completed=await publication.ReadAsync(id,ct); if(completed is not null)return completed;
@@ -23,6 +26,7 @@ public sealed class CompletionPipeline(CompletionCandidates candidates,Completio
 public sealed class CompletionWorkHandler(QuillSignDbContext db,SignerCheckpointState state,CompletionCommitScope scope,
     Func<CompletionPipeline> pipeline,TimeProvider time,PilotTimestampBoundary? timestamps=null) : IWorkHandler
 {
+    internal ProductionCompletionAdmission? HoldAdmission {get;init;}
     public WorkKind Kind=>WorkKind.Sealing;
     public async Task<WorkResult> ExecuteAsync(WorkLease lease,CancellationToken ct)
     {
@@ -36,6 +40,7 @@ public sealed class CompletionWorkHandler(QuillSignDbContext db,SignerCheckpoint
             if(payload is null || payload.Version!=CompletionJobs.Version || payload.FinishId==Guid.Empty || payload.CopyVersion is <1 or >100 ||
                 !Hash(payload.CheckpointSha256) || !Hash(payload.DisclosureSha256))return new(WorkOutcome.Failed,"invalid-completion-payload");
             scope.Bind(lease,id,row.PayloadJson);
+            var admitted=false;
             await using(var transaction=await db.Database.BeginTransactionAsync(ct))
             {
                 var envelope=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct);
@@ -45,6 +50,7 @@ public sealed class CompletionWorkHandler(QuillSignDbContext db,SignerCheckpoint
                 if(current is null || current.FinishId!=payload.FinishId || current.Version!=payload.CopyVersion || Convert.ToHexStringLower(current.Sha256)!=payload.CheckpointSha256 ||
                     envelope.ErsdSha256 is not {Length:32} || Convert.ToHexStringLower(envelope.ErsdSha256)!=payload.DisclosureSha256 ||
                     await db.Signers.AnyAsync(x=>x.EnvelopeId==id && x.Status!=SignerStatus.Signed,ct))return new(WorkOutcome.Failed,"completion-source-unavailable");
+                if(HoldAdmission is not null)admitted=await HoldAdmission.IsProductionLockedAsync(db,id,ct);
                 await transaction.CommitAsync(ct);
             }
             CompletionTimestampWork? timestampWork=null;
@@ -53,6 +59,11 @@ public sealed class CompletionWorkHandler(QuillSignDbContext db,SignerCheckpoint
                 return new(WorkOutcome.Failed,"pilot-completion-unavailable");
             var remaining=lease.Until-time.GetUtcNow()-TimeSpan.FromSeconds(1); if(remaining<=TimeSpan.Zero)throw new CompletionLeaseUnavailableException();
             using var deadline=new CancellationTokenSource(remaining,time); using var linked=CancellationTokenSource.CreateLinkedTokenSource(ct,deadline.Token);
+            if(admitted)
+            {
+                if(await HoldAdmission!.HasHandlerOutcomeAsync(db,lease,id,linked.Token))return new(WorkOutcome.Completed);
+                _=await pipeline().RunAdmittedAsync(db,HoldAdmission!,lease,id,linked.Token);return new(WorkOutcome.Completed);
+            }
             return await pipeline().RunAsync(id,linked.Token,timestampWork) is null ? new(WorkOutcome.Failed,"completion-evidence-unavailable") : new(WorkOutcome.Completed);
         }
         catch(PilotTimestampDeniedException) {return new(WorkOutcome.Failed,"pilot-completion-unavailable");}
