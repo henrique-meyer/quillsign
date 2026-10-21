@@ -64,8 +64,9 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
 
     internal async Task<EmailPilotCloseoutSnapshot> CreateAsync(string capability,CancellationToken ct=default)
     {
+        var db=database();Clean(db);
         try{return await CreateCoreAsync(capability,ct);}
-        catch {database().ChangeTracker.Clear();throw;}
+        catch {db.ChangeTracker.Clear();throw;}
     }
 
     private async Task<EmailPilotCloseoutSnapshot> CreateCoreAsync(string capability, CancellationToken ct)

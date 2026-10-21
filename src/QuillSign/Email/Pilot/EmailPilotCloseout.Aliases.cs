@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
+using System.Data.Common;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using QuillSign.Completion;
 using QuillSign.Data;
 using QuillSign.Work;
@@ -19,9 +21,21 @@ public sealed partial class EmailPilotCloseout
     // current header and original pair in the caller's existing transaction.
     internal sealed class AliasFact
     {
-        private AliasFact(Guid authorizationId, Guid originalId, Guid aliasId, Guid recordId,
+        private AliasFact(EmailPilotCloseout owner,QuillSignDbContext db,WorkLease lease,Guid authorizationId, Guid originalId, Guid aliasId, Guid recordId,
             string template, string recipient, DateTimeOffset until)
-        { AuthorizationId=authorizationId;OriginalId=originalId;AliasId=aliasId;RecordId=recordId;Template=template;Recipient=recipient;Until=until; }
+        { Owner=owner;Database=db;Lease=lease;Transaction=db.Database.CurrentTransaction!.GetDbTransaction();Connection=Transaction.Connection??throw Invalid();
+            AuthorizationId=authorizationId;OriginalId=originalId;AliasId=aliasId;RecordId=recordId;Template=template;Recipient=recipient;Until=until; }
+        private EmailPilotCloseout Owner { get; }
+        private QuillSignDbContext Database { get; }
+        private WorkLease Lease { get; }
+        private DbTransaction Transaction { get; }
+        private DbConnection Connection { get; }
+        internal void DemandLocked(QuillSignDbContext db,Guid aliasId,string recipient,string template)
+        {
+            if(!ReferenceEquals(db,Database)||db.Database.CurrentTransaction is not {} tx||!ReferenceEquals(tx.GetDbTransaction(),Transaction)||
+                !ReferenceEquals(Transaction.Connection,Connection)||Connection.State!=System.Data.ConnectionState.Open||
+                aliasId!=AliasId||recipient!=Recipient||template!=Template||!Owner.Available||Until<=Owner.Now||Lease.Until<=Owner.Now)throw Invalid();
+        }
         internal Guid AuthorizationId { get; }
         internal Guid OriginalId { get; }
         internal Guid AliasId { get; }
@@ -48,7 +62,7 @@ public sealed partial class EmailPilotCloseout
         var e=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==pair.RecordId,ct);
         var retained=await Documents.DocumentRetentionAccess.ReadAsync(db,e,ct);Documents.DocumentRetentionAccess.Check(retained,owner.AliasTime);
         var until=new[]{current.Until,lease.Until,retained??DateTimeOffset.MaxValue}.Min();if(until<=owner.Now||!owner.Available)throw Invalid();
-        return new(current.AuthorizationId,pair.OriginalId,pair.WorkId,pair.RecordId,mail.Template,mail.To,until);
+        return new(owner,db,lease,current.AuthorizationId,pair.OriginalId,pair.WorkId,pair.RecordId,mail.Template,mail.To,until);
         }
     }
 
