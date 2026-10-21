@@ -50,7 +50,11 @@ public sealed class ProductionDeletionRecoveryTests(SqlDatabaseFixture fixture):
             Assert.Null(claim.Lease);Assert.Equal(original.Until,claim.RetryAt);Assert.True((await run.Journal.ReadAsync(run.Id)).Deletion!.ClaimRolledBack);
             run.Time.Now=original.Until.AddSeconds(1);await using var db=fixture.Open();claim=await ready.Coordinator.ClaimAsync(db,id,default);
             Assert.Equal(2,claim.Lease!.Attempt);Assert.NotEqual(original.Owner,claim.Lease.Owner);
-        }else{Assert.Equal(original.Owner,claim.Lease!.Owner);Assert.Equal(1,claim.Lease.Attempt);}
+        }else{
+            Assert.Null(claim.Lease);Assert.Equal(original.Until,claim.RetryAt);Assert.True((await run.Journal.ReadAsync(run.Id)).Deletion!.ClaimAccepted);
+            run.Time.Now=original.Until.AddSeconds(1);await using var db=fixture.Open();claim=await ready.Coordinator.ClaimAsync(db,id,default);
+            Assert.Equal(2,claim.Lease!.Attempt);Assert.NotEqual(original.Owner,claim.Lease.Owner);
+        }
         var result=await ready.Coordinator.ExecuteAsync(claim.Lease!,default);await using(var db=fixture.Open())await ready.Coordinator.FinishAsync(db,claim.Lease!,result,default);
         Assert.True((await run.Journal.ReadAsync(run.Id)).Deletion!.WorkFinished);Assert.Equal(4,ready.Files.RootDeletes);Assert.Equal(8,ready.Files.VersionDeletes);
     }
@@ -63,6 +67,7 @@ public sealed class ProductionDeletionRecoveryTests(SqlDatabaseFixture fixture):
         var fault=Gate(run,ready.Files,ready.Signals,()=>Open(new CommitFault(committed)));
         await Assert.ThrowsAsync<IOException>(()=>fault.ExecuteAsync(lease,default));
         var expected=await run.Journal.ReadAsync(run.Id);Assert.True(expected.Deletion!.SqlReserved);Assert.NotNull(expected.Deletion.SqlExpectedWorkJson);
+        run.Time.Now=lease.Until.AddSeconds(1);
         await ready.Coordinator.RecoverAsync(run.Id);
         var state=await run.Journal.ReadAsync(run.Id);Assert.True(state.Deletion!.Terminal);Assert.True(state.Deletion.WorkFinished);
         Assert.Equal(committed?1:2,state.Deletion.SqlRound);Assert.Equal(4,ready.Files.RootDeletes);Assert.Equal(8,ready.Files.VersionDeletes);

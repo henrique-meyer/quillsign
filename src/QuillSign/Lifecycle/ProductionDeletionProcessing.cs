@@ -42,9 +42,13 @@ internal sealed partial class ProductionDeletionCoordinator
             var scope=ReadScope(state,false);ProductionDeletionPlan inventory;
             try{inventory=await Census(scope,ct);}finally{scope.Close();}
             state=await FreezePlan(state,inventory,ct);deletion=state.Deletion!;
-            var indexScope=ReadScope(state,true);
-            try{await recovery.RememberAsync(indexScope,new(recordId,deletion.Header!.DeletionId,deletion.PlanSha256!),ct);}finally{indexScope.Close();}
         }
+        // An earlier publication may have failed before the hint existed. The
+        // immutable first-plan digest gives the create-only hint one stable
+        // identity even after bounded later plan extensions. Acknowledgement is
+        // required on every continuation before any destructive effect.
+        var indexScope=ReadScope(state,true);
+        try{await recovery.RememberAsync(indexScope,new(recordId,deletion.Header!.DeletionId,deletion.RecoveryPlanSha256??throw ProductionDeletionProtocol.Invalid()),ct);}finally{indexScope.Close();}
         for(var index=0;index<deletion.Items!.Length;index++){
             var item=deletion.Items[index];
             if(item.Item.IsCurrent&&item.Item.VersionId.Length>0)

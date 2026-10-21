@@ -27,7 +27,7 @@ internal sealed record HoldWitnessDeletionState(ProductionDeletionDisposition? D
     string[]? Chunks=null,int? ChunkCount=null,string? PlanSha256=null,ProductionDeletionInspection[]? Items=null,
     IReadOnlyDictionary<string,ProductionDeletionItemState>? Effects=null,string? StorageReceiptSha256=null,
     string? SqlExpectedSha256=null,bool SqlCommitted=false,bool Terminal=false,ProductionDeletionMaintenanceLease? Lease=null,
-    bool SqlReserved=false,string? SqlExpectedWorkJson=null,string? FinishedWorkJson=null,bool WorkFinished=false,string? ClaimWorkJson=null,ProductionDeletionObject[]? InactiveItems=null,int SqlRound=0,string? ClaimBeforeSqlSha256=null,string? ClaimBeforeContentSha256=null,bool ClaimRolledBack=false,int FinishRound=0)
+    bool SqlReserved=false,string? SqlExpectedWorkJson=null,string? FinishedWorkJson=null,bool WorkFinished=false,string? ClaimWorkJson=null,ProductionDeletionObject[]? InactiveItems=null,int SqlRound=0,string? ClaimBeforeSqlSha256=null,string? ClaimBeforeContentSha256=null,bool ClaimRolledBack=false,int FinishRound=0,string? RecoveryPlanSha256=null)
 {
     internal bool Reserved=>Header is not null;
 }
@@ -87,7 +87,7 @@ internal static class ProductionDeletionProtocol
                     s=s with{Lease=lease,ClaimAccepted=lease.StorageOnly,ClaimWorkJson=null,ClaimRolledBack=false};canonical=canonical with{Body=t.Body,SqlStateSha256=t.SqlStateSha256,ContentSha256=t.ContentSha256};break;
                 case ProductionDeletionKind.ClaimExpected:
                     if(s.ClaimAccepted&&!s.Lease!.StorageOnly||s.SqlExpectedSha256 is not null||!Hash(t.SqlStateSha256)||!Hash(t.ContentSha256)||t.Body is not{Length:>0 and <=4096}||s.Lease!.Until<=at)throw Invalid();
-                    s=s with{ClaimBeforeSqlSha256=s.SqlStateSha256,ClaimBeforeContentSha256=s.ContentSha256,SqlStateSha256=t.SqlStateSha256,ContentSha256=t.ContentSha256,SqlExpectedSha256=t.SqlStateSha256,ClaimWorkJson=t.Body,Lease=s.Lease with{StorageOnly=false},ClaimRolledBack=false};
+                    s=s with{ClaimBeforeSqlSha256=s.SqlStateSha256,ClaimBeforeContentSha256=s.ContentSha256,SqlStateSha256=t.SqlStateSha256,ContentSha256=t.ContentSha256,SqlExpectedSha256=t.SqlStateSha256,ClaimWorkJson=t.Body,Lease=s.Lease with{StorageOnly=false},ClaimAccepted=false,ClaimRolledBack=false};
                     canonical=canonical with{SqlStateSha256=t.SqlStateSha256,ContentSha256=t.ContentSha256,Body=t.Body};break;
                 case ProductionDeletionKind.ClaimNoEffect:
                     if(s.ClaimAccepted||s.SqlReserved||s.SqlExpectedSha256 is null||t.SqlStateSha256!=s.ClaimBeforeSqlSha256||t.ContentSha256!=s.ClaimBeforeContentSha256)throw Invalid();
@@ -117,7 +117,7 @@ internal static class ProductionDeletionProtocol
                         !ProductionDeletionObjectScope.Areas.Contains(i.Area,StringComparer.Ordinal)||!i.Name.StartsWith(h.RecordId.ToString("N")+"/",StringComparison.Ordinal)&&
                         !(i.Area=="final"&&h.ArchivePrefixes.Any(p=>i.Name.StartsWith(p,StringComparison.Ordinal))))throw Invalid();}
                     if(inactive.Sum(x=>x.Length)+all.Sum(x=>x.Item.Length)>256L*1024*1024)throw Invalid();
-                    s=s with{Items=all,InactiveItems=inactive,Chunks=null,ChunkCount=null,PlanSha256=Digest(new{s.PlanSha256,ChunkSha256=t.Sha256}),StorageReceiptSha256=null};canonical=canonical with{Sha256=t.Sha256};break;
+                    s=s with{Items=all,InactiveItems=inactive,Chunks=null,ChunkCount=null,PlanSha256=Digest(new{s.PlanSha256,ChunkSha256=t.Sha256}),RecoveryPlanSha256=s.RecoveryPlanSha256??Digest(new{s.PlanSha256,ChunkSha256=t.Sha256}),StorageReceiptSha256=null};canonical=canonical with{Sha256=t.Sha256};break;
                 case ProductionDeletionKind.ItemIntent:
                     if(!s.ClaimAccepted||s.Lease!.Until<=at||s.Chunks is not null||t.Index is not>=0||t.Index>=s.Items?.Length||t.Phase is not{} phase||!Enum.IsDefined(phase))throw Invalid();
                     var inspection=s.Items![t.Index.Value];if(t.Sha256!=Digest(inspection))throw Invalid();

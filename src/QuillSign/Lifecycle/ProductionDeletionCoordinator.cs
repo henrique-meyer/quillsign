@@ -183,8 +183,9 @@ internal sealed partial class ProductionDeletionCoordinator(Func<QuillSignDbCont
             state=await Event(recordId,new(ProductionDeletionProtocol.Version,ProductionDeletionKind.ClaimAccepted,deletionId,
                 SqlStateSha256:deletion.SqlStateSha256,ContentSha256:deletion.ContentSha256),"claim/"+deletion.Lease!.Attempt+"/ack",ct);
             deletion=state.Deletion!;
-            if(deletion.Lease!.Until<=time.GetUtcNow())throw ProductionDeletionProtocol.Invalid();
-            return new(new(h.WorkId,deletion.Lease.Owner,WorkKind.ProductionPurge,deletion.Lease.Attempt,deletion.Lease.Until),null,false);
+            // Exact readback acknowledges the historical claim only. It cannot
+            // give a second caller the original process's execution ownership.
+            return new(null,deletion.Lease!.Until,false);
         }
         if(deletion.ClaimRolledBack&&deletion.Lease!.Until>time.GetUtcNow())return new(null,deletion.Lease.Until,false);
         if(deletion.Lease!.Until<=time.GetUtcNow()){
@@ -208,7 +209,7 @@ internal sealed partial class ProductionDeletionCoordinator(Func<QuillSignDbCont
         if(deletion.ClaimAccepted&&!live.StorageOnly){
             if(deletion.SqlCommitted){if(JsonSerializer.Serialize(await ReadDetached(db,h,ct),Rows)!=(deletion.ClaimWorkJson??deletion.SqlExpectedWorkJson))throw ProductionDeletionProtocol.Invalid();}
             else await DemandSql(db,state,ct);
-            await tx.RollbackAsync(ct);return new(new(h.WorkId,live.Owner,WorkKind.ProductionPurge,live.Attempt,live.Until),null,false);
+            await tx.RollbackAsync(ct);return new(null,live.Until,false);
         }
         if(live.Until<=time.GetUtcNow())throw ProductionDeletionProtocol.Invalid();
         if(deletion.SqlCommitted){if(JsonSerializer.Serialize(row,Rows)!=live.BeforeWorkJson)throw ProductionDeletionProtocol.Invalid();}

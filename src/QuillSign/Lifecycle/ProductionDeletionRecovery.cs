@@ -12,7 +12,7 @@ internal sealed partial class ProductionDeletionCoordinator
         options.Demand();var page=await recovery.ListAsync(continuation,8,ct);var pending=0;
         foreach(var hint in page.Hints){
             if(hint.RecordId==Guid.Empty||hint.DeletionId!=DeletionId(hint.RecordId)||!ProductionDeletionProtocol.Hash(hint.PlanSha256))throw ProductionDeletionProtocol.Invalid();
-            try{await RecoverAsync(hint.RecordId,ct);}
+            try{await RecoverAsync(hint.RecordId,ct);if((await witness.ReadAsync(hint.RecordId,ct)).Deletion?.WorkFinished!=true)pending++;}
             catch(Exception e)when(!ct.IsCancellationRequested&&(e is InvalidDataException or Azure.RequestFailedException or IOException||SqlResume.IsUnavailable(e))){pending++;}
         }
         return(page.Hints.Count,pending,page.Continuation);
@@ -31,6 +31,10 @@ internal sealed partial class ProductionDeletionCoordinator
         if(d.SqlReserved)await ReconcileSql(recordId,ct);
         state=await witness.ReadAsync(recordId,ct);d=state.Deletion!;
         if(d.SqlCommitted){
+            // Only the invocation that successfully creates a fresh epoch may
+            // use it for new destructive work. A stored live owner or a lost
+            // creation acknowledgement is a fact, never an execution permit.
+            var ownsEpoch=false;
             if(d.FinishedWorkJson is not null){await ReconcileCompletedAsync(new(d.Header!.WorkId,d.Lease!.Owner,QuillSign.Data.WorkKind.ProductionPurge,d.Lease.Attempt,d.Lease.Until),recordId,ct);return;}
             if(d.Lease!.Until<=time.GetUtcNow()){
                 if(d.SqlExpectedSha256 is not null||d.Effects!.Values.Any(x=>x.Result is null))throw ProductionDeletionProtocol.Invalid();
@@ -39,7 +43,9 @@ internal sealed partial class ProductionDeletionCoordinator
                 await witness.DemandDeletionHeadroomAsync(recordId,0,0,ct);
                 state=await Event(recordId,new(ProductionDeletionProtocol.Version,ProductionDeletionKind.RecoveryReserved,d.Header!.DeletionId,
                     Body:JsonSerializer.Serialize(next,ProductionDeletionProtocol.Json),SqlStateSha256:d.SqlStateSha256,ContentSha256:d.ContentSha256),"lease/"+next.Attempt,ct);
+                ownsEpoch=true;
             }
+            if(!ownsEpoch)return;
             // No SQL call is needed to finish active object reconciliation once
             // the exact SQL commit acknowledgement is durably recorded.
             if(!state.Deletion!.Terminal){
