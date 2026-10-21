@@ -1,8 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
+using QuillSign.Documents;
 using QuillSign.Email;
 using QuillSign.Work;
 using QuillSign.Legal;
@@ -31,6 +33,10 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
     Func<EmailOutboxWriter> getOutbox, AuditWriter audit, TimeProvider time,Email.Pilot.EmailPilotReadBounds? pilotBounds=null,
     RecordLifecycleOptions? lifecycle=null,ElectronicRecordOptions? electronicRecords=null)
 {
+    // Internal opt-in wiring while the complete production mutation surface is
+    // being integrated. The public/default constructor preserves demo behavior.
+    internal ProductionRecordOperationAdmission? HoldAdmission { get; init; }
+
     public async Task<SenderRequestOutcome> RequestAsync(string address, string? ip, string? userAgent, CancellationToken cancellationToken = default)
     {
         var email = EmailAddress.Normalize(address);
@@ -42,7 +48,7 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
         }
         var outbox = getOutbox();
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(cancellationToken), cancellationToken);
-        Guid workId;
+        Guid workId; Guid recordId; bool production;
         await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
         {
             var lockName = "sender-request:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(email)));
@@ -60,11 +66,17 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
                 envelope = new Envelope { SenderEmail = email, CreatedAt = now, IsDemo = true };
                 db.Envelopes.Add(envelope);await db.SaveChangesAsync(cancellationToken);
             } else envelope=await new ProductionRetentionAdmission(db,audit,time).CreateLockedAsync(email,lifecycle,electronicRecords??new(),cancellationToken);
+            recordId = envelope.Id; production = !envelope.IsDemo;
             await audit.AppendAsync(envelope.Id, "draft_created", email, ip, userAgent, cancellationToken);
             await audit.AppendAsync(envelope.Id, "sender_verification_requested", email, ip, userAgent, cancellationToken);
             workId = await outbox.PrepareVerificationAsync(envelope.Id, email, cancellationToken);
             await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,cancellationToken);
         }
+        // The durable hint may already exist, but a gated worker cannot claim
+        // until this exact fresh-record baseline has been witnessed. Never
+        // bootstrap an arbitrary legacy/held record from an empty chain.
+        if (production && HoldAdmission is not null)
+            await HoldAdmission.InitializeAsync(recordId, cancellationToken);
         await outbox.PublishCommittedAsync(workId, cancellationToken);
         return SenderRequestOutcome.Neutral;
     }
@@ -72,9 +84,48 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
     public async Task<VerifiedSender?> VerifyAsync(string? rawToken, string? ip, string? userAgent, CancellationToken cancellationToken = default)
     {
         if (rawToken is null || !Regex.IsMatch(rawToken, "^[A-Za-z0-9_-]{43}$", RegexOptions.CultureInvariant)) return null;
+        if (HoldAdmission is null) return await VerifyCoreAsync(rawToken, ip, userAgent, cancellationToken);
+        var tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
+        var original = await db.AuthTokens.AsNoTracking().Where(x => x.TokenSha256 == tokenHash && x.Purpose == TokenPurpose.SenderVerify && x.PartyType == PartyType.Sender)
+            .Select(x => new { x.Id, x.EnvelopeId, x.UsedAt, x.ExpiresAt }).SingleOrDefaultAsync(cancellationToken);
+        if (original?.EnvelopeId is not { } recordId || original.UsedAt is not null || original.ExpiresAt <= time.GetUtcNow()) return null;
+        var record = await db.Envelopes.AsNoTracking().Where(x => x.Id == recordId).Select(x => new { x.IsDemo, x.Status, x.SenderVerifiedAt }).SingleOrDefaultAsync(cancellationToken);
+        if (record is null || record.Status != EnvelopeStatus.Draft || record.SenderVerifiedAt is not null) return null;
+        if (record.IsDemo)
+        {
+            try
+            {
+                if (await HoldAdmission.IsUnenrolledDemoAsync(db, recordId, cancellationToken))
+                    return await VerifyCoreAsync(rawToken, ip, userAgent, cancellationToken);
+            }
+            catch (Exception error) when (error is InvalidDataException or UnauthorizedAccessException or DocumentConflictException)
+            { return null; }
+        }
+        ProductionRecordOperation operation;
+        try { operation = await HoldAdmission.BeginAsync(recordId, Guid.NewGuid(), "sender/verify", original.Id.ToString("N"), cancellationToken); }
+        catch (Exception error) when (error is InvalidDataException or UnauthorizedAccessException or DocumentConflictException)
+        { return null; }
+        // SQL-only verification has no provider dispatch. The core transaction
+        // has been disposed before settlement. An exception/unknown commit keeps
+        // the original reservation closed for explicit reconciliation.
+        var result = await VerifyCoreAsync(rawToken, ip, userAgent, cancellationToken, operation);
+        var receipt = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+            { Version = "production-sender-verify-v1", recordId, TokenId = original.Id, Verified = result is not null })));
+        await HoldAdmission.CompleteAsync(operation, receipt, cancellationToken);
+        return result;
+    }
+
+    private async Task<VerifiedSender?> VerifyCoreAsync(string rawToken, string? ip, string? userAgent, CancellationToken cancellationToken, ProductionRecordOperation? operation = null)
+    {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(cancellationToken), cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        if (operation is not null)
+        {
+            _ = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {operation.RecordId}")
+                .AsNoTracking().SingleAsync(cancellationToken);
+            await HoldAdmission!.DemandStartingLockedAsync(db, operation, cancellationToken);
+        }
         var token = await db.AuthTokens.FromSqlInterpolated($"SELECT * FROM [AuthTokens] WITH (UPDLOCK, HOLDLOCK) WHERE [TokenSha256] = {hash}")
             .SingleOrDefaultAsync(cancellationToken);
         var now = time.GetUtcNow();

@@ -38,7 +38,7 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
         if (before.OutstandingOperation is null && before.BusinessStateSha256 is not null && before.BusinessStateSha256 != content) throw Invalid();
         authority.Demand(operators, command.Permission, time);
         await tx.CommitAsync(ct);
-        return await witness.AcceptSqlAsync(command, receipt, content, Id(command.CommandId, "sql"), ct);
+        return await witness.AcceptSqlAsync(command, receipt, content, Id(command.CommandId, "sql"), ct, sql.StateSha256);
     }
 
     internal async Task<HoldWitnessState> ReadVerifiedAsync(Guid recordId, CancellationToken ct = default)
@@ -163,9 +163,15 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
         var requests = await new ProductionHoldRequests(db, keys, time).ReadLockedAsync(id, ct);
         ProductionHoldWitnessJournal.DemandSql(state, requests);
         if (requests.Revision == 0)
-        { if (state.Sequence != 0) throw Invalid(); return requests; }
+        {
+            if (!state.Initialized) { if (state.Sequence != 0) throw Invalid(); return requests; }
+            var acknowledged = await new ProductionHoldSqlInventory(db, keys, time)
+                .CaptureAcknowledgementLockedAsync(id, requests.Revision, requests.FenceHash, ct: ct);
+            if (ContentDigest(acknowledged) != state.BusinessStateSha256 || acknowledged.StateSha256 != state.SqlStateSha256) throw Invalid();
+            return requests;
+        }
         var sql = await Sql(db, requests, id, ct);
-        if (ContentDigest(sql) != state.BusinessStateSha256) throw Invalid();
+        if (ContentDigest(sql) != state.BusinessStateSha256 || state.SqlStateSha256 is not null && sql.StateSha256 != state.SqlStateSha256) throw Invalid();
         var controls = new ProductionHoldControls(db, keys, time);
         var saved = await controls.ReadLockedAsync(id, ct);
         foreach (var hold in state.Holds.Values.Where(x => x.PlanSha256 is not null))
@@ -196,17 +202,7 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
         => new ProductionHoldSqlInventory(db, keys, time).CaptureLockedAsync(id, requests.Revision, requests.FenceHash!, ct: ct);
 
     private string ContentDigest(ProductionHoldSqlSnapshot snapshot)
-    {
-        using var sql = ProductionHoldSqlInventory.OpenVerified(snapshot, keys);
-        // The external acknowledgement binds the entire request chain separately
-        // through its revision/fence. Keep all other tables byte-for-byte bound
-        // across an authorized request append; the original complete SQL
-        // snapshot fingerprint still includes EVERY business/request row.
-        return Digest(new { Version = "production-hold-external-content-v1", snapshot.RecordId,
-            PolicySha256 = sql.RootElement.GetProperty("PolicySha256").GetString(),
-            Tables = sql.RootElement.GetProperty("Tables").EnumerateArray()
-                .Where(x => x.GetProperty("Table").GetString() != "ProductionHoldRequests").ToArray() });
-    }
+        => ProductionRecordOperationAdmission.ContentDigest(snapshot, keys);
 
     private static string BundleDigest(ProductionHoldProtectedPlan plan, ProductionHoldFrozenPlan body, ProductionHoldControlState controls)
     {

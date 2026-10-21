@@ -189,6 +189,35 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
     }
 
     [Fact]
+    public async Task Caller_owned_parent_transaction_can_demand_exact_scope_without_a_second_connection_or_self_deadlock()
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
+        var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "work/0", run.Work.ToString("N"));
+        await using var db = fixture.Open();
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandLockedAsync(db, scope));
+        await using var tx = await db.Database.BeginTransactionAsync();
+        _ = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={run.Id}").SingleAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        Assert.Equal(scope, await run.Gate().ResumeLockedAsync(db, run.Id, scope.OperationId, scope.Kind, scope.Reference, timeout.Token));
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandLockedAsync(db, scope with { Kind = "work/1" }));
+        await tx.RollbackAsync();
+        Assert.Equal(scope.OperationId, (await run.Journal().ReadAsync(run.Id)).OutstandingOperation);
+    }
+
+    [Fact]
+    public async Task First_mutation_rejects_changed_or_restored_business_SQL_after_reservation_without_settling_it()
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
+        var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "synthetic-edit");
+        await run.Edit("Unexpected concurrent or restored business value");
+        await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandStartingLockedAsync(db, scope));
+        await tx.RollbackAsync();
+        Assert.Equal(scope.OperationId, (await run.Journal().ReadAsync(run.Id)).OutstandingOperation);
+        Assert.Empty((await run.Journal().ReadAsync(run.Id)).SettledOperations);
+    }
+
+    [Fact]
     public async Task SQL_rollback_or_restored_older_rows_do_not_reopen_unknown_operation_or_erase_current_acknowledgement()
     {
         var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
@@ -242,6 +271,17 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
         await run.Journal().ReleaseAsync(release, Receipt, prefix, releasing, Guid.NewGuid());
         await using (var db = fixture.Open()) await db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM [ProductionHoldControls] WHERE [EnvelopeId]={run.Id}");
         await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "synthetic-reference"));
+    }
+
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public async Task Witnessed_production_record_cannot_downgrade_to_demo_even_after_SQL_enrollment_is_missing(bool removeEnrollment)
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id); await using var db = fixture.Open();
+        await db.Envelopes.Where(x => x.Id == run.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.IsDemo, true));
+        if (removeEnrollment) await db.ProductionRetentionPolicies.Where(x => x.EnvelopeId == run.Id).ExecuteDeleteAsync();
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().IsUnenrolledDemoAsync(db, run.Id));
+        Assert.Single(run.Store.Rows);
     }
 
     [Theory]

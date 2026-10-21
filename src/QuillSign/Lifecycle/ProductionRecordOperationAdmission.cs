@@ -22,6 +22,18 @@ internal sealed record ProductionRecordOperation(Guid RecordId, Guid OperationId
 internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness)
 {
+    internal async Task<bool> IsUnenrolledDemoAsync(QuillSignDbContext db, Guid recordId, CancellationToken ct = default)
+    {
+        var record = await db.Envelopes.AsNoTracking().Where(x => x.Id == recordId).Select(x => new { x.IsDemo }).SingleOrDefaultAsync(ct)
+            ?? throw Invalid();
+        if (!record.IsDemo) return false;
+        // A mutable classification flag cannot downgrade a previously enrolled
+        // production record or erase its independently retained external fence.
+        if (await db.ProductionRetentionPolicies.AnyAsync(x => x.EnvelopeId == recordId, ct) ||
+            (await witness.ReadAsync(recordId, ct)).Sequence != 0) throw Invalid();
+        return true;
+    }
+
     internal async Task<HoldWitnessState> InitializeAsync(Guid recordId, CancellationToken ct = default)
     {
         var before = await witness.ReadAsync(recordId, ct);
@@ -66,13 +78,40 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
 
     internal async Task DemandAsync(ProductionRecordOperation scope, CancellationToken ct = default)
     {
-        var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state);
         await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
+        await DemandLockedAsync(db, scope, ct);
         await tx.RollbackAsync(ct);
+    }
+
+    internal async Task<ProductionRecordOperation> ResumeLockedAsync(QuillSignDbContext db, Guid recordId,
+        Guid operationId, string kind, string reference, CancellationToken ct = default)
+    {
+        Tuple(recordId, operationId, kind, reference);
+        var scope = Scope(recordId, operationId, kind, reference, await witness.ReadAsync(recordId, ct));
+        await DemandLockedAsync(db, scope, ct); return scope;
+    }
+
+    // Use the caller's parent transaction. A second connection cannot acquire
+    // the same parent update lock, even when it only reads request metadata.
+    internal async Task DemandLockedAsync(QuillSignDbContext db, ProductionRecordOperation scope, CancellationToken ct = default)
+    {
+        if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
+        DemandActive(scope, await witness.ReadAsync(scope.RecordId, ct));
+        var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         // Pending hold intent may arrive during the read, but only this same
         // previously admitted operation may drain. Its own business edits need
         // not match the old baseline while it is executing.
+        DemandActive(scope, await witness.ReadAsync(scope.RecordId, ct));
+    }
+
+    // Only before the operation's FIRST SQL mutation. Handler/provider changes
+    // legitimately differ later and must remain reserved until exact Finish.
+    internal async Task DemandStartingLockedAsync(QuillSignDbContext db, ProductionRecordOperation scope, CancellationToken ct = default)
+    {
+        await DemandLockedAsync(db, scope, ct);
+        var requests = await Requests(db, scope.RecordId, ct);
+        var current = await Capture(db, scope.RecordId, requests, ct);
+        if (current.StateSha256 != scope.SqlStateSha256 || ContentDigest(current, keys) != scope.ContentSha256) throw Invalid();
         DemandActive(scope, await witness.ReadAsync(scope.RecordId, ct));
     }
 
