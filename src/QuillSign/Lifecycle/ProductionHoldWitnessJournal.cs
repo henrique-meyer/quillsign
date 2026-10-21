@@ -5,21 +5,24 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace QuillSign.Lifecycle;
 
-internal enum HoldWitnessKind { OperationReserved, OperationSettled, CommandIntent, SqlAccepted, Preserved, Released, PreservationReserved, ReleaseReserved, PlanFrozen, Initialized }
+internal enum HoldWitnessKind { OperationReserved, OperationSettled, CommandIntent, SqlAccepted, Preserved, Released, PreservationReserved, ReleaseReserved, PlanFrozen, Initialized, OperationOutcomePrepared }
 internal sealed record HoldWitnessEvent(string Version, Guid RecordId, long Sequence, Guid EventId,
     HoldWitnessKind Kind, DateTimeOffset At, string? PreviousHash, ProductionHoldCommand? Command,
     string? Issuer, string? Subject, Guid? OperationId, long RequestRevision, string? RequestFenceHash,
     Guid? PlanId, string? PlanSha256, string? ReceiptSha256, string? BusinessStateSha256, ProductionHoldControlPrefix? Control,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OperationKind = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OperationReference = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SqlStateSha256 = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SqlStateSha256 = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OutcomeVersion = null);
+internal sealed record HoldWitnessOutcome(string ContentSha256, string SqlStateSha256, long Sequence);
 internal sealed record HoldWitnessHold(ProductionHoldCommand Placement, ProductionHoldCommand? Release,
     bool Effective, bool Released, Guid? PlanId, string? PlanSha256, string? PreservationSha256, string? ReleaseSha256,
     ProductionHoldControlPrefix? Control, string? ReleaseFenceHash);
 internal sealed record HoldWitnessState(long Sequence, string? HeadHash, long RequestRevision, string? RequestFenceHash,
     ProductionHoldCommand? Unacknowledged, Guid? OutstandingOperation, IReadOnlyDictionary<Guid, HoldWitnessHold> Holds,
     string? BusinessStateSha256, IReadOnlyDictionary<Guid, string> SettledOperations, bool Initialized = false,
-    string? SqlStateSha256 = null, IReadOnlyDictionary<Guid, HoldWitnessOperation>? Operations = null)
+    string? SqlStateSha256 = null, IReadOnlyDictionary<Guid, HoldWitnessOperation>? Operations = null,
+    IReadOnlyDictionary<Guid, HoldWitnessOutcome>? Outcomes = null)
 {
     internal bool Frozen => Unacknowledged is not null || OutstandingOperation is not null || Holds.Values.Any(x => !x.Released);
 }
@@ -32,6 +35,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
     TimeProvider time, string installationDigest)
 {
     internal const string Version = "production-hold-witness-journal-v1";
+    private const string OutcomeVersion = "production-record-operation-outcome-v1";
     private const int MaximumEvents = 16384, MaximumPayload = 65536, MaximumBytes = 16 * 1024 * 1024;
     private sealed record ReadResult(HoldWitnessState State, HoldWitnessEvent[] Events, long Bytes);
     private IDataProtector Protector(Guid id)
@@ -51,14 +55,27 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         ProductionHoldRequestSnapshot sql, string contentSha256, string sqlStateSha256, Guid eventId, CancellationToken ct = default)
         => Change(recordId, eventId, HoldWitnessKind.OperationReserved, ct, x => x with {
             OperationId = operationId, OperationKind = kind, OperationReference = reference, RequestRevision = sql.Revision,
-            RequestFenceHash = sql.FenceHash, BusinessStateSha256 = contentSha256, SqlStateSha256 = sqlStateSha256 });
+            RequestFenceHash = sql.FenceHash, BusinessStateSha256 = contentSha256, SqlStateSha256 = sqlStateSha256, OutcomeVersion = OutcomeVersion });
 
-    internal Task<HoldWitnessState> SettleOperationAsync(Guid recordId, HoldWitnessOperation operation, string receiptSha256,
+    internal Task<HoldWitnessState> PrepareOperationOutcomeAsync(Guid recordId, HoldWitnessOperation operation,
         string contentSha256, string sqlStateSha256, Guid eventId, CancellationToken ct = default)
-        => Change(recordId, eventId, HoldWitnessKind.OperationSettled, ct, x => x with {
+        => Change(recordId, eventId, HoldWitnessKind.OperationOutcomePrepared, ct, x => x with {
+            OperationId = operation.OperationId, OperationKind = operation.Kind, OperationReference = operation.Reference,
+            RequestRevision = operation.RequestRevision, RequestFenceHash = operation.RequestFenceHash,
+            BusinessStateSha256 = contentSha256, SqlStateSha256 = sqlStateSha256 });
+
+    internal async Task<HoldWitnessState> SettleOperationAsync(Guid recordId, HoldWitnessOperation operation, string receiptSha256,
+        string contentSha256, string sqlStateSha256, Guid eventId, CancellationToken ct = default)
+    {
+        var state = await ReadAsync(recordId, ct);
+        if (state.Operations?.GetValueOrDefault(operation.OperationId) != operation ||
+            state.Outcomes?.GetValueOrDefault(operation.OperationId) is not { } outcome ||
+            outcome.ContentSha256 != contentSha256 || outcome.SqlStateSha256 != sqlStateSha256) throw Invalid();
+        return await Change(recordId, eventId, HoldWitnessKind.OperationSettled, ct, x => x with {
             OperationId = operation.OperationId, OperationKind = operation.Kind, OperationReference = operation.Reference,
             RequestRevision = operation.RequestRevision, RequestFenceHash = operation.RequestFenceHash,
             ReceiptSha256 = receiptSha256, BusinessStateSha256 = contentSha256, SqlStateSha256 = sqlStateSha256 });
+    }
 
     internal async Task<HoldWitnessState> IntentAsync(ProductionOperatorAuthority authority, ProductionOperatorPolicy policy,
         ProductionHoldCommand command, Guid eventId, CancellationToken ct = default)
@@ -210,6 +227,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         var operations = new HashSet<Guid>(); var commands = new HashSet<Guid>();
         var settled = new Dictionary<Guid, string>(); bool maintenance = false;
         var typed = new Dictionary<Guid, HoldWitnessOperation>(); bool initialized = false; string? sqlState = null;
+        var outcomes = new Dictionary<Guid, HoldWitnessOutcome>(); var outcomeRequired = new HashSet<Guid>();
         Guid? operation = null; ProductionHoldCommand? pending = null; long revision = 0; string? fence = null; string? business = null;
         DateTimeOffset? lastAt = null;
         foreach (var e in events)
@@ -234,13 +252,30 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                     if (e.OperationKind is not null || e.OperationReference is not null || e.SqlStateSha256 is not null || e.BusinessStateSha256 is not null)
                     {
                         if (!initialized || !OperationText(e.OperationKind, 128) || !OperationText(e.OperationReference, 512) ||
-                            e.BusinessStateSha256 != business || !Hash(e.SqlStateSha256)) throw Invalid();
+                            e.BusinessStateSha256 != business || !Hash(e.SqlStateSha256) ||
+                            (sqlState is not null && sqlState != e.SqlStateSha256)) throw Invalid();
                         sqlState = e.SqlStateSha256;
                         typed.Add(op, new(op, e.OperationKind!, e.OperationReference!, revision, fence, business!, sqlState!, e.Sequence));
                         canonical = canonical with { OperationKind = e.OperationKind, OperationReference = e.OperationReference,
                             BusinessStateSha256 = business, SqlStateSha256 = sqlState };
+                        if (e.OutcomeVersion is not null)
+                        {
+                            if (e.OutcomeVersion != OutcomeVersion) throw Invalid();
+                            outcomeRequired.Add(op); canonical = canonical with { OutcomeVersion = OutcomeVersion };
+                        }
                     }
                     else if (initialized) throw Invalid();
+                    break;
+                case HoldWitnessKind.OperationOutcomePrepared:
+                    if (maintenance || operation is null || e.OperationId != operation ||
+                        !typed.TryGetValue(operation.Value, out var preparing) || outcomes.ContainsKey(operation.Value) ||
+                        e.OperationKind != preparing.Kind || e.OperationReference != preparing.Reference ||
+                        e.RequestRevision != preparing.RequestRevision || e.RequestFenceHash != preparing.RequestFenceHash ||
+                        revision != preparing.RequestRevision || fence != preparing.RequestFenceHash ||
+                        !Hash(e.BusinessStateSha256) || !Hash(e.SqlStateSha256)) throw Invalid();
+                    outcomes.Add(operation.Value, new(e.BusinessStateSha256!, e.SqlStateSha256!, e.Sequence));
+                    canonical = canonical with { OperationId = e.OperationId, OperationKind = e.OperationKind, OperationReference = e.OperationReference,
+                        RequestRevision = revision, RequestFenceHash = fence, BusinessStateSha256 = e.BusinessStateSha256, SqlStateSha256 = e.SqlStateSha256 };
                     break;
                 case HoldWitnessKind.OperationSettled:
                     if (maintenance || e.OperationId != operation || operation is null || !Hash(e.ReceiptSha256) || !Hash(e.BusinessStateSha256)) throw Invalid();
@@ -248,6 +283,9 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                     {
                         if (e.OperationKind != reserved.Kind || e.OperationReference != reserved.Reference || !Hash(e.SqlStateSha256) ||
                             e.RequestRevision != reserved.RequestRevision || e.RequestFenceHash != reserved.RequestFenceHash || revision != reserved.RequestRevision || fence != reserved.RequestFenceHash) throw Invalid();
+                        if (outcomeRequired.Contains(operation.Value) && !outcomes.ContainsKey(operation.Value) ||
+                            outcomes.TryGetValue(operation.Value, out var expected) &&
+                            (expected.ContentSha256 != e.BusinessStateSha256 || expected.SqlStateSha256 != e.SqlStateSha256)) throw Invalid();
                         sqlState = e.SqlStateSha256;
                         canonical = canonical with { OperationKind = e.OperationKind, OperationReference = e.OperationReference,
                             RequestRevision = e.RequestRevision, RequestFenceHash = e.RequestFenceHash, SqlStateSha256 = sqlState };
@@ -313,7 +351,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
             }
             if (canonical != e) throw Invalid();
         }
-        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed);
+        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed, outcomes);
     }
 
     private static bool Prefix(ProductionHoldControlPrefix? value) => value is { Sequence: > 0 } && Hash(value.Hash);

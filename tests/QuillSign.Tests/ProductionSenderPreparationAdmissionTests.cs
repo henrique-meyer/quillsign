@@ -234,6 +234,7 @@ public sealed class ProductionSenderPreparationAdmissionTests(SqlDatabaseFixture
                 await audit.AppendAsync(e.Id, "preview_confirmed", e.SenderEmail, null, null, default, dataJson: JsonSerializer.Serialize(new { document = e.PdfBlob, pdfSha256 = hash }));
                 run.DocumentId = e.PdfBlob; run.sources.Objects.Add(new("originals", $"{e.Id:N}/{original:N}", "synthetic-original-version", "", "\"synthetic-original-tag\"", ProductionHoldArchiveReleaseTests.Raw.Length));
                 run.sources.Objects.Add(new("normalized", $"{e.Id:N}/{normalized:N}", "synthetic-normalized-version", "", "\"synthetic-normalized-tag\"", ProductionHoldArchiveReleaseTests.Raw.Length));
+                if (setup is not null) await run.Operations.PrepareOutcomeLockedAsync(db, setup);
                 await tx.CommitAsync();
             }
             if (setup is not null) await run.Operations.CompleteAsync(setup, Hash); return run;

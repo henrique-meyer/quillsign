@@ -58,7 +58,7 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
         await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
         var requests = await Requests(db, recordId, ct); ProductionHoldWitnessJournal.DemandSql(before, requests);
         var sql = await Capture(db, recordId, requests, ct); var content = ContentDigest(sql, keys);
-        if (content != before.BusinessStateSha256) throw Invalid();
+        if (content != before.BusinessStateSha256 || before.SqlStateSha256 is not null && sql.StateSha256 != before.SqlStateSha256) throw Invalid();
         await DemandControls(db, recordId, before, ct);
         var state = await witness.ReserveOperationAsync(recordId, operationId, kind, reference, requests, content, sql.StateSha256,
             Id(recordId, operationId, "reserve"), ct);
@@ -70,9 +70,9 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
     {
         Tuple(recordId, operationId, kind, reference);
         var state = await witness.ReadAsync(recordId, ct); var scope = Scope(recordId, operationId, kind, reference, state);
-        // Settled replay conveys no provider authority. CompleteAsync can confirm
-        // its original receipt; DemandAsync always rejects further provider I/O.
-        if (!state.SettledOperations.ContainsKey(operationId)) await DemandAsync(scope, ct);
+        // Sealed/settled replay conveys no provider authority. CompleteAsync can
+        // reconcile the exact outcome or confirm its historical receipt only.
+        if (!state.SettledOperations.ContainsKey(operationId) && state.Outcomes?.ContainsKey(operationId) != true) await DemandAsync(scope, ct);
         return scope;
     }
 
@@ -120,18 +120,47 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
         if (!Hash(receiptSha256)) throw Invalid();
         var state = await witness.ReadAsync(scope.RecordId, ct);
         if (Scope(scope.RecordId, scope.OperationId, scope.Kind, scope.Reference, state) != scope) throw Invalid();
+        // Historical receipt confirmation is not a current SQL/provider status
+        // assertion and cannot advance or replace the authenticated baseline.
         if (state.SettledOperations.TryGetValue(scope.OperationId, out var saved))
         { if (saved != receiptSha256) throw Invalid(); return state; }
-        DemandActive(scope, state);
+        DemandActive(scope, state, allowOutcome: true);
         await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         await DemandControls(db, scope.RecordId, state, ct);
         var current = await Capture(db, scope.RecordId, requests, ct);
+        var content = ContentDigest(current, keys);
         var operation = state.Operations![scope.OperationId];
-        var result = await witness.SettleOperationAsync(scope.RecordId, operation, receiptSha256, ContentDigest(current, keys), current.StateSha256,
+        var outcome = state.Outcomes?.GetValueOrDefault(scope.OperationId);
+        if (outcome is null)
+        {
+            // Without a precommit outcome only the EXACT originally reserved
+            // SQL may be acknowledged. Fresh changed SQL is never authority.
+            if (current.StateSha256 != scope.SqlStateSha256 || content != scope.ContentSha256) throw Invalid();
+            state = await witness.PrepareOperationOutcomeAsync(scope.RecordId, operation, content, current.StateSha256,
+                Id(scope.RecordId, scope.OperationId, "outcome"), ct);
+            outcome = state.Outcomes![scope.OperationId];
+        }
+        if (outcome!.ContentSha256 != content || outcome.SqlStateSha256 != current.StateSha256) throw Invalid();
+        var result = await witness.SettleOperationAsync(scope.RecordId, operation, receiptSha256, content, current.StateSha256,
             Id(scope.RecordId, scope.OperationId, "settle"), ct);
         if (!result.SettledOperations.TryGetValue(scope.OperationId, out var proof) || proof != receiptSha256) throw Invalid();
         await tx.RollbackAsync(ct); return result;
+    }
+
+    // Caller must SaveChanges, publish this immutable expected outcome, then
+    // commit its same transaction. Publication failure/unknown SQL commit stays
+    // quarantined. It can only be reconciled against these exact retained hashes.
+    internal async Task PrepareOutcomeLockedAsync(QuillSignDbContext db, ProductionRecordOperation scope, CancellationToken ct = default)
+    {
+        if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
+        var state = await witness.ReadAsync(scope.RecordId, ct); DemandActive(scope, state, allowOutcome: true);
+        var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
+        await DemandControls(db, scope.RecordId, state, ct);
+        var current = await Capture(db, scope.RecordId, requests, ct);
+        var result = await witness.PrepareOperationOutcomeAsync(scope.RecordId, state.Operations![scope.OperationId],
+            ContentDigest(current, keys), current.StateSha256, Id(scope.RecordId, scope.OperationId, "outcome"), ct);
+        DemandActive(scope, result, allowOutcome: true);
     }
 
     internal static string ContentDigest(ProductionHoldSqlSnapshot snapshot, IDataProtectionProvider keys)
@@ -161,10 +190,11 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
         if (!state.Initialized || state.Operations is null || !state.Operations.TryGetValue(operationId, out var operation) || operation.Kind != kind || operation.Reference != reference) throw Invalid();
         return new(id, operationId, kind, reference, operation.RequestRevision, operation.RequestFenceHash, operation.ContentSha256, operation.SqlStateSha256, operation.ReservationSequence);
     }
-    private static void DemandActive(ProductionRecordOperation scope, HoldWitnessState state)
+    private static void DemandActive(ProductionRecordOperation scope, HoldWitnessState state, bool allowOutcome = false)
     {
         if (Scope(scope.RecordId, scope.OperationId, scope.Kind, scope.Reference, state) != scope || state.OutstandingOperation != scope.OperationId ||
-            state.SettledOperations.ContainsKey(scope.OperationId) || state.RequestRevision != scope.RequestRevision || state.RequestFenceHash != scope.RequestFenceHash ||
+            state.SettledOperations.ContainsKey(scope.OperationId) || !allowOutcome && state.Outcomes?.ContainsKey(scope.OperationId) == true ||
+            state.RequestRevision != scope.RequestRevision || state.RequestFenceHash != scope.RequestFenceHash ||
             state.Holds.Values.Any(x => !x.Released && state.Unacknowledged?.CommandId != x.Placement.CommandId)) throw Invalid();
     }
     private static void DemandHead(ProductionRecordOperation scope, ProductionHoldRequestSnapshot requests)

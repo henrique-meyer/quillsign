@@ -1,6 +1,9 @@
 using System.Security.Cryptography;
+using System.Data.Common;
+using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using QuillSign.Data;
 using QuillSign.Lifecycle;
 
@@ -128,12 +131,12 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
         else
         {
             scope = await run.Gate().BeginAsync(run.Id, op, "work/0", run.Work.ToString("N"));
-            await run.Edit("Verified committed operation outcome"); run.Store.LostAck = true;
+            await run.EditWithOutcome(scope, "Verified committed operation outcome"); run.Store.LostAck = true;
             await Assert.ThrowsAsync<IOException>(() => run.Gate().CompleteAsync(scope, Receipt));
             var bytes = run.Store.Rows[^1].ProtectedPayload.ToArray(); run.Clock.Now = run.Clock.Now.AddMinutes(1);
             var resumed = await run.Gate().ResumeAsync(run.Id, op, "work/0", run.Work.ToString("N"));
             Assert.Equal(scope, resumed); Assert.Equal(Receipt, (await run.Gate().CompleteAsync(resumed, Receipt)).SettledOperations[op]);
-            Assert.Equal(bytes, run.Store.Rows[^1].ProtectedPayload); Assert.Equal(3, run.Store.Rows.Count);
+            Assert.Equal(bytes, run.Store.Rows[^1].ProtectedPayload); Assert.Equal(4, run.Store.Rows.Count);
             await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandAsync(resumed));
             await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().CompleteAsync(resumed, new string('a', 64)));
         }
@@ -163,8 +166,9 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
         await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandAsync(scope with { Reference = "foreign-reference" }));
         await Assert.ThrowsAsync<InvalidDataException>(() => run.Journal().AcceptSqlAsync(command, new(command.CommandId, 1,
             new(1, Receipt, [new(command.HoldId, command.CommandId, null, ProductionHoldPendingState.PreservationPending)])), Receipt, Guid.NewGuid()));
-        await run.Edit("Own admitted SQL edit may differ during its operation"); run.Clock.Now = run.Clock.Now.AddDays(2);
+        run.Clock.Now = run.Clock.Now.AddDays(2);
         await run.Gate().DemandAsync(scope); Assert.Equal(scope.OperationId, (await run.Journal().ReadAsync(run.Id)).OutstandingOperation);
+        await run.EditWithOutcome(scope, "Own admitted SQL edit may differ during its operation");
         var done = await run.Gate().CompleteAsync(scope, Receipt);
         Assert.Null(done.OutstandingOperation); Assert.Equal(command, done.Unacknowledged); Assert.True(done.Frozen);
         await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandAsync(scope));
@@ -182,6 +186,7 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
             _ = await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={run.Work}").SingleAsync();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)); await run.Gate().DemandAsync(scope, timeout.Token);
             await db.WorkItems.Where(x => x.Id == run.Work).ExecuteUpdateAsync(x => x.SetProperty(w => w.Status, WorkStatus.Completed));
+            await run.Gate().PrepareOutcomeLockedAsync(db, scope);
             await tx.CommitAsync();
         }
         var done = await run.Gate().CompleteAsync(scope, Receipt); Assert.Equal(Receipt, done.SettledOperations[scope.OperationId]);
@@ -229,7 +234,7 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
             await tx.RollbackAsync();
         }
         Assert.Equal(scope.OperationId, (await run.Journal().ReadAsync(run.Id)).OutstandingOperation); await run.Gate().DemandAsync(scope);
-        await run.Edit("Committed verified outcome"); await run.Gate().CompleteAsync(scope, Receipt);
+        await run.EditWithOutcome(scope, "Committed verified outcome"); await run.Gate().CompleteAsync(scope, Receipt);
         await run.Edit(null); // Simulated older restored business value; even a new SQL rowversion cannot pass the saved content binding.
         await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "next-reference"));
         Assert.Null((await run.Journal().ReadAsync(run.Id)).OutstandingOperation);
@@ -294,6 +299,164 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
         Assert.Single(run.Store.Rows);
     }
 
+    [Fact]
+    public async Task Fresh_changed_SQL_without_precommit_outcome_is_never_adopted_as_a_new_baseline()
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
+        var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "unprepared-outcome");
+        await run.Edit("Unexpected committed state without sealed precommit outcome");
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().CompleteAsync(scope, Receipt));
+        var state = await run.Journal().ReadAsync(run.Id); Assert.Equal(scope.OperationId, state.OutstandingOperation);
+        Assert.Empty(state.Outcomes!); Assert.Empty(state.SettledOperations); Assert.Equal(scope.SqlStateSha256, state.SqlStateSha256);
+    }
+
+    [Fact]
+    public async Task Exact_original_SQL_noop_is_sealed_once_and_cannot_grant_further_mutation_authority()
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
+        var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "known-noop");
+        var state = await run.Gate().CompleteAsync(scope, Receipt); var outcome = state.Outcomes![scope.OperationId];
+        Assert.Equal(scope.ContentSha256, outcome.ContentSha256); Assert.Equal(scope.SqlStateSha256, outcome.SqlStateSha256);
+        Assert.Equal(4, state.Sequence); Assert.Null(state.OutstandingOperation);
+        Assert.Equal(state.HeadHash, (await run.Gate().CompleteAsync(scope, Receipt)).HeadHash);
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandAsync(scope));
+    }
+
+    [Fact]
+    public async Task Lost_outcome_publication_acknowledgement_replays_only_exact_original_outcome_and_seals_provider_authority()
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
+        var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "lost-outcome-ack");
+        await using (var db = fixture.Open())
+        {
+            await using var tx = await db.Database.BeginTransactionAsync();
+            await db.Envelopes.Where(x => x.Id == run.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.Message, "Exact precommit outcome"));
+            run.Store.LostAck = true;
+            await Assert.ThrowsAsync<IOException>(() => run.Gate().PrepareOutcomeLockedAsync(db, scope));
+            var bytes = run.Store.Rows[^1].ProtectedPayload.ToArray();
+            Assert.Equal(scope, await run.Gate().ResumeAsync(run.Id, scope.OperationId, scope.Kind, scope.Reference));
+            await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandLockedAsync(db, scope));
+            await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandStartingLockedAsync(db, scope));
+            await run.Gate().PrepareOutcomeLockedAsync(db, scope); Assert.Equal(bytes, run.Store.Rows[^1].ProtectedPayload);
+            Assert.Equal(3, run.Store.Rows.Count); await tx.CommitAsync();
+        }
+        Assert.Equal(Receipt, (await run.Gate().CompleteAsync(scope, Receipt)).SettledOperations[scope.OperationId]);
+    }
+
+    [Fact]
+    public async Task Sealed_SQL_outcome_that_rolled_back_remains_quarantined_even_when_original_SQL_is_restored()
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
+        var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "rollback-after-outcome");
+        await using (var db = fixture.Open())
+        {
+            await using var tx = await db.Database.BeginTransactionAsync();
+            await db.Envelopes.Where(x => x.Id == run.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.Message, "Expected but rolled back"));
+            await run.Gate().PrepareOutcomeLockedAsync(db, scope); await tx.RollbackAsync();
+        }
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().CompleteAsync(scope, Receipt));
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandAsync(scope));
+        Assert.Equal(scope, await run.Gate().ResumeAsync(run.Id, scope.OperationId, scope.Kind, scope.Reference));
+        var state = await run.Journal().ReadAsync(run.Id); Assert.Single(state.Outcomes!); Assert.Empty(state.SettledOperations);
+    }
+
+    [Fact]
+    public async Task Lost_SQL_commit_acknowledgement_can_only_complete_by_exact_sealed_outcome_readback()
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
+        var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "lost-sql-commit-ack");
+        string connection; await using (var source = fixture.Open()) connection = source.Database.GetConnectionString()!;
+        await using (var db = new QuillSignDbContext(new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer(connection).AddInterceptors(new LostSqlCommit()).Options))
+        {
+            await using var tx = await db.Database.BeginTransactionAsync();
+            await db.Envelopes.Where(x => x.Id == run.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.Message, "Committed despite lost acknowledgement"));
+            await run.Gate().PrepareOutcomeLockedAsync(db, scope);
+            await Assert.ThrowsAsync<IOException>(() => tx.CommitAsync());
+        }
+        Assert.Equal(scope, await run.Gate().ResumeAsync(run.Id, scope.OperationId, scope.Kind, scope.Reference));
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandAsync(scope));
+        Assert.Equal(Receipt, (await run.Gate().CompleteAsync(scope, Receipt)).SettledOperations[scope.OperationId]);
+    }
+
+    private sealed class LostSqlCommit : DbTransactionInterceptor
+    {
+        public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData data, CancellationToken ct = default)
+            => throw new IOException("Synthetic lost SQL outcome commit acknowledgement");
+    }
+
+    [Fact]
+    public async Task Typed_journal_settlement_cannot_bypass_missing_or_different_sealed_outcome()
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
+        var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "direct-settlement");
+        var state = await run.Journal().ReadAsync(run.Id); var operation = state.Operations![scope.OperationId];
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Journal().SettleOperationAsync(run.Id, operation, Receipt,
+            scope.ContentSha256, scope.SqlStateSha256, Guid.NewGuid()));
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Journal().SettleAsync(run.Id, scope.OperationId, Receipt, scope.ContentSha256, Guid.NewGuid()));
+        await run.EditWithOutcome(scope, "Verified exact outcome"); state = await run.Journal().ReadAsync(run.Id);
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Journal().SettleOperationAsync(run.Id, operation, Receipt,
+            scope.ContentSha256, scope.SqlStateSha256, Guid.NewGuid()));
+        Assert.Equal(state.HeadHash, (await run.Journal().ReadAsync(run.Id)).HeadHash);
+    }
+
+    [Fact]
+    public async Task Outcome_prepare_requires_clean_owned_transaction_and_rejects_changed_replay()
+    {
+        var run = await Run.Create(fixture); await run.Gate().InitializeAsync(run.Id);
+        var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "exact-outcome");
+        await using var db = fixture.Open(); await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().PrepareOutcomeLockedAsync(db, scope));
+        await using var tx = await db.Database.BeginTransactionAsync(); var row = await db.Envelopes.SingleAsync(x => x.Id == run.Id); row.Message = "Not saved";
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().PrepareOutcomeLockedAsync(db, scope));
+        await db.SaveChangesAsync(); await run.Gate().PrepareOutcomeLockedAsync(db, scope);
+        row.Message = "Different after seal"; await db.SaveChangesAsync();
+        await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().PrepareOutcomeLockedAsync(db, scope));
+        await tx.RollbackAsync(); Assert.Equal(3, run.Store.Rows.Count);
+    }
+
+    [Fact]
+    public async Task Actual_whole_database_restore_after_precommit_outcome_and_commit_cannot_become_trusted_completion()
+    {
+        // A dedicated fixture prevents this destructive synthetic restore from
+        // touching other tests' databases or any shared application database.
+        var isolated = new SqlDatabaseFixture(); await isolated.InitializeAsync(); string? backup = null;
+        try
+        {
+            var run = await Run.Create(isolated); await run.Gate().InitializeAsync(run.Id);
+            var scope = await run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "actual-whole-db-restore");
+            string connection;
+            await using (var db = isolated.Open()) connection = db.Database.GetConnectionString()!;
+            var builder = new SqlConnectionStringBuilder(connection); var name = builder.InitialCatalog;
+            Assert.Matches("^QuillSignTests_[a-f0-9]{32}$", name); builder.InitialCatalog = "master"; builder.Pooling = false;
+            await using (var master = new SqlConnection(builder.ConnectionString))
+            {
+                await master.OpenAsync(); await using var command = master.CreateCommand(); command.CommandTimeout = 120;
+                command.CommandText = "SELECT CONVERT(nvarchar(4000),SERVERPROPERTY('InstanceDefaultBackupPath'))";
+                var directory = Assert.IsType<string>(await command.ExecuteScalarAsync());
+                Assert.False(string.IsNullOrWhiteSpace(directory));
+                backup = directory.TrimEnd('\\', '/') + (directory.Contains('\\') ? "\\" : "/") + name + "-outcome.bak";
+                command.CommandText = $"BACKUP DATABASE [{name}] TO DISK=@backup WITH COPY_ONLY, INIT";
+                command.Parameters.AddWithValue("@backup", backup); await command.ExecuteNonQueryAsync();
+                await run.EditWithOutcome(scope, "Committed outcome newer than backup");
+                var expected = (await run.Journal().ReadAsync(run.Id)).Outcomes![scope.OperationId];
+                command.CommandText = $"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; RESTORE DATABASE [{name}] FROM DISK=@backup WITH REPLACE; ALTER DATABASE [{name}] SET MULTI_USER";
+                await command.ExecuteNonQueryAsync();
+                using (var pooled = new SqlConnection(connection)) SqlConnection.ClearPool(pooled);
+                await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().CompleteAsync(scope, Receipt));
+                var state = await run.Journal().ReadAsync(run.Id); Assert.Equal(expected, state.Outcomes![scope.OperationId]);
+                Assert.Equal(scope.OperationId, state.OutstandingOperation); Assert.Empty(state.SettledOperations);
+                await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().DemandAsync(scope));
+                await Assert.ThrowsAsync<InvalidDataException>(() => run.Gate().BeginAsync(run.Id, Guid.NewGuid(), "sender/edit", "after-restore"));
+            }
+        }
+        finally
+        {
+            await isolated.DisposeAsync();
+            // The SQL service may reside in a separate disposable CI container;
+            // remove this exact backup only when it is locally accessible.
+            if (backup is not null && File.Exists(backup)) File.Delete(backup);
+        }
+    }
+
     private sealed class Run(SqlDatabaseFixture fixture)
     {
         internal readonly IDataProtectionProvider Keys = new EphemeralDataProtectionProvider();
@@ -314,6 +477,12 @@ public sealed class ProductionRecordOperationAdmissionTests(SqlDatabaseFixture f
         }
         internal async Task Edit(string? value)
         { await using var db = fixture.Open(); await db.Envelopes.Where(x => x.Id == Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.Message, value)); }
+        internal async Task EditWithOutcome(ProductionRecordOperation scope, string? value)
+        {
+            await using var db = fixture.Open(); await using var tx = await db.Database.BeginTransactionAsync();
+            await db.Envelopes.Where(x => x.Id == Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.Message, value));
+            await Gate().PrepareOutcomeLockedAsync(db, scope); await tx.CommitAsync();
+        }
     }
     private sealed class EmptySources : IProductionHoldObjectSource
     {
