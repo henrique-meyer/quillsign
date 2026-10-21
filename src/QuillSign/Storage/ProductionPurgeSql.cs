@@ -13,7 +13,7 @@ namespace QuillSign.Storage;
 internal static class ProductionPurgeSql
 {
     internal static readonly IReadOnlyList<string> Tables=Array.AsReadOnly(new[] {
-        "AuthTokens","AuditEvents","CompletionCandidates","CompletionPublicationIntents","CompletionPublicationResults",
+        "AuditEvents","AuthTokens","CompletionCandidates","CompletionPublicationIntents","CompletionPublicationResults",
         "CompletionSealOutputs","DocumentRetentionSnapshots","EmailOutbox","Envelopes","Fields","LookupContactRetentionSnapshots",
         "ProductionHoldControls","ProductionHoldRequests","ProductionRetentionPolicies","ProductionRetentionTerminals","Recipients",
         "SignaturePreviews","SignerContactRevisions","SignerContactSessions","SignerFinishAcceptances","SignerReviewCandidates","Signers","WorkItems" });
