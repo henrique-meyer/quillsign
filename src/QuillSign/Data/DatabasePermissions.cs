@@ -70,6 +70,24 @@ public static class DatabasePermissions
         await command.ExecuteNonQueryAsync();
     }
 
+    // Explicit worker-only opt-in; never part of migration or ordinary startup.
+    public static async Task GrantProductionPurgeAsync(SqlConnection connection)
+    {
+        await using var command=connection.CreateCommand();
+        command.CommandText="""
+            IF DATABASE_PRINCIPAL_ID(N'app_worker') IS NULL OR OBJECT_ID(N'dbo.RemoveExpiredProductionPrivateRecords',N'P') IS NULL
+                THROW 50001,'Provision the worker and production cleanup migration first.',1;
+            IF DATABASE_PRINCIPAL_ID(N'app_production_purge_role') IS NULL CREATE ROLE [app_production_purge_role] AUTHORIZATION [dbo];
+            IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name=N'app_production_purge_role' AND type='R' AND owning_principal_id=DATABASE_PRINCIPAL_ID(N'dbo'))
+                THROW 50001,'Production cleanup role ownership or type differs.',1;
+            IF EXISTS(SELECT 1 FROM sys.database_role_members WHERE role_principal_id=DATABASE_PRINCIPAL_ID(N'app_production_purge_role') AND member_principal_id<>DATABASE_PRINCIPAL_ID(N'app_worker'))
+                THROW 50001,'Only the worker may belong to the production cleanup role.',1;
+            GRANT EXECUTE ON OBJECT::[dbo].[RemoveExpiredProductionPrivateRecords] TO [app_production_purge_role];
+            ALTER ROLE [app_production_purge_role] ADD MEMBER [app_worker];
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
     // A separate administrator provisions these contained users. Client IDs are used
     // for service principals/managed identities; no Graph directory grants are needed.
     public static async Task ProvisionIdentitiesAsync(SqlConnection connection, Guid runtimeClientId, Guid migrationClientId)
