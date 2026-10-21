@@ -17,6 +17,9 @@ public sealed class EmailPilotWorkScope
         string? emailRecipient)
     {RunId=run.RunId;EnvelopeId=enrollment.SubjectEnvelopeId;Until=run.ExpiresAt<lease.Until?run.ExpiresAt:lease.Until;
         Lease=lease;SourceHash=sourceHash;Mailboxes=run.Mailboxes;EmailRecipient=emailRecipient;RunExpiresAt=run.ExpiresAt;}
+    internal EmailPilotWorkScope(EmailPilotCloseoutWorkScope value)
+    {RunId=value.AuthorizationId;EnvelopeId=value.RecordId;Until=value.Until;RunExpiresAt=value.CloseoutUntil;Lease=value.Lease;SourceHash=value.SourceSha256;Mailboxes=value.Mailboxes;EmailRecipient=value.Recipient;IsCloseout=true;}
+    internal bool IsCloseout {get;}
     public Guid RunId {get;}
     public Guid EnvelopeId {get;}
     public DateTimeOffset Until {get;}
@@ -25,7 +28,7 @@ public sealed class EmailPilotWorkScope
     internal string SourceHash {get;}
     private EmailPilotMailboxes Mailboxes {get;}
     private string? EmailRecipient {get;}
-    public bool AllowsTimestamp=>Lease.Kind==WorkKind.Sealing;
+    public bool AllowsTimestamp=>!IsCloseout && Lease.Kind==WorkKind.Sealing;
     public EmailPilotRole MailRole(string recipient)
     {
         if(Lease.Kind!=WorkKind.Email || recipient!=EmailRecipient)return EmailPilotRole.None;
@@ -38,8 +41,10 @@ public sealed class EmailPilotWorkScope
 public sealed class EmailPilotWorkAuthority(EmailPilotOptions options,EmailOptions email,WorkOptions work,EmailPilotAdmissionOptions admission,Func<EmailPilotLedger> getLedger,
     Func<QuillSignDbContext> database,Func<EmailPayloadProtection> getPayloadProtection,TimeProvider time)
 {
+    internal Func<EmailPilotCloseout>? Closeout {get;init;}
     public async Task<EmailPilotWorkScope?> ReadAsync(WorkLease lease,CancellationToken ct=default)
     {
+        if(Closeout is not null && await Closeout().ReadWorkAsync(lease,ct) is {} selected)return new(selected);
         if(!options.Enabled || email.Enabled || !work.Enabled || !EmailPilotCanonical.Hash(admission.CapabilitySha256) || !Shape(lease))return null;
         var db=database();
         // Read one nominated row only. No discovery/polling or caller envelope ID.

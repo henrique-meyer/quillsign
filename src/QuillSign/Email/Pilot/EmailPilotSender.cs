@@ -22,9 +22,12 @@ public sealed class EmailPilotSender(EmailPilotOptions options, EmailOptions ema
     Func<EmailPilotWorkAuthority> authority, Func<EmailPilotLedger> ledger, Func<QuillSignDbContext> database,
     Func<EmailPilotSesSettings, IPreparedEmailTransport> transport, TimeProvider time)
 {
+    internal Func<EmailPilotCloseoutSender>? CloseoutSender {get;init;}
+    internal Func<EmailPilotCloseout>? Closeout {get;init;}
     public async Task<EmailDelivery> SendAsync(WorkLease lease, OutgoingEmail message, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        if(Closeout is not null && await Closeout().ReadWorkAsync(lease,ct) is not null)return await (CloseoutSender?.Invoke()??throw new EmailPilotTransportRefusedException()).SendAsync(lease,message,ct);
         var settings = Settings();
         if (settings is null || lease is null || lease.Kind != WorkKind.Email) throw new EmailPilotTransportRefusedException();
         var verifier = authority();

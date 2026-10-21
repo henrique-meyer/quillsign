@@ -11,14 +11,15 @@ namespace QuillSign.Email.Pilot;
 public sealed class EmailPilotEnvelopeCohort
 {
     internal EmailPilotEnvelopeCohort(Guid envelopeId, Guid? runId, EmailPilotManifest? manifest = null,
-        EmailPilotEnrollment? enrollment = null, bool allowed = false, bool envelopeExists = true)
-    { EnvelopeId=envelopeId; RunId=runId; Manifest=manifest; Enrollment=enrollment; Allowed=allowed; EnvelopeExists=envelopeExists; }
+        EmailPilotEnrollment? enrollment = null, bool allowed = false, bool envelopeExists = true, EmailPilotCloseoutSnapshot? closeout = null)
+    { EnvelopeId=envelopeId; RunId=runId; Manifest=manifest; Enrollment=enrollment; Allowed=allowed; EnvelopeExists=envelopeExists; Closeout=closeout; }
     public Guid EnvelopeId {get;}
     public bool EnvelopeExists {get;}
     public Guid? RunId {get;}
     public bool IsEnrolled=>RunId is not null;
     public bool Allowed {get;}
-    public DateTimeOffset? RunExpiresAt=>Manifest?.ExpiresAt;
+    public DateTimeOffset? RunExpiresAt=>Closeout?.Until??Manifest?.ExpiresAt;
+    internal EmailPilotCloseoutSnapshot? Closeout {get;}
     public EmailPilotScenario? Scenario=>Enrollment?.Scenario;
     internal EmailPilotManifest? Manifest {get;}
     internal EmailPilotEnrollment? Enrollment {get;}
@@ -28,6 +29,8 @@ public sealed class EmailPilotEnvelopeCohort
 public sealed class EmailPilotEnvelopeAccess(Func<QuillSignDbContext> database, Func<EmailPilotLedger> ledger,
     Func<EmailPayloadProtection> payloads, EmailPilotAdmissionOptions admission, WorkOptions work)
 {
+    internal Func<EmailPilotCloseout>? Closeout { get; init; }
+    private bool Live(EmailPilotEnvelopeCohort value)=>value.Closeout is {} c ? Closeout?.Invoke().Available==true && c.Until>Closeout().Now : ledger().EnvelopeCohortLive(value.Manifest!,admission,work);
     public async Task<EmailPilotEnvelopeCohort> ReadAsync(Guid envelopeId,CancellationToken ct=default)
     {
         var db=database();
@@ -39,12 +42,15 @@ public sealed class EmailPilotEnvelopeAccess(Func<QuillSignDbContext> database, 
             result=await ReadLockedAsync(new(){Id=envelopeId},ct);
             await transaction.CommitAsync(ct);
         }
-        return result.Allowed && !ledger().EnvelopeCohortLive(result.Manifest!,admission,work) ? result.Denied() : result;
+        return result.Allowed && !Live(result) ? result.Denied() : result;
     }
     // The caller already owns an envelope transaction. Do not open an isolated
     // ledger/reservation transaction or acquire the run lock beneath this lock.
-    public Task<EmailPilotEnvelopeCohort> ReadLockedAsync(Envelope envelope,CancellationToken ct=default)
-        =>ledger().ReadEnvelopeCohortLockedAsync(database(),envelope.Id,payloads,admission,work,ct);
+    public async Task<EmailPilotEnvelopeCohort> ReadLockedAsync(Envelope envelope,CancellationToken ct=default)
+    {
+        if(Closeout is not null && await Closeout().ReadEnvelopeLockedAsync(database(),envelope.Id,payloads,ct) is {} selected)return selected;
+        return await ledger().ReadEnvelopeCohortLockedAsync(database(),envelope.Id,payloads,admission,work,ct);
+    }
 
     public async Task<EmailPilotEnvelopeCohort> RequireSendRosterLockedAsync(Envelope envelope,CancellationToken ct=default)
     {
@@ -60,7 +66,7 @@ public sealed class EmailPilotEnvelopeAccess(Func<QuillSignDbContext> database, 
             count==2 && (signers[1].Order!=2 || signers[1].Email!=manifest.Mailboxes.SecondSigner) ||
             recipients.Length!=(count==2?1:0) || recipients.Any(x=>x.Email!=manifest.Mailboxes.Recipient) ||
             await db.SignerContactRevisions.AnyAsync(x=>x.EnvelopeId==envelope.Id,ct) ||
-            !ledger().EnvelopeCohortLive(manifest,admission,work))throw new EmailDisabledException();
+            !Live(cohort))throw new EmailDisabledException();
         return cohort;
     }
 }
