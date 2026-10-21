@@ -47,6 +47,7 @@ internal static class ProductionHoldDecisionNotificationReferences
             {
                 var payload = new EmailPayloadProtection(keys).Unprotect(row.PayloadJson);
                 Canonical(payload, "QuillSign.EmailPayload.v1", wrapper, keys);
+                if(payload.DemoOrigin is {} origin && !ProductionDemoOrigin.Matches(origin,envelope))throw Invalid();
                 if (payload.TokenId == Guid.Empty || payload.Token is not { Length: 43 }) throw Invalid();
                 var decoded = WebEncoders.Base64UrlDecode(payload.Token);
                 try { if (decoded.Length != 32 || WebEncoders.Base64UrlEncode(decoded) != payload.Token) throw Invalid(); }

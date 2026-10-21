@@ -44,6 +44,12 @@ Integrity metadata: src/QuillSign/Build/signature-pad.manifest.json.
 These notices describe the bundled browser/PDF components. Other .NET dependencies
 retain the licenses recorded in their NuGet packages; QuillSign's own license is in LICENSE.
 
+Microsoft.AspNetCore.Authentication.OpenIdConnect 10.0.13 — MIT
+Copyright .NET Foundation and contributors.
+Source: https://github.com/dotnet/aspnetcore
+The dedicated private operator flow uses the standard signed-token/OIDC middleware.
+Its Microsoft.IdentityModel dependencies retain their NuGet-package MIT notices.
+
 StbImageSharp 2.30.16 — MIT option (Unlicense OR MIT)
 Source: https://github.com/StbSharp/StbImageSharp/tree/125af70cb557033f2c46aec8e82eaaf72ac49817
 The managed C# port has no native dependency. QuillSign selects its MIT option.

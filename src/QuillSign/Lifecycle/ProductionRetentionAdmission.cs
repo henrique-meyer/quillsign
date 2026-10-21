@@ -17,8 +17,10 @@ internal sealed record RecordAdmissionPlan(Envelope Envelope, ProductionRetentio
 
 // Internal creation boundary, not participant verification, delivery or migration.
 // The normal request workflow must own its transaction and subsequent audit/outbox.
-internal sealed class ProductionRetentionAdmission(QuillSignDbContext db, AuditWriter audit, TimeProvider time)
+internal sealed class ProductionRetentionAdmission(QuillSignDbContext db, AuditWriter audit, TimeProvider time,
+    ProductionRecordOperationAdmission? holds = null)
 {
+    internal DemoCreationOrigin? OriginalDemoOrigin { get; private set; }
     internal static RecordAdmissionPlan Prepare(string address, DateTimeOffset now, RecordLifecycleOptions options,
         ElectronicRecordOptions disclosure)
     {
@@ -44,7 +46,10 @@ internal sealed class ProductionRetentionAdmission(QuillSignDbContext db, AuditW
         if (db.Database.CurrentTransaction is null) throw new InvalidOperationException("Record admission requires its request transaction.");
         var plan = Prepare(address, time.GetUtcNow(), options, disclosure);
         db.Envelopes.Add(plan.Envelope);
-        if (plan.Policy is null) await db.SaveChangesAsync(ct);
+        if (plan.Policy is null) {
+            if (holds?.AuthenticatedDemoOrigin == true) OriginalDemoOrigin = ProductionDemoOrigin.CaptureNew(db, plan.Envelope, time);
+            await db.SaveChangesAsync(ct);
+        }
         else await new ProductionRetentionLedger(db, audit, time).PrepareNewLockedAsync(plan.Envelope, plan.Policy, ct);
         return plan.Envelope;
     }

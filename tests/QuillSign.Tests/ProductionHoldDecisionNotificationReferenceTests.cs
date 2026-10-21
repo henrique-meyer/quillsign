@@ -12,6 +12,14 @@ namespace QuillSign.Tests;
 
 public sealed class ProductionHoldDecisionNotificationReferenceTests
 {
+    [Fact]
+    public void Production_verification_cannot_adopt_a_reprotected_demo_origin_fact()
+    {
+        var f=new Frame(false);
+        f.Verification=f.Verification with{DemoOrigin=new(ProductionDemoOrigin.Version,f.Envelope.Id,f.Envelope.PublicId,
+            f.Envelope.SenderEmail,f.Envelope.CreatedAt,true)};f.Protect();
+        using var sql=f.Sql();Assert.Throws<InvalidDataException>(()=>f.Demand(sql));
+    }
     [Theory]
     [InlineData(false)][InlineData(true)]
     public void Queued_verification_precedes_token_issuance_and_expired_used_issued_evidence_remains_readable(bool issued)

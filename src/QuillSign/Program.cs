@@ -9,6 +9,7 @@ using QuillSign.Signing;
 using QuillSign.Sealing;
 using QuillSign.Completion;
 using QuillSign.Verification;
+using QuillSign.Operator;
 
 if (args.Length > 0 && args[0] == "staging")
 {
@@ -66,8 +67,10 @@ builder.Services.AddCompletionReaderBrowser(builder.Environment);
 builder.Services.AddDocumentLookupBrowser(builder.Environment);
 builder.Services.AddPdfVerificationBrowser(builder.Configuration);
 builder.Services.AddRestrictedEmailPilotRuntime(builder.Configuration);
+builder.Services.AddProductionOperator(builder.Configuration);
 var app = builder.Build();
 app.UseForwardedHeaders();
+app.UseProductionOperatorPrivacy();
 
 app.Use(async (context, next) =>
 {
@@ -93,7 +96,7 @@ app.UseRateLimiter();
 app.UseMiddleware<VerificationUploadBoundary>();
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
+app.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy).WithProductionOperatorRateLimit();
 app.MapSesFeedback();
 app.MapFieldEditor();
 // Liveness must never wake the serverless database or call an external service.
