@@ -111,14 +111,17 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         if (admission is not null)
         {
             recordId = await db.WorkItems.AsNoTracking().Where(x => x.Id == lease.Id).Select(x => x.EnvelopeId).SingleAsync(cancellationToken);
-            await admission.DemandAsync(lease.Id, recordId, lease.Kind, lease.Owner, lease.Attempt, cancellationToken);
+            if (result.Outcome != WorkOutcome.Completed)
+                await admission.DemandAsync(lease.Id, recordId, lease.Kind, lease.Owner, lease.Attempt, cancellationToken);
         }
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         if (admission is not null)
         {
             _ = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {recordId}")
                 .AsNoTracking().SingleOrDefaultAsync(cancellationToken) ?? throw new ProductionWorkBlockedException();
-            await admission.DemandLockedAsync(db, lease.Id, recordId, lease.Kind, lease.Owner, lease.Attempt, false, cancellationToken);
+            if (result.Outcome == WorkOutcome.Completed)
+                await admission.DemandHandlerOutcomeLockedAsync(db, lease, recordId, cancellationToken);
+            else await admission.DemandLockedAsync(db, lease.Id, recordId, lease.Kind, lease.Owner, lease.Attempt, false, cancellationToken);
         }
         var now = time.GetUtcNow();
         var retry = result.Outcome == WorkOutcome.Retry && (lease.Kind==WorkKind.Purge || lease.Attempt < options.MaximumAttempts);
@@ -133,6 +136,11 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         if (lease.Kind == WorkKind.Email && status == WorkStatus.Failed)
             await db.EmailOutbox.Where(x => x.Id == lease.Id && x.Status == EmailStatus.Queued)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, EmailStatus.Failed).SetProperty(x => x.LastError, code), cancellationToken);
+        if (admission is not null && result.Outcome == WorkOutcome.Completed)
+        {
+            await admission.PrepareOutcomeLockedAsync(db, lease, recordId, cancellationToken);
+            if (lease.Until <= time.GetUtcNow()) throw new InvalidOperationException("Work lease is no longer owned.");
+        }
         await transaction.CommitAsync(cancellationToken);
         if (admission is not null && result.Outcome == WorkOutcome.Completed)
             await admission.CompleteAsync(lease, recordId, cancellationToken);

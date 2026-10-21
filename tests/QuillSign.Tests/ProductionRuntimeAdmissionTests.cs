@@ -85,6 +85,73 @@ public sealed class ProductionRuntimeAdmissionTests(SqlDatabaseFixture fixture) 
     }
 
     [Fact]
+    public async Task Unimplemented_production_work_kinds_and_mail_templates_are_refused_before_claim_not_after_provider_effects()
+    {
+        foreach (var changeKind in new[] { true, false })
+        {
+            await using var run = await Run.Create(fixture);
+            var setup = await run.Admission.BeginAsync(run.Id, Guid.NewGuid(), "test/schedule", "synthetic-unimplemented-work");
+            await using (var seed = fixture.Open())
+            {
+                await using var tx = await seed.Database.BeginTransactionAsync();
+                if (changeKind) await seed.WorkItems.Where(x => x.Id == run.WorkId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Kind, WorkKind.Rendering));
+                else await seed.EmailOutbox.Where(x => x.Id == run.WorkId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Template, "future-unimplemented-template"));
+                await run.Admission.PrepareOutcomeLockedAsync(seed, setup); await tx.CommitAsync();
+            }
+            await run.Admission.CompleteAsync(setup, Hash); var before = await run.Journal.ReadAsync(run.Id);
+            await using var db = fixture.Open(); var claim = await run.Store(db).ClaimAsync(run.WorkId, default);
+            Assert.Null(claim.Lease); Assert.NotNull(claim.RetryAt);
+            var work = await db.WorkItems.AsNoTracking().SingleAsync(x => x.Id == run.WorkId);
+            Assert.Equal(0, work.Attempts); Assert.Null(work.LeaseOwner); Assert.Equal(WorkStatus.Queued, work.Status);
+            Assert.Equal(before.HeadHash, (await run.Journal.ReadAsync(run.Id)).HeadHash); Assert.Equal(0, run.Captured.Calls);
+        }
+    }
+
+    [Fact]
+    public async Task Template_changed_after_claim_is_refused_before_dispatch_routing_or_token_issuance()
+    {
+        await using var run = await Run.Create(fixture); var lease = await run.Claim(); await using var db = fixture.Open();
+        await db.EmailOutbox.Where(x => x.Id == lease.Id).ExecuteUpdateAsync(s => s.SetProperty(x => x.Template, "completion-notification"));
+        await Assert.ThrowsAsync<ProductionWorkBlockedException>(() => run.Deliver(lease));
+        Assert.Equal(0, run.Captured.Calls); Assert.False(await db.AuthTokens.AnyAsync(x => x.EnvelopeId == run.Id));
+        Assert.Equal(lease.Owner, (await run.Journal.ReadAsync(run.Id)).OutstandingOperation);
+        Assert.Equal(WorkStatus.Leased, (await db.WorkItems.SingleAsync(x => x.Id == lease.Id)).Status);
+    }
+
+    [Fact]
+    public async Task Completed_result_without_a_sealed_handler_outcome_cannot_finish_or_relabel_queued_mail()
+    {
+        await using var run = await Run.Create(fixture); var lease = await run.Claim(); await using var db = fixture.Open();
+        await Assert.ThrowsAsync<ProductionWorkBlockedException>(() => run.Store(db).FinishAsync(lease, new(WorkOutcome.Completed), CancellationToken.None));
+        var saved = await db.WorkItems.AsNoTracking().SingleAsync(x => x.Id == lease.Id);
+        Assert.Equal(WorkStatus.Leased, saved.Status); Assert.Equal(lease.Owner, saved.LeaseOwner);
+        Assert.Equal(lease.Owner, (await run.Journal.ReadAsync(run.Id)).OutstandingOperation); Assert.Equal(0, run.Captured.Calls);
+    }
+
+    [Fact]
+    public async Task Restoring_post_claim_email_and_token_rows_after_handler_commit_cannot_be_adopted_by_Finish()
+    {
+        await using var run = await Run.Create(fixture); var lease = await run.Claim();
+        await run.Deliver(lease); var checkpoint = (await run.Journal.ReadAsync(run.Id)).HandlerOutcomes![lease.Owner];
+        await using (var restore = fixture.Open())
+        {
+            await using var tx = await restore.Database.BeginTransactionAsync();
+            await restore.AuthTokens.Where(x => x.Id == run.Token.TokenId).ExecuteDeleteAsync();
+            await restore.EmailOutbox.Where(x => x.Id == run.WorkId).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, EmailStatus.Queued)
+                .SetProperty(x => x.Provider, (string?)null).SetProperty(x => x.ProviderMessageId, (string?)null)
+                .SetProperty(x => x.SubmissionStartedAt, (DateTimeOffset?)null).SetProperty(x => x.Attempts, 0));
+            await tx.CommitAsync();
+        }
+        await using var db = fixture.Open();
+        await Assert.ThrowsAsync<ProductionWorkBlockedException>(() => run.Store(db).FinishAsync(lease, new(WorkOutcome.Completed), CancellationToken.None));
+        var current = await run.Journal.ReadAsync(run.Id); Assert.Equal(checkpoint, current.HandlerOutcomes![lease.Owner]);
+        Assert.False(current.Outcomes!.ContainsKey(lease.Owner)); Assert.Equal(lease.Owner, current.OutstandingOperation);
+        Assert.Equal(WorkStatus.Leased, (await db.WorkItems.AsNoTracking().SingleAsync(x => x.Id == lease.Id)).Status);
+        run.Time.Now = lease.Until.AddSeconds(1); Assert.Null((await run.Store(db).ClaimAsync(run.WorkId, default)).Lease);
+        Assert.Equal(1, run.Captured.Calls);
+    }
+
+    [Fact]
     public async Task Lost_Finish_commit_acknowledgement_requires_exact_completed_readback_without_provider_replay()
     {
         await using var run = await Run.Create(fixture); var lease = await run.Claim(); await run.Deliver(lease);
@@ -168,6 +235,23 @@ public sealed class ProductionRuntimeAdmissionTests(SqlDatabaseFixture fixture) 
     }
 
     [Fact]
+    public async Task Opted_in_sender_cannot_flush_foreign_pending_SQL_changes_with_intake_or_verification()
+    {
+        await using var run = await Run.Create(fixture); await run.DeliverAndFinish(await run.Claim());
+        await using var db = fixture.Open(); var foreign = new Envelope { IsDemo = true, SenderEmail = "unrelated@example.invalid" };
+        db.Add(foreign); var state = await run.Journal.ReadAsync(run.Id);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => run.Sender(db).VerifyAsync(run.Token.Token, null, null));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => run.Sender(db).RequestAsync("another@example.invalid", null, null));
+        await using var readback = fixture.Open();
+        Assert.False(await readback.Envelopes.AnyAsync(x => x.Id == foreign.Id));
+        Assert.Null((await readback.AuthTokens.SingleAsync(x => x.Id == run.Token.TokenId)).UsedAt);
+        Assert.Equal(state.HeadHash, (await run.Journal.ReadAsync(run.Id)).HeadHash);
+        db.ChangeTracker.Clear(); await using var tx = await db.Database.BeginTransactionAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => run.Sender(db).VerifyAsync(run.Token.Token, null, null));
+        await tx.RollbackAsync(); Assert.Equal(state.HeadHash, (await run.Journal.ReadAsync(run.Id)).HeadHash);
+    }
+
+    [Fact]
     public async Task Foreign_lease_owner_cannot_finish_or_settle_the_original_operation()
     {
         await using var run = await Run.Create(fixture); var lease = await run.Claim();
@@ -187,7 +271,7 @@ public sealed class ProductionRuntimeAdmissionTests(SqlDatabaseFixture fixture) 
         public override Task TransactionCommittedAsync(System.Data.Common.DbTransaction transaction, TransactionEndEventData eventData, CancellationToken cancellationToken = default)
             => throw new IOException("Synthetic lost Finish commit acknowledgement");
     }
-    private sealed class CapturedSender : IEmailSender
+    internal sealed class CapturedSender : IEmailSender
     {
         internal int Calls;
         public Task<EmailDelivery> SendAsync(OutgoingEmail message, CancellationToken cancellationToken = default)
@@ -213,7 +297,7 @@ public sealed class ProductionRuntimeAdmissionTests(SqlDatabaseFixture fixture) 
             => Task.FromResult(new HoldObjectPage([], null));
         public Task<string> HashAsync(ProductionHoldObjectScope scope, HoldObjectAddress address, CancellationToken ct) => throw new InvalidOperationException();
     }
-    private sealed class Run : IAsyncDisposable
+    internal sealed class Run : IAsyncDisposable
     {
         private readonly SqlDatabaseFixture fixture; internal readonly IDataProtectionProvider Keys = new EphemeralDataProtectionProvider();
         internal readonly Clock Time = new(); internal readonly Store External = new(); internal readonly CapturedSender Captured = new();
@@ -262,7 +346,8 @@ public sealed class ProductionRuntimeAdmissionTests(SqlDatabaseFixture fixture) 
                 ContentRootPath = AppContext.BaseDirectory, EnvironmentName = "Development" });
             builder.Logging.ClearProviders(); builder.Services.AddRazorPages(); builder.Services.AddScoped<RazorEmailViews>();
             await using var app = builder.Build(); using var scope = app.Services.CreateScope(); await using var db = fixture.Open();
-            var handler = new EmailWorkHandler(db, email, new(Keys), new(email, scope.ServiceProvider.GetRequiredService<RazorEmailViews>()), Captured, Time);
+            var handler = new EmailWorkHandler(db, email, new(Keys), new(email, scope.ServiceProvider.GetRequiredService<RazorEmailViews>()), Captured, Time)
+                { HoldAdmission = new ProductionWorkAdmission(fixture.Open, Admission) };
             Assert.Equal(WorkOutcome.Completed, (await handler.ExecuteAsync(lease, CancellationToken.None)).Outcome);
         }
         internal async Task DeliverAndFinish(WorkLease lease)
@@ -274,7 +359,8 @@ public sealed class ProductionRuntimeAdmissionTests(SqlDatabaseFixture fixture) 
                 ContentRootPath = AppContext.BaseDirectory, EnvironmentName = "Development" });
             builder.Logging.ClearProviders(); builder.Services.AddRazorPages(); builder.Services.AddScoped<RazorEmailViews>();
             await using var app = builder.Build(); using var scope = app.Services.CreateScope(); await using var db = fixture.Open();
-            var handler = new EmailWorkHandler(db, email, new(Keys), new(email, scope.ServiceProvider.GetRequiredService<RazorEmailViews>()), Captured, Time);
+            var handler = new EmailWorkHandler(db, email, new(Keys), new(email, scope.ServiceProvider.GetRequiredService<RazorEmailViews>()), Captured, Time)
+                { HoldAdmission = new ProductionWorkAdmission(fixture.Open, Admission) };
             signals.WorkId = WorkId;
             return await new WorkProcessor(Store(db), signals, [handler], Time).RunOnceAsync(CancellationToken.None);
         }

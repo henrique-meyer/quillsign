@@ -5,12 +5,14 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Storage;
 using QuillSign.Work;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Documents;
 
 public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, PdfValidation pdf, DocumentOptions options,
     AuditWriter audit, TimeProvider time, ILogger<DocumentWorkflow> logger,DemoRetentionOptions? retentionOptions=null,DemoPurgeJobs? purgeJobs=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal ProductionSenderPreparationAdmission? HoldAdmission { get; init; }
     public static FileStream TemporaryFile() => new(Path.Combine(Path.GetTempPath(), "quillsign-" + Guid.NewGuid().ToString("N")),
         FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
 
@@ -186,13 +188,27 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
         bool matches, string? ip, string? userAgent, CancellationToken ct)
     {
         if (!matches) throw new DocumentRejectedException("Confirm that the preview matches your document.");
+        if (HoldAdmission is null) return await ConfirmCoreAsync(sender, publicId, expectedVersion, documentId, ip, userAgent, null, ct);
         var before = await DraftAsync(sender, publicId, false, ct);
+        if (before is null) return false;
+        Version(before, expectedVersion);
+        if (before.PdfBlob != documentId || !Guid.TryParseExact(documentId, "N", out _)) throw new DocumentConflictException();
+        return await HoldAdmission.ExecuteAsync(db, before.Id, before.SenderEmail, publicId, "sender/preview-confirm",
+            operation => ConfirmCoreAsync(sender, publicId, expectedVersion, documentId, ip, userAgent, operation, ct), false, false, ct);
+    }
+
+    private async Task<bool> ConfirmCoreAsync(ClaimsPrincipal sender, string publicId, byte[] expectedVersion, string documentId,
+        string? ip, string? userAgent, ProductionRecordOperation? operation, CancellationToken ct)
+    {
+        var before = await DraftAsync(sender, publicId, false, ct);
+        if (before is null && operation is not null) throw new DocumentConflictException();
         if (before is null) return false;
         Version(before, expectedVersion);
         await using var checkedFile = await ReadVerifiedAsync(sender, before, documentId, ct);
         if (checkedFile is null) throw new DocumentConflictException();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var envelope = await DraftAsync(sender, publicId, true, ct);
+        if (operation is not null) await HoldAdmission!.DemandStartingLockedAsync(db, operation, ct);
         if (envelope is null) return false;
         Version(envelope, expectedVersion);
         var retentionDeadline=await DocumentRetentionAccess.ReadAsync(db,envelope,time,ct,pilotBounds);
@@ -204,6 +220,11 @@ public sealed class DocumentWorkflow(QuillSignDbContext db, IBlobStore storage, 
         await audit.AppendAsync(envelope.Id, "preview_confirmed", envelope.SenderEmail, ip, userAgent, ct,
             JsonSerializer.Serialize(new { document = documentId, pdfSha256 = Convert.ToHexStringLower(envelope.PdfSha256) }));
         DocumentRetentionAccess.Check(retentionDeadline,time);
+        if (operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db, operation, ct);
+            DocumentRetentionAccess.Check(retentionDeadline,time);
+        }
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
         return true;
     }

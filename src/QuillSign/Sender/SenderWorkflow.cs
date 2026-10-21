@@ -39,6 +39,7 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
 
     public async Task<SenderRequestOutcome> RequestAsync(string address, string? ip, string? userAgent, CancellationToken cancellationToken = default)
     {
+        DemandStandaloneCaller();
         var email = EmailAddress.Normalize(address);
         if (!availability.CanSend) return SenderRequestOutcome.Unavailable;
         if(lifecycle is not null) {
@@ -83,6 +84,7 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
 
     public async Task<VerifiedSender?> VerifyAsync(string? rawToken, string? ip, string? userAgent, CancellationToken cancellationToken = default)
     {
+        DemandStandaloneCaller();
         if (rawToken is null || !Regex.IsMatch(rawToken, "^[A-Za-z0-9_-]{43}$", RegexOptions.CultureInvariant)) return null;
         if (HoldAdmission is null) return await VerifyCoreAsync(rawToken, ip, userAgent, cancellationToken);
         var tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(rawToken));
@@ -151,7 +153,19 @@ public sealed class SenderWorkflow(QuillSignDbContext db, SenderOptions options,
             accessEnd=Email.Pilot.EmailPilotReadBounds.Earlier(accessEnd,current);
             if(accessEnd<=time.GetUtcNow())return null;
         }
+        if (operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db, operation, cancellationToken);
+            DocumentRetentionAccess.Check(accessEnd, time);
+            if (token.ExpiresAt <= time.GetUtcNow()) throw new DocumentConflictException();
+        }
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,cancellationToken);
         return accessEnd<=time.GetUtcNow() ? null : new(envelope.Id, envelope.PublicId, token.Email,accessEnd);
+    }
+
+    private void DemandStandaloneCaller()
+    {
+        if (HoldAdmission is not null && (db.Database.CurrentTransaction is not null || db.ChangeTracker.HasChanges()))
+            throw new InvalidOperationException("Production sender admission requires a clean standalone context.");
     }
 }

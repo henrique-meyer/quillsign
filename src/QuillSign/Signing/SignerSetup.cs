@@ -146,6 +146,11 @@ public sealed class SignerSetup(QuillSignDbContext db, AuditWriter audit, Signer
         });
         await audit.AppendAsync(envelope.Id, eventName, identity.Value.Email, ip, userAgent, cancellationToken, data);
         DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);
+        if (operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db, operation, cancellationToken);
+            DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);
+        }
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,cancellationToken);
         return new(SignerSetupError.None);
     }

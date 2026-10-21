@@ -103,6 +103,11 @@ public sealed class DraftDetails(QuillSignDbContext db, AuditWriter audit, Prepa
         db.Entry(envelope).Property(x => x.Status).IsModified = true;
         await audit.AppendAsync(envelope.Id, eventName, identity.Value.Email, ip, userAgent, ct, JsonSerializer.Serialize(data));
         DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);
+        if (operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db, operation, ct);
+            DocumentRetentionAccess.Check(deadline,time??TimeProvider.System);
+        }
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct); return new(DetailsError.None);
     }
     private IQueryable<Envelope> Locked(Guid id) => db.Envelopes.FromSqlInterpolated(

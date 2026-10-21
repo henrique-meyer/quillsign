@@ -47,4 +47,7 @@ internal sealed class ProductionSenderPreparationAdmission(ProductionRecordOpera
 
     internal Task DemandStartingLockedAsync(QuillSignDbContext db, ProductionRecordOperation operation, CancellationToken ct)
         => operations.DemandStartingLockedAsync(db, operation, ct);
+
+    internal Task PrepareOutcomeLockedAsync(QuillSignDbContext db, ProductionRecordOperation operation, CancellationToken ct)
+        => operations.PrepareOutcomeLockedAsync(db, operation, ct);
 }

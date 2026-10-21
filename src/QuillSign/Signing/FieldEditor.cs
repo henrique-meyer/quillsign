@@ -130,6 +130,11 @@ public sealed class FieldEditor(QuillSignDbContext db, AuditWriter audit, FieldE
         await audit.AppendAsync(envelope.Id, "fields_saved", identity.Value.Email, ip, userAgent, ct,
             JsonSerializer.Serialize(new { documentId = envelope.PdfBlob, fields = persisted }));
         DocumentRetentionAccess.Check(deadline,time);
+        if (operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db, operation, ct);
+            DocumentRetentionAccess.Check(deadline,time);
+        }
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,transaction,ct);
         return new(FieldEditorError.None, Version: Convert.ToBase64String(envelope.RowVersion));
     }
