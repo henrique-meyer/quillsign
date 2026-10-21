@@ -39,7 +39,7 @@ public sealed partial class EmailPilotCloseout
             envelope.Status!=(record==state.CompletionRecord?EnvelopeStatus.Completed:record==state.VoidRecord?EnvelopeStatus.Voided:
                 step==EmailPilotCloseoutStep.DeclineVerification?EnvelopeStatus.Draft:step==EmailPilotCloseoutStep.DeclineInvitation?EnvelopeStatus.Sent:EnvelopeStatus.Declined))throw Invalid();
         if(await db.SignerContactRevisions.AnyAsync(x=>x.EnvelopeId==record,ct))throw Invalid();
-        var end=await DocumentRetentionAccess.ReadAsync(db,envelope,ct);DocumentRetentionAccess.Check(end,time);
+        var end=await DocumentRetentionAccess.ReadAsync(db,envelope,time,ct);DocumentRetentionAccess.Check(end,time);
         var until=new[]{state.Until,lease.Until,end??DateTimeOffset.MaxValue}.Min();if(until<=Now)throw Invalid();
         var value=new EmailPilotCloseoutWorkScope(state.AuthorizationId,step,record,lease,until,state.Until,state.Mailboxes,mail.To,
             Hash(new{Record=Raw(envelope),Mail=Raw(mail),Work=Raw(item),state.Manifest.ConfigurationSha256}));

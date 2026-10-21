@@ -20,7 +20,7 @@ public sealed partial class EmailPilotCloseout
             recordId==state.DeclineRecord && record.Status is not (EnvelopeStatus.Draft or EnvelopeStatus.Sent or EnvelopeStatus.Declined))throw Invalid();
         var parent=state.Parent(recordId);var enrollment=state.Enrollment(recordId);
         await EmailPilotAdmission.ReadSourceAsync(db,parent,enrollment,payloads,ct);
-        var deadline=await DocumentRetentionAccess.ReadAsync(db,record,ct);DocumentRetentionAccess.Check(deadline,time);
+        var deadline=await DocumentRetentionAccess.ReadAsync(db,record,time,ct);DocumentRetentionAccess.Check(deadline,time);
         if(!Available || state.Until<=Now)throw Invalid();
         return new(recordId,parent.RunId,parent,enrollment,true,closeout:state);
     }

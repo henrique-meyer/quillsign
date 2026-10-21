@@ -87,7 +87,7 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
             if (enrollment.Verification is null || enrollment.Scenario != (record == cfg.CompletionRecord ? EmailPilotScenario.Completion : record == cfg.VoidRecord ? EmailPilotScenario.Void : EmailPilotScenario.Decline)) throw Invalid();
             var e = await db.Envelopes.AsNoTracking().SingleAsync(x => x.Id == record, ct);
             if (!e.IsDemo || e.SenderEmail != parent.Mailboxes.Sender || e.Status != (record == cfg.CompletionRecord ? EnvelopeStatus.Completed : record == cfg.VoidRecord ? EnvelopeStatus.Voided : EnvelopeStatus.Draft)) throw Invalid();
-            var until = await DocumentRetentionAccess.ReadAsync(db, e, ct); DocumentRetentionAccess.Check(until, time);
+            var until = await DocumentRetentionAccess.ReadAsync(db, e, time, ct); DocumentRetentionAccess.Check(until, time);
             if (until is { } end && end < cfg.Until || record == cfg.DeclineRecord && (e.SenderVerifiedAt is not null || e.SentAt is not null || e.PdfBlob is not null || e.OriginalBlob is not null)) throw Invalid();
             if (await db.Suppressions.AnyAsync(x => x.Email == e.SenderEmail, ct)) throw Invalid();
         }
