@@ -104,12 +104,26 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
             await transaction.CommitAsync(cancellationToken);
             return new(null, null, true);
         }
+        ProductionWorkCompletionClaim? completionClaim=null;
+        if(admission is not null&&row.Kind==WorkKind.Sealing)
+        {
+            var expectedClaim=JsonSerializer.Deserialize<WorkItem>(JsonSerializer.Serialize(row))??throw new ProductionWorkBlockedException();
+            expectedClaim.Status=WorkStatus.Leased;expectedClaim.Attempts=row.Attempts+1;expectedClaim.LeaseOwner=owner;
+            expectedClaim.LeaseExpiresAt=now.AddSeconds(options.LeaseSeconds);
+            completionClaim=await admission.BeginCompletionClaimLockedAsync(db,expectedClaim,cancellationToken);
+        }
         row.Status = WorkStatus.Leased;
         row.Attempts=row.Kind==WorkKind.Purge && row.Attempts==int.MaxValue ? int.MaxValue : row.Attempts+1;
         row.LeaseOwner = owner;
         row.LeaseExpiresAt = now.AddSeconds(options.LeaseSeconds);
         await db.SaveChangesAsync(cancellationToken);
+        if(completionClaim is not null)await admission!.PrepareCompletionClaimExpectedLockedAsync(db,completionClaim,cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if(completionClaim is not null)
+        {
+            await transaction.DisposeAsync();
+            await admission!.AcknowledgeCompletionClaimAsync(completionClaim,cancellationToken);
+        }
         return new(new(row.Id, row.LeaseOwner.Value, row.Kind, row.Attempts, row.LeaseExpiresAt.Value), null, false);
     }
 
@@ -138,6 +152,13 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         var status = retry ? WorkStatus.Queued : result.Outcome == WorkOutcome.Completed ? WorkStatus.Completed : WorkStatus.Failed;
         var at = retry ? now + Backoff(lease.Attempt) : now;
         var code = result.Outcome == WorkOutcome.Retry && !retry ? "attempts-exhausted" : result.Code;
+        if(admission is not null&&lease.Kind==WorkKind.Sealing&&result.Outcome==WorkOutcome.Completed)
+        {
+            var original=await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==lease.Id,cancellationToken);
+            var completed=JsonSerializer.Deserialize<WorkItem>(JsonSerializer.Serialize(original))??throw new ProductionWorkBlockedException();
+            completed.Status=status;completed.AvailableAt=at;completed.LastError=code;completed.LeaseOwner=null;completed.LeaseExpiresAt=null;
+            await admission.PrepareCompletionFinishLockedAsync(db,lease,recordId,completed,cancellationToken);
+        }
         var changed = await db.WorkItems.Where(x => x.Id == lease.Id && x.Kind == lease.Kind && x.Attempts == lease.Attempt &&
                 x.Status == WorkStatus.Leased && x.LeaseOwner == lease.Owner && x.LeaseExpiresAt == lease.Until && x.LeaseExpiresAt > now)
             .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, status).SetProperty(x => x.AvailableAt, at)

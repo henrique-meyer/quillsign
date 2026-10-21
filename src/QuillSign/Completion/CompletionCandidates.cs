@@ -17,7 +17,9 @@ public sealed record CompletionCandidateData(Guid Id,Guid EnvelopeId,Guid Finish
 public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenceCollector collector,
     CompletionCertificateRenderer renderer,IBlobStore blobs,AuditWriter audit,TimeProvider time,CompletionCommitScope? scope=null)
 {
+    internal bool UsesContext(QuillSignDbContext value)=>ReferenceEquals(db,value)&&collector.UsesContext(value);
     public const string SnapshotVersion="completion-candidate-v1";
+    internal const int MaximumCopyVersion=20;
     private const long MaximumPdfBytes=64*1024*1024;
     private const int MaximumEvidenceBytes=32*1024*1024;
 
@@ -95,8 +97,34 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
 
     internal async Task<CompletionCandidateData?> ReadPublishedAsync(Guid id,PublishedCompletionSource source,CancellationToken ct)
     {var row=await Row(id,ct); return row is null ? null : await Verified(row,ct,source);}
+    internal async Task<CompletionCandidateData?> ReadLockedAsync(Guid id,CancellationToken ct,PublishedCompletionSource? published=null)
+    {
+        if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A caller-owned completion transaction is required.");
+        var row=await Row(id,ct);return row is null ? null : await Verified(row,ct,published,true);
+    }
 
-    private static CompletionCandidate Create(CompletionMaterialization source,PreparedCompletionPacket packet)
+    internal async Task<(CompletionCandidate Row,PreparedCompletionPacket Packet,CompletionMaterialization Source)?> CreateLockedAsync(Guid id,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges())throw new InvalidOperationException("A clean caller-owned completion transaction is required.");
+        if(await Row(id,ct) is not null)throw new DocumentConflictException();
+        var source=await collector.CollectLockedAsync(id,ct);if(source is null)return null;
+        if(source.CopyVersion is <1 or >MaximumCopyVersion)throw Invalid();
+        var packet=renderer.PreparePacket(source.Source,source.Pages,source.Evidence,ct);
+        return (Create(source,packet),packet,source);
+    }
+    internal async Task InsertOwnedLockedAsync(CompletionCandidate row,CompletionMaterialization original,DateTimeOffset recordedAt,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges()||row.EnvelopeId!=original.EnvelopeId||
+            !Same(row.RecipeSha256,Recipe(row))||recordedAt.Offset!=TimeSpan.Zero||recordedAt<row.PreparedAt||recordedAt>time.GetUtcNow()||await Row(row.EnvelopeId,ct) is not null)throw Invalid();
+        await collector.RecheckLockedAsync(row.EnvelopeId,original.StateSha256,ct);
+        if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct);
+        db.CompletionCandidates.Add(row);await db.SaveChangesAsync(ct);
+        await new AuditWriter(db,new CompletionRecordedTime(recordedAt)).AppendAsync(row.EnvelopeId,"completion_prepared",null,null,null,ct,PreparationJson(row),PartyType.System);
+        await collector.RecheckLockedAsync(row.EnvelopeId,row.FrozenStateSha256,ct,row.AuditSequence,row.AuditAnchor);
+        if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct);
+    }
+
+    internal static CompletionCandidate Create(CompletionMaterialization source,PreparedCompletionPacket packet)
     {
         var json=JsonSerializer.Serialize(source.Evidence); if(Encoding.UTF8.GetByteCount(json)>MaximumEvidenceBytes)throw Invalid();
         var row=new CompletionCandidate {
@@ -119,10 +147,10 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
         return await db.CompletionCandidates.AsNoTracking().SingleOrDefaultAsync(x=>x.EnvelopeId==id,ct);
     }
 
-    private async Task<CompletionCandidateData?> Verified(CompletionCandidate row,CancellationToken ct,PublishedCompletionSource? published=null)
+    private async Task<CompletionCandidateData?> Verified(CompletionCandidate row,CancellationToken ct,PublishedCompletionSource? published=null,bool locked=false)
     {
         if(row.Id==Guid.Empty || row.EnvelopeId==Guid.Empty || row.FinishId==Guid.Empty || row.SourceObjectId==Guid.Empty || row.PdfObjectId==Guid.Empty ||
-            row.SourceObjectId==row.PdfObjectId || row.PdfLength is <16 or >MaximumPdfBytes || row.CopyVersion is <1 or >20 ||
+            row.SourceObjectId==row.PdfObjectId || row.PdfLength is <16 or >MaximumPdfBytes || row.CopyVersion is <1 or >MaximumCopyVersion ||
             row.DocumentPages<1 || row.CertificatePages is <1 or >64 || row.DocumentPages+row.CertificatePages>200 ||
             row.AuditSequence is <1 or >512 || row.PreparedAt==default || row.PreparedAt>time.GetUtcNow() ||
             row.RendererVersion!=CompletionCertificateRenderer.Version || row.SnapshotVersion!=SnapshotVersion ||
@@ -130,7 +158,8 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
         var evidence=CompletionEvidenceValidation.Own(JsonSerializer.Deserialize<CompletionEvidence>(row.EvidenceJson) ?? throw Invalid(),ct);
         if(evidence.PreparedAt!=row.PreparedAt || evidence.Events.Count!=row.AuditSequence || !Same(evidence.AuditAnchor,row.AuditAnchor) ||
             !Same(evidence.Document.CurrentSha256,row.SourceSha256) || !Same(CompletionEvidenceValidation.Digest(evidence),row.EvidenceSha256))throw Invalid();
-        var current=published is null ? await collector.CollectAsync(row.EnvelopeId,ct) : await collector.CollectPublishedAsync(row.EnvelopeId,published,ct); if(current is null)return null;
+        var current=locked ? await collector.CollectLockedAsync(row.EnvelopeId,ct,published) :
+            published is null ? await collector.CollectAsync(row.EnvelopeId,ct) : await collector.CollectPublishedAsync(row.EnvelopeId,published,ct); if(current is null)return null;
         if(current.FinishId!=row.FinishId || current.CopyVersion!=row.CopyVersion || current.SourceObjectId!=row.SourceObjectId ||
             !Same(current.FrozenStateSha256,row.FrozenStateSha256) || current.Evidence.Events.Count<row.AuditSequence ||
             !Same(current.Evidence.Events[checked((int)row.AuditSequence)-1].Hash,row.AuditAnchor))throw Invalid();
@@ -146,7 +175,7 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
         var bytes=await ReadPdf(row,ct);
         // Recheck after candidate I/O under the same lock used by all signing/audit producers.
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
-        await using(var transaction=await db.Database.BeginTransactionAsync(ct))
+        await using(var transaction=locked ? null : await db.Database.BeginTransactionAsync(ct))
         {
             await collector.RecheckLockedAsync(row.EnvelopeId,row.FrozenStateSha256,ct,row.AuditSequence,row.AuditAnchor,published);
             var saved=await Row(row.EnvelopeId,ct);
@@ -154,7 +183,7 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
             // The preparation event is immutable too; detect even a valid rehashed change during I/O.
             var still=await db.AuditEvents.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==events[0].Id,ct);
             if(still is null || !Same(still.Hash,events[0].Hash) || still.DataJson!=PreparationJson(row))throw new DocumentConflictException();
-            await transaction.CommitAsync(ct);
+            if(transaction is not null)await transaction.CommitAsync(ct);
         }
         return new(row.Id,row.EnvelopeId,row.FinishId,row.SourceObjectId,row.PdfObjectId,evidence,
             new(bytes,row.PdfSha256.ToArray(),row.SourceSha256.ToArray(),row.EvidenceSha256.ToArray(),[],row.DocumentPages,row.CertificatePages,row.RendererVersion),geometry,
@@ -185,12 +214,12 @@ public sealed class CompletionCandidates(QuillSignDbContext db,CompletionEvidenc
         catch(Exception error) when(error is not OutOfMemoryException) { /* Unknown objects remain private for privileged envelope retention; never guess ownership. */ }
     }
 
-    private static byte[] Recipe(CompletionCandidate row)=>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {
+    internal static byte[] Recipe(CompletionCandidate row)=>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {
         row.Id,row.EnvelopeId,row.FinishId,row.CopyVersion,row.SourceObjectId,row.SourceSha256,row.PdfObjectId,row.PdfLength,row.PdfSha256,
         row.DocumentPages,row.CertificatePages,geometrySha256=SHA256.HashData(Encoding.UTF8.GetBytes(row.GeometryJson)),
         row.EvidenceSha256,row.FrozenStateSha256,row.AuditSequence,row.AuditAnchor,row.RendererVersion,row.SnapshotVersion,row.PreparedAt
     }));
-    private static string PreparationJson(CompletionCandidate row)=>JsonSerializer.Serialize(new {
+    internal static string PreparationJson(CompletionCandidate row)=>JsonSerializer.Serialize(new {
         candidateId=row.Id,row.FinishId,row.CopyVersion,row.SourceObjectId,row.PdfObjectId,row.PdfLength,row.DocumentPages,row.CertificatePages,
         sourceSha256=Hex(row.SourceSha256),pdfSha256=Hex(row.PdfSha256),evidenceSha256=Hex(row.EvidenceSha256),
         frozenStateSha256=Hex(row.FrozenStateSha256),recipeSha256=Hex(row.RecipeSha256),row.AuditSequence,auditAnchor=Hex(row.AuditAnchor),

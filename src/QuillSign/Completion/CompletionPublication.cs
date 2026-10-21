@@ -24,8 +24,14 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
     CompletionEvidenceCollector collector,ICompletionFinalStore final,AuditWriter audit,TimeProvider time,
     CompletionPublicationOptions options,IHostEnvironment environment,CompletionCommitScope? scope=null,Func<CompletionNotificationJobs>? notifications=null)
 {
+    internal bool UsesContext(QuillSignDbContext value)=>ReferenceEquals(db,value)&&candidates.UsesContext(value)&&seals.UsesContext(value)&&collector.UsesContext(value);
     public const string Version="completion-publication-v1";
     private sealed record Documents(FinalStoredDocument Executed,FinalStoredDocument Certificate);
+    internal void DemandAdmittedComposition()
+    {
+        var jobs=notifications?.Invoke();
+        if(jobs is null||!jobs.Enabled||!jobs.UsesContext(db))throw new InvalidOperationException("Admitted completion requires its exact durable notification preparation.");
+    }
 
     public async Task<PublishedCompletion?> PublishAsync(Guid id,CancellationToken ct=default)
     {
@@ -84,6 +90,13 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
     }
 
     public async Task<PublishedCompletion?> ReadAsync(Guid id,CancellationToken ct=default)
+        =>await ReadCore(id,ct,false);
+    internal Task<PublishedCompletion?> ReadLockedAsync(Guid id,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A caller-owned completion transaction is required.");
+        return ReadCore(id,ct,true);
+    }
+    private async Task<PublishedCompletion?> ReadCore(Guid id,CancellationToken ct,bool locked)
     {
         ct.ThrowIfCancellationRequested(); if(id==Guid.Empty)return null;
         try
@@ -91,8 +104,8 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
             var result=await Result(id,ct); if(result is null)return null;
             var intent=await Intent(id,ct) ?? throw Invalid();
             var context=await PublishedSource(intent,result,ct);
-            var pair=await seals.ReadPublishedAsync(id,context,ct) ?? throw Invalid();
-            var candidate=await candidates.ReadPublishedAsync(id,context,ct) ?? throw Invalid();
+            var pair=(locked ? await seals.ReadLockedAsync(id,ct,context) : await seals.ReadPublishedAsync(id,context,ct)) ?? throw Invalid();
+            var candidate=(locked ? await candidates.ReadLockedAsync(id,ct,context) : await candidates.ReadPublishedAsync(id,context,ct)) ?? throw Invalid();
             if(intent.StageBindingsJson!=await BoundStages(candidate,pair,Before(intent),ct))throw Invalid();
             var documents=JsonSerializer.Deserialize<Documents>(result.FinalDocumentsJson) ?? throw Invalid();
             var until=CompletionRetentionBinding.RequiredUntil(intent,result.CompletedAt);
@@ -104,12 +117,12 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
             var deadline=await ProductionReadDeadline(current,intent,ct);
             var executed=await Download(documents.Executed,intent,ct,deadline); var certificate=await Download(documents.Certificate,intent,ct,deadline);
             if(!executed.AsSpan().SequenceEqual(pair.Executed.Pdf.Bytes) || !certificate.AsSpan().SequenceEqual(pair.Certificate.Pdf.Bytes))throw Invalid();
-            await using(var transaction=await db.Database.BeginTransactionAsync(ct))
+            await using(var transaction=locked ? null : await db.Database.BeginTransactionAsync(ct))
             {
                 _=await Locked(id,ct); _=await PublishedSource(intent,result,ct);
                 if(await ProductionReadDeadline(current,intent,ct)!=deadline)throw Invalid();
                 await Recheck(candidate,pair,ct,context);
-                await transaction.CommitAsync(ct);
+                if(transaction is not null)await transaction.CommitAsync(ct);
             }
             DocumentRetentionAccess.Check(deadline,time);
             return new(id,result.CompletedAt,documents.Executed,documents.Certificate,executed,certificate) {
@@ -119,6 +132,89 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
         catch(Exception error) when(error is JsonException or FormatException or InvalidOperationException or ArgumentException or UnauthorizedAccessException or KeyNotFoundException or DocumentConflictException)
         {throw Invalid();}
     }
+
+    internal async Task<CompletionPublicationIntent?> ReadIntentLockedAsync(CompletionCandidateData candidate,CompletionSealPair pair,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A caller-owned completion transaction is required.");
+        var row=await Intent(candidate.EnvelopeId,ct);if(row is null)return null;
+        await CheckIntent(row,candidate,pair,await Locked(row.EnvelopeId,ct),ct);return row;
+    }
+    internal async Task<CompletionPublicationIntent> CreateIntentLockedAsync(CompletionCandidateData candidate,CompletionSealPair pair,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges())throw new InvalidOperationException("A clean caller-owned completion transaction is required.");
+        var envelope=await Locked(candidate.EnvelopeId,ct)??throw Invalid();
+        if(await Intent(envelope.Id,ct) is not null||await Result(envelope.Id,ct) is not null)throw Invalid();
+        await Recheck(candidate,pair,ct);
+        if(envelope.Status!=EnvelopeStatus.Sent||envelope.CompletedAt is not null||envelope.FinalBlob is not null||envelope.FinalSha256 is not null||
+            envelope.CertificateBlob is not null||envelope.CertificateSha256 is not null||envelope.SealProvider is not null||envelope.SealCertThumbprint is not null)throw Invalid();
+        var upload=await UploadPolicy(envelope,ct);var production=await ProductionRecordRetentionAccess.EnrollmentAsync(db,envelope,time,ct);
+        if(production is not null&&upload is not null)throw Invalid();
+        var retention=production is not null?new FinalRetention(production.Snapshot.Policy.CompletedDays,false):
+            upload is null?options.Select(envelope,environment):new FinalRetention(upload.Days,options.AllowDevelopmentWriteOnce&&environment.IsDevelopment()&&envelope.IsDemo);
+        var row=new CompletionPublicationIntent{EnvelopeId=envelope.Id,CandidateId=candidate.Id,ExecutedOutputId=pair.Executed.Id,CertificateOutputId=pair.Certificate.Id,
+            BeforeEnvelopeJson=JsonSerializer.Serialize(envelope),StageBindingsJson=production is null?CompletionRetentionBinding.Bind(Bindings(candidate,pair),upload):
+                ProductionCompletionRetentionBinding.Bind(Bindings(candidate,pair),production),RetentionDays=retention.Days,DevelopmentWriteOnce=retention.DevelopmentWriteOnce,PreparedAt=time.GetUtcNow()};
+        row.RecipeSha256=Recipe(row);Validate(row);CompletionRetentionBinding.CanPublish(row,time.GetUtcNow());return row;
+    }
+    internal async Task InsertIntentLockedAsync(CompletionPublicationIntent row,CompletionCandidateData candidate,CompletionSealPair pair,DateTimeOffset recordedAt,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges()||recordedAt.Offset!=TimeSpan.Zero||recordedAt<row.PreparedAt||recordedAt>time.GetUtcNow())throw Invalid();
+        var envelope=await Locked(row.EnvelopeId,ct);Validate(row);
+        if(envelope is null||row.BeforeEnvelopeJson!=JsonSerializer.Serialize(envelope)||row.StageBindingsJson!=await BoundStages(candidate,pair,envelope,ct)||
+            row.CandidateId!=candidate.Id||row.ExecutedOutputId!=pair.Executed.Id||row.CertificateOutputId!=pair.Certificate.Id||await Intent(row.EnvelopeId,ct) is not null)throw Invalid();
+        await Recheck(candidate,pair,ct);if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct);
+        db.CompletionPublicationIntents.Add(row);await db.SaveChangesAsync(ct);
+        await new AuditWriter(db,new CompletionRecordedTime(recordedAt)).AppendAsync(row.EnvelopeId,"completion_publication_prepared",null,null,null,ct,Evidence(row),PartyType.System);
+        await Recheck(candidate,pair,ct);if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct);CompletionRetentionBinding.CanPublish(row,time.GetUtcNow());
+    }
+    internal async Task<CompletionPublicationTransition> CreateResultLockedAsync(CompletionPublicationIntent intent,CompletionCandidateData candidate,
+        CompletionSealPair pair,CompletionPublicationFiles files,DateTimeOffset recordedAt,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges())throw new InvalidOperationException("A clean caller-owned completion transaction is required.");
+        var envelope=await Locked(intent.EnvelopeId,ct)??throw Invalid();if(await Result(envelope.Id,ct) is not null)throw Invalid();
+        await CheckIntent(intent,candidate,pair,envelope,ct);
+        var at=recordedAt;if(files.ResultId==Guid.Empty||at.Offset!=TimeSpan.Zero||at<intent.PreparedAt||at>time.GetUtcNow())throw Invalid();
+        CompletionRetentionBinding.CanPublish(intent,time.GetUtcNow());var required=CompletionRetentionBinding.RequiredUntil(intent,at);
+        CheckDocument(files.Executed,intent,FinalDocumentKind.Executed,pair.Executed.Pdf.Bytes.LongLength,pair.Executed.Pdf.Sha256,required,false);
+        CheckDocument(files.Certificate,intent,FinalDocumentKind.Certificate,pair.Certificate.Pdf.Bytes.LongLength,pair.Certificate.Pdf.Sha256,required,false);
+        var sequence=(await db.AuditEvents.Where(x=>x.EnvelopeId==envelope.Id).MaxAsync(x=>(long?)x.Sequence,ct)??0)+1;if(sequence is <1 or >512)throw Invalid();
+        var completed=JsonSerializer.Deserialize<Envelope>(JsonSerializer.Serialize(envelope))??throw Invalid();Apply(completed,intent,pair,at);
+        var result=new CompletionPublicationResult{Id=files.ResultId,EnvelopeId=envelope.Id,IntentId=intent.Id,CompletedAt=at,AuditSequence=sequence,
+            FinalDocumentsJson=JsonSerializer.Serialize(new Documents(files.Executed,files.Certificate)),IntentRecipeSha256=intent.RecipeSha256.ToArray()};
+        // These hashes depend on the actual SQL-generated completed rowversion;
+        // the pre-SQL semantic plan binds their exact producer relation instead.
+        var roster=notifications is null?[]:await CompletionNotificationJobs.FreezeRosterLockedAsync(db,envelope.Id,ct);
+        return new(intent,candidate,pair,files,envelope,completed,result,at,roster);
+    }
+    internal async Task<Guid[]> InsertResultLockedAsync(CompletionPublicationTransition transition,
+        Func<Guid,DateTimeOffset,CancellationToken,Task> demandHint,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges()||transition.RecordedAt.Offset!=TimeSpan.Zero||transition.RecordedAt>time.GetUtcNow())throw Invalid();
+        var id=transition.Result.EnvelopeId;var envelope=await Locked(id,ct);var intent=transition.Intent;
+        if(envelope is null||JsonSerializer.Serialize(envelope)!=JsonSerializer.Serialize(transition.Before)||
+            transition.Result.Id!=transition.Files.ResultId||transition.Result.CompletedAt!=transition.RecordedAt||transition.Result.AfterEnvelopeSha256.Length!=0||transition.Result.RecipeSha256.Length!=0||await Result(id,ct) is not null)throw Invalid();
+        if(transition.Result.AuditSequence!=(await db.AuditEvents.Where(x=>x.EnvelopeId==id).MaxAsync(x=>(long?)x.Sequence,ct)??0)+1)throw Invalid();
+        await CheckIntent(intent,transition.Candidate,transition.Pair,envelope,ct);
+        var currentRoster=notifications is null?[]:await CompletionNotificationJobs.FreezeRosterLockedAsync(db,id,ct);
+        if(!currentRoster.SequenceEqual(transition.Notifications))throw Invalid();
+        var projected=JsonSerializer.Deserialize<Envelope>(JsonSerializer.Serialize(envelope))??throw Invalid();Apply(projected,intent,transition.Pair,transition.RecordedAt);
+        if(JsonSerializer.Serialize(projected)!=JsonSerializer.Serialize(transition.Completed)||
+            transition.Result.FinalDocumentsJson!=JsonSerializer.Serialize(new Documents(transition.Files.Executed,transition.Files.Certificate))||
+            transition.Result.IntentId!=intent.Id||!Same(transition.Result.IntentRecipeSha256,intent.RecipeSha256))throw Invalid();
+        var required=CompletionRetentionBinding.RequiredUntil(intent,transition.RecordedAt);
+        CheckDocument(transition.Files.Executed,intent,FinalDocumentKind.Executed,transition.Pair.Executed.Pdf.Bytes.LongLength,transition.Pair.Executed.Pdf.Sha256,required,false);
+        CheckDocument(transition.Files.Certificate,intent,FinalDocumentKind.Certificate,transition.Pair.Certificate.Pdf.Bytes.LongLength,transition.Pair.Certificate.Pdf.Sha256,required,false);
+        if(scope is not null)await scope.CheckLockedAsync(id,ct);
+        db.Update(transition.Completed);await db.SaveChangesAsync(ct);
+        var result=transition.Result;result.AfterEnvelopeSha256=PublishedCompletionSource.Digest(transition.Completed);result.RecipeSha256=Recipe(result);
+        db.CompletionPublicationResults.Add(result);await db.SaveChangesAsync(ct);
+        var recorded=new CompletionRecordedTime(transition.RecordedAt);
+        await new AuditWriter(db,recorded).AppendAsync(id,"completed",null,null,null,ct,Evidence(result),PartyType.System);
+        await ProductionRecordRetentionAccess.AnchorLockedIfEnrolledAsync(db,id,recorded,ct);
+        var ids=notifications is null?[]:await notifications().PrepareLockedAsync(id,ct,demandHint,transition.RecordedAt);
+        if(scope is not null)await scope.CheckLockedAsync(id,ct);CompletionRetentionBinding.CanPublish(intent,time.GetUtcNow());return ids;
+    }
+    internal Task PublishNotificationsAsync(IEnumerable<Guid> ids,CancellationToken ct)=>notifications is null?Task.CompletedTask:notifications().PublishAsync(ids,ct);
 
     private async Task<CompletionPublicationIntent?> PrepareIntent(CompletionCandidateData candidate,CompletionSealPair pair,CancellationToken ct)
     {
@@ -242,7 +338,7 @@ public sealed class CompletionPublication(QuillSignDbContext db,CompletionCandid
             value.Protection==FinalProtection.LockedTime && (until is null || value.ProtectedUntil<until || value.ProtectedUntil is null) ||
             !historical && value.Protection==FinalProtection.LockedTime && value.ProtectedUntil<=time.GetUtcNow())throw Invalid();
     }
-    private static void Apply(Envelope envelope,CompletionPublicationIntent intent,CompletionSealPair pair,DateTimeOffset at)
+    internal static void Apply(Envelope envelope,CompletionPublicationIntent intent,CompletionSealPair pair,DateTimeOffset at)
     {
         envelope.Status=EnvelopeStatus.Completed; envelope.CompletedAt=at; envelope.FinalBlob=intent.ExecutedObjectId.ToString("N"); envelope.FinalSha256=pair.Executed.Pdf.Sha256.ToArray();
         envelope.CertificateBlob=intent.CertificateObjectId.ToString("N"); envelope.CertificateSha256=pair.Certificate.Pdf.Sha256.ToArray(); envelope.SealProvider=pair.Executed.Pdf.Provider;

@@ -46,9 +46,13 @@ public sealed class CompletionAccessState(QuillSignDbContext db,CompletionEviden
             if(r is null)return null; email=r.Email; name=r.Name;
         }
         // Keep each issued party scope pinned to its original publication revision.
-        return new(type,id,email,SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {version=CompletionAccessProtection.Version,
-            saved.EnvelopeId,publicationId=saved.Id,publicationRevision=saved.Revision,type,id,name,email,order})));
+        return PartyProjection(saved,type,id,email,name,order);
     }
+    internal static CompletionAccessParty PartyProjection(DownloadPublication saved,PartyType type,Guid? id,string email,string? name,int? order)
+        =>PartyProjection(saved.EnvelopeId,saved.Id,saved.Revision,type,id,email,name,order);
+    internal static CompletionAccessParty PartyProjection(Guid envelopeId,Guid publicationId,byte[] revision,PartyType type,Guid? id,string email,string? name,int? order)
+        =>new(type,id,email,SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {version=CompletionAccessProtection.Version,
+            EnvelopeId=envelopeId,publicationId,publicationRevision=revision,type,id,name,email,order})));
     private static bool Same(byte[]? a,byte[]? b)=>CompletionEvidenceValidation.Same(a,b);
     internal static InvalidDataException Invalid()=>new("Completed retrieval evidence could not be verified.");
 }

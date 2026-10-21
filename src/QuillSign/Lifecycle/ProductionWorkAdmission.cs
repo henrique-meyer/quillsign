@@ -7,6 +7,7 @@ using QuillSign.Documents;
 using QuillSign.Sender;
 using QuillSign.Work;
 using QuillSign.Signing;
+using QuillSign.Completion;
 
 namespace QuillSign.Lifecycle;
 
@@ -24,7 +25,13 @@ internal interface IProductionWorkAdmission
     Task<ProductionRecordDispatchPermit?> PrepareDispatchLockedAsync(QuillSignDbContext db, WorkLease lease, Guid? recordId, CancellationToken ct);
     Task ConsumeDispatchLockedAsync(QuillSignDbContext db, ProductionRecordDispatchPermit permit, CancellationToken ct);
     Task DemandDispatchReceiptLockedAsync(QuillSignDbContext db, ProductionRecordDispatchPermit permit, CancellationToken ct);
+    Task<ProductionWorkCompletionClaim?> BeginCompletionClaimLockedAsync(QuillSignDbContext db,WorkItem expectedClaim,CancellationToken ct);
+    Task PrepareCompletionClaimExpectedLockedAsync(QuillSignDbContext db,ProductionWorkCompletionClaim claim,CancellationToken ct);
+    Task AcknowledgeCompletionClaimAsync(ProductionWorkCompletionClaim claim,CancellationToken ct);
+    Task PrepareCompletionFinishLockedAsync(QuillSignDbContext db,WorkLease lease,Guid? recordId,WorkItem expectedCompleted,CancellationToken ct);
 }
+
+internal sealed record ProductionWorkCompletionClaim(ProductionRecordOperation Scope,ProductionCompletionClaimPermit Permit);
 
 internal sealed class ProductionWorkBlockedException : Exception
 {
@@ -36,6 +43,29 @@ internal sealed class ProductionWorkBlockedException : Exception
 internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, ProductionRecordOperationAdmission admission)
     : IProductionWorkAdmission
 {
+    internal ProductionCompletionAdmission? Completion {get;init;}
+
+    public async Task<ProductionWorkCompletionClaim?> BeginCompletionClaimLockedAsync(QuillSignDbContext db,WorkItem expectedClaim,CancellationToken ct)
+    {
+        if(expectedClaim.Kind!=WorkKind.Sealing||await Demo(db,expectedClaim.EnvelopeId,ct))return null;
+        return await Guard(async()=>{
+            if(Completion is null||!Completion.Uses(admission)||expectedClaim.EnvelopeId is not {} id||expectedClaim.LeaseOwner is not {} owner)throw new ProductionWorkBlockedException();
+            var scope=await admission.ResumeLockedAsync(db,id,owner,Kind(WorkKind.Sealing),Reference(expectedClaim.Id,expectedClaim.Attempts),ct);
+            return new ProductionWorkCompletionClaim(scope,await admission.BeginCompletionClaimLockedAsync(db,scope,expectedClaim,ct));
+        });
+    }
+    public Task PrepareCompletionClaimExpectedLockedAsync(QuillSignDbContext db,ProductionWorkCompletionClaim claim,CancellationToken ct)
+        =>Guard(()=>admission.PrepareCompletionClaimExpectedLockedAsync(db,claim.Permit,ct));
+    public Task AcknowledgeCompletionClaimAsync(ProductionWorkCompletionClaim claim,CancellationToken ct)
+        =>Guard(()=>admission.AcknowledgeCompletionClaimAsync(claim.Scope,ct));
+    public Task PrepareCompletionFinishLockedAsync(QuillSignDbContext db,WorkLease lease,Guid? recordId,WorkItem expectedCompleted,CancellationToken ct)
+        =>Guard(async()=>{
+            if(lease.Kind!=WorkKind.Sealing||await Demo(db,recordId,ct))return;
+            if(Completion is null||!Completion.Uses(admission)||recordId is not {} id)throw new ProductionWorkBlockedException();
+            var scope=await admission.ResumeHandlerLockedAsync(db,id,lease.Owner,Kind(lease.Kind),Reference(lease.Id,lease.Attempt),ct);
+            await admission.PrepareCompletionWorkFinishLockedAsync(db,scope,expectedCompleted,ct);
+        });
+
     public Task ReserveAsync(Guid workId, Guid? recordId, WorkKind kind, Guid owner, int attempt, CancellationToken ct)
         => Guard(async () =>
         {
@@ -116,6 +146,11 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
     }
     private async Task SupportedWork(QuillSignDbContext db,Guid workId,Guid? recordId,WorkKind kind,CancellationToken ct)
     {
+        if(kind==WorkKind.Sealing)
+        {
+            if(Completion is null||!Completion.Uses(admission))throw new ProductionWorkBlockedException();
+            await Completion.DemandQueuedLockedAsync(db,workId,recordId,ct);return;
+        }
         if(kind==WorkKind.Rendering){await DemandInitialCheckpointAsync(db,workId,recordId,ct,admission.Clock);return;}
         _=await SupportedMail(db,workId,recordId,kind,ct);
     }
