@@ -13,6 +13,8 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Authentication;
+using QuillSign.Operator;
 using QuillSign.Email;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Completion;
@@ -42,7 +44,8 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
     [Fact]
     public async Task Genuine_two_signers_complete_all_seven_slots_then_submit_four_exact_pairs_and_preserve_independent_holds()
     {
-        await using var run=await LastCheckpoint();var originalClock=run.Record.Time.Now;
+        var initialTime=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.AddDays(-400).ToUnixTimeSeconds());
+        await using var run=await LastCheckpoint(initialTime);var originalClock=run.Record.Time.Now;
         await using var seal=await SealFixtures.Create(initialTime:originalClock);
         using var provider=new Provider(run.Record.Time);
         using var store=new AzureProductionCompletionStore(new("https://storage.example.invalid"),new Credential(),provider.Transport);
@@ -116,6 +119,7 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
         // Fresh hold scopes reopen the exact original inputs/plan after that lease expires.
         var census=new CompletedObjects(run.Blobs,provider);
         using var holds=new ProductionSignerMutationAdmissionTests.Holds(fixture,run.Delivered,census,store);
+        holds.Provider.ImmutableUntil=originalClock.AddHours(2); // Original synthetic provider policy chosen before any archive write.
         foreach(var item in census.Completed)holds.Provider.SourceFiles.Add(item.Key,item.Value.ToArray());
         var first=await holds.Place(0);
         ProductionHoldProtectedPlan originalPlan;
@@ -222,6 +226,119 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
         Assert.All(holds.Provider.Files.Values,x=>Assert.False(x.Held));
         Assert.Equal(17,provider.Commits);Assert.Equal(0,provider.OtherMutations);Assert.Equal(2,seal.Requests);Assert.Equal(4,capture.Messages.Count);
         Assert.Equal(0,blobs.Writes);Assert.Equal(0,blobs.Deletes);Assert.Equal(0,run.Blobs.UnwitnessedWrites);Assert.Equal(0,run.Blobs.Deletes);
+        await DeleteCompleted(run,holds,provider,envelope,capture,seal);
+    }
+
+    private async Task DeleteCompleted(ProductionSignerReviewRuntimeContractTests.Flow run,ProductionSignerMutationAdmissionTests.Holds holds,
+        Provider completion,Envelope original,CompletionCapture capture,SealFixtures seal)
+    {
+        var options=new ProductionDeletionOptions{Enabled=true,CompletedCommitmentStatement="Synthetic operator attests exact completed packet copies were retained; software does not prove possession or legal adequacy."};
+        using var provider=new ProductionCompletionDeletionTransport(run.Record.Time);
+        foreach(var item in run.Blobs.Objects)provider.Seed(run.Blobs.Address(item.Key),item.Value);
+        foreach(var item in completion.Objects)
+        {
+            var path=item.Key.TrimStart('/').Split('/',2);var value=item.Value;
+            provider.Seed(new(path[0],path[1],value.Version,"",value.Tag,value.Bytes.LongLength),value.Bytes,value.Until,value.Hold);
+        }
+        ProductionHoldControlState controls;
+        string policy;string clocks;
+        await using(var db=fixture.Open())
+        {
+            policy=(await db.ProductionRetentionPolicies.AsNoTracking().SingleAsync(x=>x.EnvelopeId==run.Id)).PolicyJson;
+            clocks=JsonSerializer.Serialize(new{original.CompletedAt,original.PurgeAfter,original.CreatedAt});
+        }
+        // Advance only the original synthetic clock, after all retained policies
+        // were chosen and proved. SQL's actual UTC is now within the lease bounds.
+        run.Record.Time.Now=DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        Assert.True(run.Record.Time.Now>original.PurgeAfter);Assert.True(run.Record.Time.Now>holds.Provider.ImmutableUntil);
+        using var storage=new AzureProductionDeletionStore(new("https://storage.example.invalid"),new Credential(),provider.Transport());
+        using var index=new AzureProductionDeletionRecoveryIndex(new("https://storage.example.invalid/recovery-index"),new Credential(),run.Record.Keys,
+            ProductionHoldWitnessJournalTests.Installation,provider.Transport());
+        var signals=new DeletionSignals();var workOptions=new WorkOptions{Enabled=true,LeaseSeconds=600};
+        var deletion=new ProductionDeletionCoordinator(fixture.Open,run.Record.Keys,run.Record.Time,run.Record.Journal,holds.Coordinator(),run.Record.Admission,storage,index,options,workOptions,()=>signals);
+        var workId=await deletion.PrepareAsync(run.Id);var before=await run.Record.Journal.ReadAsync(run.Id);
+        await using(var db=fixture.Open())
+        {
+            var originalJob=await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==workId);
+            Assert.Null((await new WorkStore(db,workOptions,run.Record.Time){DeletionAdmission=deletion}.ClaimAsync(workId,default)).Lease);
+            Assert.Equal(JsonSerializer.Serialize(originalJob),JsonSerializer.Serialize(await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==workId)));
+            Assert.Equal(policy,(await db.ProductionRetentionPolicies.AsNoTracking().SingleAsync(x=>x.EnvelopeId==run.Id)).PolicyJson);
+            var saved=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==run.Id);Assert.Equal(clocks,JsonSerializer.Serialize(new{saved.CompletedAt,saved.PurgeAfter,saved.CreatedAt}));
+        }
+        Assert.Empty(provider.Deletes);Assert.Equal(before.HeadHash,(await run.Record.Journal.ReadAsync(run.Id)).HeadHash);
+        // The inert, acknowledged prepared job is still part of the full frozen
+        // SQL fingerprint while its typed projection permits historical codecs.
+        var preparedFirst=await holds.Place(8);var preparedSecond=await holds.Place(9);
+        Assert.True(await holds.Release(preparedFirst,10));Assert.False(await holds.Release(preparedSecond,11));
+        await using(var db=fixture.Open())
+        {
+            await using var tx=await db.Database.BeginTransactionAsync();controls=await new ProductionHoldControls(db,run.Record.Keys,run.Record.Time).ReadLockedAsync(run.Id);await tx.RollbackAsync();
+        }
+        foreach(var receipt in controls.Items)
+        {
+            var saved=receipt.Stored;var exact=holds.Provider.Files[saved.Path];Assert.Equal(exact.Version,saved.VersionId);Assert.False(exact.Held);
+            provider.Seed(new("final",saved.Path,saved.VersionId,"",saved.ETag,saved.Length),exact.Bytes,holds.Provider.ImmutableUntil,exact.Held);
+        }
+        var objectCount=provider.Objects.Count;Assert.Equal(run.Blobs.Objects.Count+completion.Objects.Count+controls.Items.Count,objectCount);
+        before=await run.Record.Journal.ReadAsync(run.Id);var facts=await deletion.CompletedFactsAsync(run.Id);
+        signals.Selected=workId;
+        async Task PerformWork()
+        {
+            await using var db=fixture.Open();
+            var store=new WorkStore(db,workOptions,run.Record.Time){DeletionAdmission=deletion};
+            Assert.True(await new WorkProcessor(store,signals,[new ProductionDeletionWork(()=>deletion)],run.Record.Time).RunOnceAsync(default));
+        }
+        var operatorClockGate=new object();
+        void SynchronizeOperatorClock(){lock(operatorClockGate){var actual=DateTimeOffset.UtcNow;if(actual>run.Record.Time.Now)run.Record.Time.Now=actual;}}
+        SynchronizeOperatorClock(); // New operator/lease creation only; every old deadline remains unchanged.
+        if(!await ProductionDeletionBrowserProof.RunIfRequestedAsync(fixture,run.Id,run.Record.Keys,run.Record.Time,run.Record.Journal,holds.Coordinator(),deletion,PerformWork,SynchronizeOperatorClock))
+        {
+            var now=run.Record.Time.Now;var authorization=Guid.NewGuid();
+            var identity=new ClaimsIdentity([new("iss","https://operator.example.invalid",ClaimValueTypes.String,"https://operator.example.invalid"),
+                new("sub","synthetic-completed-record-operator",ClaimValueTypes.String,"https://operator.example.invalid"),
+                new(ProductionOperatorAuthentication.SessionClaim,Guid.NewGuid().ToString("N"),ClaimValueTypes.String,"https://operator.example.invalid")],ProductionOperatorAuthority.OidcScheme);
+            var ticket=new AuthenticationTicket(new(identity),new(){IssuedUtc=now,ExpiresUtc=now.AddMinutes(2)},ProductionOperatorAuthority.CookieScheme);
+            var policyOperator=new ProductionOperatorPolicy(true,[new("https://operator.example.invalid","synthetic-completed-record-operator",new HashSet<ProductionOperatorPermission>{ProductionOperatorPermission.AuthorizeDeletion})]);
+            var authority=ProductionOperatorAuthority.FromValidatedTicket(ticket,policyOperator,ProductionOperatorPermission.AuthorizeDeletion,run.Record.Time);
+            await deletion.AuthorizeCompletedAsync(authority,policyOperator,run.Id,authorization,before.HeadHash!,options.CompletedCommitmentStatement,"Exact synthetic completed packet disposition",now);
+            await deletion.WakeAsync(run.Id);
+            var exact=(await run.Record.Journal.ReadAsync(run.Id)).Deletion!.Disposition!;
+            Assert.Equal(authorization,exact.AuthorizationId);Assert.Equal(authority.SessionId,exact.SessionId);
+            await PerformWork();
+        }
+        var finished=await run.Record.Journal.ReadAsync(run.Id);var closed=finished.Deletion!;
+        Assert.Equal(facts.PublicationId,closed.Disposition!.PublicationId);Assert.Equal(facts.PublicationSha256,closed.Disposition.PublicationSha256);Assert.Equal(facts.FinalReceiptsSha256,closed.Disposition.FinalReceiptsSha256);
+        Assert.Equal(options.CompletedCommitmentStatement,closed.Disposition.Commitment);
+        Assert.True(closed.Reserved);Assert.True(closed.SqlCommitted);Assert.True(closed.Terminal);Assert.True(closed.WorkFinished);
+        Assert.Equal(objectCount,closed.Items!.Length);Assert.Equal(objectCount*2,provider.Deletes.Count);
+        Assert.Equal(objectCount*2,closed.Effects!.Count);Assert.All(closed.Effects.Values,x=>Assert.NotNull(x.Result));
+        Assert.All(provider.Objects.Values,x=>{Assert.True(x.Deleted);Assert.False(x.Current);Assert.NotEmpty(x.Bytes);});
+        Assert.Equal(ProductionDeletionObjectScope.Areas.Order(),provider.ListedAreas.Order());
+        foreach(var prefix in closed.Header!.ArchivePrefixes)Assert.Contains("final/"+prefix,provider.ListedPrefixes);
+        await using(var db=fixture.Open())
+        {
+            Assert.False(await db.Envelopes.AnyAsync(x=>x.Id==run.Id));Assert.False(await db.WorkItems.AnyAsync(x=>x.EnvelopeId==run.Id));Assert.False(await db.AuthTokens.AnyAsync(x=>x.EnvelopeId==run.Id));
+            Assert.False(await db.ProductionHoldControls.AnyAsync(x=>x.EnvelopeId==run.Id));
+            var row=await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==workId);Assert.Null(row.EnvelopeId);Assert.Equal(WorkStatus.Completed,row.Status);Assert.Equal(1,row.Attempts);Assert.Null(row.LeaseOwner);Assert.Null(row.LeaseExpiresAt);
+        }
+        Assert.Equal(1,signals.Acknowledged);Assert.Equal(0,signals.Deferred);
+        await Assert.ThrowsAsync<InvalidDataException>(()=>run.Record.Admission.BeginAsync(run.Id,Guid.NewGuid(),"sender/details","after-deletion"));
+        var status=await deletion.ReadRecordedStatusAsync(run.Id);Assert.True(status.SqlRemoved);Assert.True(status.ActiveDataCleaned);Assert.Contains("restore barrier retained",status.State);
+        Assert.Equal(2,seal.Requests);Assert.Equal(4,capture.Messages.Count);Assert.Equal(17,completion.Commits);Assert.Equal(0,completion.OtherMutations);
+    }
+
+    private sealed class DeletionSignals:IWorkSignals
+    {
+        internal Guid Selected;internal int Acknowledged,Deferred;
+        public Task PutHintAsync(Guid id,DateTimeOffset due,CancellationToken ct)=>Task.CompletedTask;
+        public Task RemoveHintAsync(Guid id,CancellationToken ct)=>Task.CompletedTask;
+        public Task<DateTimeOffset?> ReadDueAsync(Guid id,CancellationToken ct)=>Task.FromResult<DateTimeOffset?>(null);
+        public Task PublishAsync(Guid id,TimeSpan delay,CancellationToken ct)=>Task.CompletedTask;
+        public Task<WorkDelivery?> ReceiveAsync(CancellationToken ct)=>Task.FromResult<WorkDelivery?>(new("synthetic-deletion-delivery","synthetic-pop",Selected));
+        public Task DeferAsync(WorkDelivery delivery,TimeSpan delay,CancellationToken ct){Deferred++;return Task.CompletedTask;}
+        public Task AcknowledgeAsync(WorkDelivery delivery,CancellationToken ct){Acknowledged++;return Task.CompletedTask;}
+        public Task<int> RecoverAsync(DateTimeOffset now,CancellationToken ct)=>Task.FromResult(0);
+        public Task VerifyAsync(CancellationToken ct)=>Task.CompletedTask;
     }
 
     private static void DemandHistoricalMailFaults(JsonElement sql,HoldWitnessState state,Microsoft.AspNetCore.DataProtection.IDataProtectionProvider keys,IReadOnlyList<HoldObjectEvidence> objects)
@@ -295,9 +412,9 @@ public sealed class ProductionCompletionConnectedTests(SqlDatabaseFixture fixtur
             Assert.Contains("complete/access#token=",message.Text);Messages.Add(message);return Task.FromResult(new EmailDelivery("SyntheticCompletionCapture","synthetic-completion-"+Messages.Count));
         }
     }
-    private async Task<ProductionSignerReviewRuntimeContractTests.Flow> LastCheckpoint()
+    private async Task<ProductionSignerReviewRuntimeContractTests.Flow> LastCheckpoint(DateTimeOffset? initialTime=null)
     {
-        var ready=await ProductionRecordSendAdmissionTests.Ready.Create(fixture,withFields:true,twoSigners:true,withRecipient:true);
+        var ready=await ProductionRecordSendAdmissionTests.Ready.Create(fixture,withFields:true,twoSigners:true,withRecipient:true,initialTime:initialTime);
         var delivery=new ProductionInvitationWorkerAdmissionTests.Delivered(fixture,ready){WorkId=(await ready.Send())!.InvitationWorkId};
         await delivery.ClaimAsync();Assert.Equal(WorkOutcome.Completed,(await delivery.ExecuteAsync()).Outcome);await delivery.FinishAsync();
         ProductionSignerReviewRuntimeContractTests.Flow? last=null;

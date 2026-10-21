@@ -180,7 +180,7 @@ public sealed class ProductionHoldArchiveReleaseTests(SqlDatabaseFixture fixture
     internal sealed class Provider : HttpMessageHandler
     {
         internal readonly Dictionary<string, File> Files = []; internal readonly List<string> Calls = []; private readonly Dictionary<string, byte[]> blocks = [];
-        internal string Fault = "normal"; internal int Clears, Heads; internal Action<string>? After;
+        internal string Fault = "normal"; internal DateTimeOffset ImmutableUntil=new(2030,1,1,14,0,0,TimeSpan.Zero); internal int Clears, Heads; internal Action<string>? After;
         internal HoldObjectAddress? Source;
         internal readonly Dictionary<HoldObjectAddress,byte[]> SourceFiles = [];
         private const string Tag = "\"synthetic-etag\"";
@@ -237,7 +237,7 @@ public sealed class ProductionHoldArchiveReleaseTests(SqlDatabaseFixture fixture
             response.Headers.TryAddWithoutValidation("x-ms-version-id", Fault == "wrong-version" ? "changed-version" : file.Version);
             response.Headers.TryAddWithoutValidation("x-ms-legal-hold", (file.Held && Fault != "unheld" && !(Fault == "hold-race" && Heads % 2 == 0)).ToString().ToLowerInvariant());
             response.Headers.TryAddWithoutValidation("x-ms-blob-type", "BlockBlob"); response.Headers.TryAddWithoutValidation("x-ms-immutability-policy-mode", "Locked");
-            response.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date", Fault == "policy-changed" && !file.Held ? "Tue, 01 Jan 2030 13:00:00 GMT" : "Tue, 01 Jan 2030 14:00:00 GMT");
+            response.Headers.TryAddWithoutValidation("x-ms-immutability-policy-until-date", (Fault == "policy-changed" && !file.Held ? ImmutableUntil.AddHours(-1) : ImmutableUntil).ToString("R"));
             if (request.Method == HttpMethod.Get) After?.Invoke("download"); return response;
         }
         private static HttpResponseMessage Reply(byte[] bytes)
