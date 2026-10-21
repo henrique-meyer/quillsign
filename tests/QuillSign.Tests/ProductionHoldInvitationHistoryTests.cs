@@ -100,5 +100,15 @@ public sealed class ProductionHoldInvitationHistoryTests(SqlDatabaseFixture fixt
         using var altered=JsonDocument.Parse(node.ToJsonString());
         await Assert.ThrowsAsync<InvalidDataException>(()=>ProductionHoldInvitationHistoryReferences.ReadVerifiedLockedAsync(capture,altered.RootElement,objects,keys,state,time));
         Assert.Equal(currentTokens,await capture.AuthTokens.AsNoTracking().Where(x=>x.EnvelopeId==run.Record.Id).ToDictionaryAsync(x=>x.Id,x=>x.ExpiresAt));
+        if(action is "reminder" or "correction")
+        {
+            // Reuse the exact original schedule and finished successor for full
+            // coordinator publication, without another signing/TSA pipeline.
+            await tx.RollbackAsync();await tx.DisposeAsync();
+            var preserved=await holds.Coordinator().PreserveAsync(run.Record.Id,command.HoldId,Guid.NewGuid());
+            Assert.True(preserved.Holds[command.HoldId].Effective);
+            Assert.False(await holds.Release(command,1));
+            Assert.Equal(currentTokens,await capture.AuthTokens.AsNoTracking().Where(x=>x.EnvelopeId==run.Record.Id).ToDictionaryAsync(x=>x.Id,x=>x.ExpiresAt));
+        }
     }
 }

@@ -7,12 +7,13 @@ using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Signing;
 using QuillSign.Storage;
+using QuillSign.Work;
 
 namespace QuillSign.Lifecycle;
 
-// Connected private source implementation, deliberately unregistered. Runtime
-// admission/worker drains and the remaining evidence schemas must be completed
-// before exposing placement. No caller may turn a raw provider DTO into a hold.
+// Connected private backend, deliberately unregistered until trusted operator
+// middleware supplies its configuration/authority. Raw provider DTOs never
+// establish complete preservation or authorize release/deletion.
 internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness, IProductionHoldObjectSource objects,
     AzureProductionHoldArchiveWriter archive, AzureProductionHoldArchiveReleaseStore releases,
@@ -220,29 +221,37 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
 
     private async Task DemandCompleteSchemas(QuillSignDbContext db,ProductionHoldObjectSnapshot snapshot,HoldWitnessState state,CancellationToken ct)
     {
-        // Fail closed while the remaining sent/review/Finish/publication graph is
-        // being connected. Existing per-schema codecs have already run in the
-        // authenticated inventory reader; unimplemented history stays pending.
+        // Per-schema readers run during capture/replay; this final closed graph
+        // also binds the runtime plans, exact worker outcomes and owned tails.
+        // Unknown or partial history remains pending.
         using var sql = ProductionHoldSqlInventory.OpenVerified(snapshot.Sql, keys);
         ProductionHoldAdmissionAuditReferences.Demand(sql.RootElement);
         var tables = sql.RootElement.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         var status = tables["Envelopes"].EnumerateArray().Single().GetProperty("Status").GetString();
         var terminal=status is "Voided" or "Declined" or "Expired";
+        HoldInvitationHistory? invitationHistory=null;
         if (status is "Sent" or "Completed"||terminal)
         {
             var inventory=ProductionHoldObjectInventory.OpenVerified(snapshot,keys,time);
+            // Keep the already verified simple signing/publication path intact.
+            // Advanced lineage is admitted only through the complete typed
+            // historical reader, never by a broad event-name exemption.
+            if(NeedsInvitationHistory(tables))invitationHistory=await ProductionHoldInvitationHistoryReferences.ReadVerifiedLockedAsync(
+                db,sql.RootElement,inventory,keys,state,time,ct);
             var inputs=await ReadReviewInputs(db,snapshot.RecordId,tables["SignerReviewCandidates"],state,inventory,ct);
             var history=terminal
-                ?await ProductionHoldTerminalReferences.ReadVerifiedLockedAsync(db,sql.RootElement,inventory,keys,inputs,state,time,ct)
+                ?await ProductionHoldTerminalReferences.ReadVerifiedLockedAsync(db,sql.RootElement,inventory,keys,inputs,state,time,ct,invitationHistory)
                 :status=="Completed"
                 ?ProductionHoldCompletionStageReferences.ReadVerified(sql.RootElement,inventory,keys,inputs,
-                    await ReadCompletionInputs(db,snapshot.RecordId,state,inventory,ct),state)
-                :ProductionHoldReviewCheckpointReferences.ReadVerified(sql.RootElement,inventory,keys,inputs);
+                    await ReadCompletionInputs(db,snapshot.RecordId,state,inventory,ct),state,invitationHistory)
+                :ProductionHoldReviewCheckpointReferences.ReadVerified(sql.RootElement,inventory,keys,inputs,invitationHistory);
             DemandPreviewPlans(tables["SignaturePreviews"],history.Previews,state,inventory);
         }
         else if (status != "Draft"||(state.ReviewWrites?.Count??0)!=0) throw Invalid();
+        var invitationAudits=invitationHistory?.AuditSequences;
         foreach (var audit in tables["AuditEvents"].EnumerateArray())
         {
+            if(invitationAudits?.Contains(audit.GetProperty("Sequence").GetInt64())==true)continue;
             if ((status is "Sent" or "Completed"||terminal) && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given" or
                 "signature_adopted" or "field_filled" or "field_cleared" or "signer_review_prepared" or "signer_finish_accepted" or "signer_completed") continue;
             if (status=="Completed"&&audit.GetProperty("Event").GetString() is "completion_prepared" or "completion_executed_sealed" or "completion_certificate_sealed" or
@@ -256,6 +265,24 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
                 "document_uploaded" or "document_replaced" or "preview_confirmed" or "signer_added" or "signer_updated" or "signer_removed" or
                 "signers_reordered" or "recipient_added" or "recipient_updated" or "recipient_removed" or "envelope_details_updated" or "fields_saved")) throw Invalid();
         }
+    }
+
+    private static bool NeedsInvitationHistory(IReadOnlyDictionary<string,JsonElement> tables)
+    {
+        if(tables["SignerContactRevisions"].GetArrayLength()!=0||tables["EmailOutbox"].EnumerateArray().Any(x=>
+            x.GetProperty("Template").GetString() is InvitationResendProtection.Template or InvitationSuccessorProtection.Template))return true;
+        foreach(var audit in tables["AuditEvents"].EnumerateArray())
+        {
+            var name=audit.GetProperty("Event").GetString();
+            if(name is SignerContactHistory.Event or InvitationResendProtection.Event or InvitationSuccessorProtection.Event or
+                SignerReminderEvidence.ScheduleEvent or SignerReminderEvidence.AdmissionEvent)return true;
+            if(name!="sent")continue;
+            using var sent=JsonDocument.Parse(audit.GetProperty("DataJson").GetString()!);
+            var p=sent.RootElement;
+            if(p.TryGetProperty("reminderPolicy",out var policy)&&p.TryGetProperty("reminderPolicySha256",out var hash)&&
+                !SignerReminderPolicy.Read(policy.GetString()!,hash.GetString()!).Days.IsEmpty)return true;
+        }
+        return false;
     }
 
     private async Task<IReadOnlyList<VerifiedCompletionInput>> ReadCompletionInputs(QuillSignDbContext db,Guid recordId,
