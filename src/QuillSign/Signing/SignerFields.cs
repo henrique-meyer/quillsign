@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Signing;
 
@@ -20,6 +21,7 @@ public sealed record SignerFieldResult(SignerFieldOutcome Outcome,SignerFieldIte
 // Each call applies or clears exactly one owned field. No batch-signing or Finish path.
 public sealed class SignerFields(QuillSignDbContext db,SignerAccess access,SignatureAdoption adoption,AuditWriter audit,TimeProvider time)
 {
+    internal ProductionSignerMutationAdmission? HoldAdmission {get;init;}
     public async Task<SignerFieldSnapshot?> GetAsync(ClaimsPrincipal principal,string publicId,CancellationToken ct = default)
     {
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
@@ -38,6 +40,7 @@ public sealed class SignerFields(QuillSignDbContext db,SignerAccess access,Signa
 
     public async Task<SignerFieldResult> ChangeAsync(ClaimsPrincipal principal,string publicId,SignerFieldChange change,string? ip,string? ua,CancellationToken ct = default)
     {
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         var context = await access.GetLockedContextAsync(principal,publicId,ct); if (context?.ConsentAt is null) return new(SignerFieldOutcome.NotFound);
@@ -70,6 +73,13 @@ public sealed class SignerFields(QuillSignDbContext db,SignerAccess access,Signa
             (clear ? field.FilledAt is null && field.FilledBy is null : field.FilledAt is not null && field.FilledBy == PartyType.Signer))
             return new(SignerFieldOutcome.AlreadyApplied,Item(field,signer));
         if (!CryptographicOperations.FixedTimeEquals(version,field.RowVersion)) return new(SignerFieldOutcome.Conflict,Item(field,signer));
+        ProductionRecordOperation? operation=null;
+        if(HoldAdmission is not null)
+        {
+            try{operation=await HoldAdmission.BeginLockedAsync(db,context.Identity.EnvelopeId,"signer/field",context.Identity.SignerId.ToString("N")+"/field/"+field.Id.ToString("N")+"/version/"+Convert.ToBase64String(version)+"/"+change.Action.ToString(),ct);}
+            catch(ProductionSignerBlockedException){return new(SignerFieldOutcome.NotFound);}
+            if(!access.IsLive(context))return new(SignerFieldOutcome.NotFound);
+        }
         DateTimeOffset? filledAt = clear ? null : time.GetUtcNow(); PartyType? filledBy = clear ? null : PartyType.Signer;
         var changed = await db.Fields.Where(x => x.Id == field.Id && x.EnvelopeId == context.Identity.EnvelopeId && x.SignerId == signer.Id && x.RowVersion == version)
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.Value,value).SetProperty(x => x.FilledAt,filledAt).SetProperty(x => x.FilledBy,filledBy)
@@ -82,7 +92,19 @@ public sealed class SignerFields(QuillSignDbContext db,SignerAccess access,Signa
                 input = field.Type == FieldType.FullName ? "server_signer_record" : "explicit_owned_field_request" }),PartyType.Signer,signer.Id);
         if ((await access.GetLockedContextAsync(principal,publicId,ct))?.ConsentAt is null) return new(SignerFieldOutcome.NotFound);
         var saved = await db.Fields.AsNoTracking().SingleAsync(x => x.Id == field.Id,ct);
-        await access.CommitAsync(transaction,ct); return new(SignerFieldOutcome.Applied,Item(saved,signer));
+        if(operation is not null)
+        {
+            await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+            if(!access.IsLive(context))return new(SignerFieldOutcome.NotFound);
+        }
+        await access.CommitAsync(transaction,ct);
+        if(operation is not null)
+        {
+            await transaction.DisposeAsync();
+            await HoldAdmission!.CompleteAsync(operation,context.Identity,"field",field.Id,ct);
+            if(!access.IsLive(context))return new(SignerFieldOutcome.NotFound);
+        }
+        return new(SignerFieldOutcome.Applied,Item(saved,signer));
     }
 
     private Task<Signer> Signer(VerifiedSigner identity,CancellationToken ct) => db.Signers.AsNoTracking().SingleAsync(x => x.Id == identity.SignerId && x.EnvelopeId == identity.EnvelopeId,ct);
@@ -103,7 +125,7 @@ public sealed class SignerFields(QuillSignDbContext db,SignerAccess access,Signa
         return new(f.Id,Convert.ToBase64String(f.RowVersion),f.Type,f.Page,f.X,f.Y,f.Width,f.Height,f.Required,f.Label,mark ? null : f.Value,
             f.FilledAt,f.SignatureAdoptionId,Hex(f.ImageSha256),filled,mark && hasMarkState && !bound);
     }
-    private static string? Canonical(string? value)
+    internal static string? Canonical(string? value)
     {
         if (value is null || value.Length > 4000) return null;
         try

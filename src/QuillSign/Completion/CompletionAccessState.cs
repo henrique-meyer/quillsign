@@ -10,6 +10,22 @@ internal sealed record CompletionAccessParty(PartyType Type,Guid? Id,string Emai
 
 public sealed class CompletionAccessState(QuillSignDbContext db,CompletionEvidenceCollector collector,Func<CompletionPublication> publication,TimeProvider time,Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
+    internal async Task<CompletionAccessPreparation?> PrepareLockedAsync(Guid id,Func<CancellationToken,Task> demand,Action clocks,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null || id==Guid.Empty)throw Invalid();
+        var until=time.GetUtcNow().AddMinutes(2);
+        void Original(){clocks();ct.ThrowIfCancellationRequested();if(until<=time.GetUtcNow())throw Invalid();}
+        using var restriction=CompletionReadRestriction.Enter(db,async()=>{Original();await demand(ct);Original();});
+        await demand(ct);
+        var saved=await CompletionDownloadState.ReadAsync(db,id,time,ct);if(saved is null || saved.PurgeAfter<=time.GetUtcNow())return null;
+        until=new[]{until,saved.PurgeAfter??DateTimeOffset.MaxValue}.Min();
+        await demand(ct);
+        var verified=await publication().ReadLockedAsync(id,ct);
+        await demand(ct);
+        if(verified is null || !saved.Matches(verified) || until<=time.GetUtcNow())throw Invalid();
+        await RecheckLockedAsync(saved,ct);await demand(ct);
+        return new(saved,verified,until);
+    }
     internal async Task<CompletionAccessPreparation?> PrepareAsync(Guid id,CancellationToken ct)
     {
         if(id==Guid.Empty)return null;
@@ -46,9 +62,13 @@ public sealed class CompletionAccessState(QuillSignDbContext db,CompletionEviden
             if(r is null)return null; email=r.Email; name=r.Name;
         }
         // Keep each issued party scope pinned to its original publication revision.
-        return new(type,id,email,SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {version=CompletionAccessProtection.Version,
-            saved.EnvelopeId,publicationId=saved.Id,publicationRevision=saved.Revision,type,id,name,email,order})));
+        return PartyProjection(saved,type,id,email,name,order);
     }
+    internal static CompletionAccessParty PartyProjection(DownloadPublication saved,PartyType type,Guid? id,string email,string? name,int? order)
+        =>PartyProjection(saved.EnvelopeId,saved.Id,saved.Revision,type,id,email,name,order);
+    internal static CompletionAccessParty PartyProjection(Guid envelopeId,Guid publicationId,byte[] revision,PartyType type,Guid? id,string email,string? name,int? order)
+        =>new(type,id,email,SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {version=CompletionAccessProtection.Version,
+            EnvelopeId=envelopeId,publicationId,publicationRevision=revision,type,id,name,email,order})));
     private static bool Same(byte[]? a,byte[]? b)=>CompletionEvidenceValidation.Same(a,b);
     internal static InvalidDataException Invalid()=>new("Completed retrieval evidence could not be verified.");
 }

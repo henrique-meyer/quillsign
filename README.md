@@ -67,7 +67,7 @@ Retention settings remain unset by default for self-hosters. A configured demo u
 
 Production admission freezes the selected mode, policy version, intervals and archive responsibility before requesting sender verification. Startup rejects incomplete production settings and the synthetic demo disclosure profile. Sender review and Send use that saved policy; later configuration changes apply to new records. Unsent drafts use their original creation time, while pending signing and incomplete completion have no automatic retention deadline. Terminal access uses the authenticated saved transition, and publication verifies actual immutable storage protection for its frozen interval. Retained files never extend a participant's session. See the [production retention integration](docs/production-retention.md).
 
-These controls are one part of production readiness. Privileged legal holds, production deletion/recovery controls and complete self-hosted acceptance remain required work in the [implementation plan](docs/plan.md). Selecting `Production` does not certify legal suitability, complete that work, migrate historical records, change cloud protection or enable email.
+These controls are one part of production readiness. The [private operator workflow](docs/private-operator.md) connects default-disabled OIDC operator permissions, exact-record legal holds and the participant/worker admission barriers. Production deletion/recovery controls and complete self-hosted acceptance remain required work in the [implementation plan](docs/plan.md). Selecting `Production` does not certify legal suitability, complete that work, migrate historical records, change cloud protection or enable email. Existing demo installations must review the documented authenticated-origin/witness requirement before adopting the new runtime composition.
 
 ## Run locally
 
@@ -97,7 +97,7 @@ pwsh -File scripts/dev/Initialize-LocalEnvironment.ps1
 docker compose up -d --build --wait --wait-timeout 240
 ```
 
-The initializer generates local SQL and Azurite credentials in ignored `.env` configuration, preserving existing values and process-variable precedence. Optional port settings are listed in `.env.example`. Initial image downloads can take several minutes; allow at least 6 GB of Docker memory. The SQL Server image requires Linux amd64; ARM hosts need compatible emulation. SQL Server Developer is for development/testing only.
+The initializer generates local SQL and Azurite credentials in ignored `.env` configuration (or in the file named by `QUILLSIGN_ENV_FILE`, which may live outside the checkout; set Compose's `COMPOSE_ENV_FILES` to the same path), preserving existing values and process-variable precedence. Optional port settings are listed in `.env.example`. Initial image downloads can take several minutes; allow at least 6 GB of Docker memory. The SQL Server image requires Linux amd64; ARM hosts need compatible emulation. SQL Server Developer is for development/testing only.
 
 | Service | Local endpoint | Container endpoint |
 | --- | --- | --- |

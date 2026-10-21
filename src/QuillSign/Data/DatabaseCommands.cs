@@ -88,6 +88,8 @@ public static class DatabaseCommands
             if (!await db.AuditEvents.AnyAsync(x => x.EnvelopeId == envelope.Id))
                 throw new InvalidOperationException("Runtime audit read/insert verification failed.");
 
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[ProductionOperatorAccessReceipts] SET [ProtectedReceipt]=N'forbidden' WHERE 1=0"));
+            await DemandDenied(() => db.Database.ExecuteSqlRawAsync("DELETE FROM [dbo].[ProductionOperatorAccessReceipts] WHERE 1=0"));
             await DemandDenied(() => db.Database.ExecuteSqlInterpolatedAsync($"UPDATE [dbo].[AuditEvents] SET [Event] = 'forbidden' WHERE [Id] = {audit.Id}"));
             await DemandDenied(() => db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM [dbo].[AuditEvents] WHERE [Id] = {audit.Id}"));
             await DemandDenied(() => db.Database.ExecuteSqlRawAsync("UPDATE [dbo].[CompletionCandidates] SET [SnapshotVersion] = 'forbidden' WHERE 1 = 0"));

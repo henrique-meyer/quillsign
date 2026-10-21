@@ -58,7 +58,11 @@ internal sealed class SealFixtures : IAsyncDisposable
         var pfx=certificateKind=="public" ? new X509Certificate2Collection(X509CertificateLoader.LoadCertificate(f.Seal.RawData)).Export(X509ContentType.Pkcs12,f.Options.Pfx.Password)! : f.Seal.Export(X509ContentType.Pkcs12,f.Options.Pfx.Password);
         await File.WriteAllBytesAsync(f.Options.Pfx.Path,pfx); CryptographicOperations.ZeroMemory(pfx);
         var rootPath=Path.Combine(f.directory,"synthetic-root.cer"); await File.WriteAllBytesAsync(rootPath,f.Root.RawData); f.Options.TsaTrustedRootPaths=[rootPath];
-        var bcCertificate=new X509CertificateParser().ReadCertificate(f.Tsa.RawData); var info=new SignerInfoGeneratorBuilder().Build(new Asn1SignatureFactory("SHA256WITHRSA",DotNetUtilities.GetRsaKeyPair(f.TsaKey).Private),bcCertificate);
+        var bcCertificate=new X509CertificateParser().ReadCertificate(f.Tsa.RawData);var signerBuilder=new SignerInfoGeneratorBuilder();
+        // Configured historical/future fixtures must use that SAME clock in
+        // CMS signingTime as well as certificate validity and RFC3161 genTime.
+        if(initialTime is not null)signerBuilder.WithSignedAttributeGenerator(new FixtureSigningTime(f.Time));
+        var info=signerBuilder.Build(new Asn1SignatureFactory("SHA256WITHRSA",DotNetUtilities.GetRsaKeyPair(f.TsaKey).Private),bcCertificate);
         f.Tokens=new TimeStampTokenGenerator(info,Asn1DigestFactory.Get(NistObjectIdentifiers.IdSha256),new DerObjectIdentifier("1.2.3.4.1"),true);
         f.Tokens.SetCertificates(CollectionUtilities.CreateStore([bcCertificate,new X509CertificateParser().ReadCertificate(f.Root.RawData)]));
         var builder=WebApplication.CreateSlimBuilder(new WebApplicationOptions { EnvironmentName="Development" }); builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0"); f.App=builder.Build();
@@ -111,6 +115,15 @@ internal sealed class SealFixtures : IAsyncDisposable
         public override DateTimeOffset GetUtcNow()=>now+(elapsed?.Elapsed??TimeSpan.Zero);
         public void Advance(TimeSpan interval)=>now+=interval;
         public void TrackElapsed()=>elapsed??=global::System.Diagnostics.Stopwatch.StartNew();
+    }
+    private sealed class FixtureSigningTime(TimeProvider time):CmsAttributeTableGenerator
+    {
+        public Org.BouncyCastle.Asn1.Cms.AttributeTable GetAttributes(IDictionary<CmsAttributeTableParameter,object> parameters)
+        {
+            var signing=new Org.BouncyCastle.Asn1.Cms.Attribute(Org.BouncyCastle.Asn1.Cms.CmsAttributes.SigningTime,
+                new DerSet(new Org.BouncyCastle.Asn1.Cms.Time(time.GetUtcNow().UtcDateTime)));
+            return new DefaultSignedAttributeTableGenerator(new Org.BouncyCastle.Asn1.Cms.AttributeTable(new Asn1EncodableVector(signing))).GetAttributes(parameters);
+        }
     }
     public sealed class CountingProvider(ISealCertificateProvider inner) : ISealCertificateProvider { public int Calls; public Task<SealCertificateMaterial> AcquireAsync(CancellationToken ct) { Calls++; return inner.AcquireAsync(ct); } }
 }

@@ -9,6 +9,7 @@ using QuillSign.Documents;
 using QuillSign.Email;
 using QuillSign.Signing;
 using QuillSign.Work;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Sender;
 
@@ -35,6 +36,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
     CanonicalInvitationResends? canonical=null,QuillSign.Email.Pilot.EmailPilotReadBounds? pilotBounds=null)
 {
     private readonly InvitationResendRules rules = new(db, options, protection, time,successors);
+    internal ProductionTerminalMutationAdmission? HoldAdmission {get;init;}
     private bool Enabled => options.Enabled && email.Enabled && work.Enabled;
     public async Task<InvitationResendReview?> ReviewAsync(ClaimsPrincipal sender, string publicId, DateTimeOffset ticketExpiresAt, CancellationToken ct = default)
         => (await ReadAsync(sender, publicId, ticketExpiresAt, false, ct))?.Review;
@@ -57,6 +59,7 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         if (ticketExpiresAt <= time.GetUtcNow() || scope.Value.Envelope.ExpiresAt <= time.GetUtcNow()) return null;
         var reviewed=await BuildReviewAsync(scope.Value,ct);
         DocumentRetentionAccess.Check(scope.Value.Deadline, time);
+        if(HoldAdmission is not null)await HoldAdmission.DemandReadLockedAsync(db,scope.Value.Envelope.Id,ticketExpiresAt,ct);
         await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct); DocumentRetentionAccess.Check(scope.Value.Deadline, time);
         return Enabled && ticketExpiresAt > time.GetUtcNow() ? new(scope.Value.Envelope.Title!, reviewed, blocked) : null;
     }
@@ -71,16 +74,20 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
         if (requestId == Guid.Empty || reviewed is null || !InvitationResendProtection.RowVersion(reviewed.Version)) return InvitationResendOutcome.Conflict;
         if (reviewExpiresAt <= time.GetUtcNow() || reviewExpiresAt > ticketExpiresAt) return InvitationResendOutcome.Conflict;
         var ipHash = InvitationResendProtection.IpHash(ip); Clean();
-        try { return await CoreAsync(identity.Value.Id, identity.Value.Email, publicId, ticketExpiresAt.ToUniversalTime(), requestId, reviewed, ipHash, ip, userAgent, reviewExpiresAt?.ToUniversalTime(), ct); }
+        Task<InvitationResendOutcome> Execute(ProductionRecordOperation? operation)=>CoreAsync(identity.Value.Id, identity.Value.Email, publicId, ticketExpiresAt.ToUniversalTime(), requestId, reviewed, ipHash, ip, userAgent, reviewExpiresAt?.ToUniversalTime(), ct,operation);
+        try { return HoldAdmission is null?await Execute(null):await HoldAdmission.ExecuteAsync(db,identity.Value.Id,"resend",requestId.ToString("N"),Execute,ct); }
+        catch(Exception error)when(HoldAdmission is not null&&error is InvalidDataException or UnauthorizedAccessException or CryptographicException)
+        {return InvitationResendOutcome.Unavailable;}
         finally { db.ChangeTracker.Clear(); }
     }
     private async Task<InvitationResendOutcome> CoreAsync(Guid envelopeId, string senderEmail, string publicId, DateTimeOffset until,
-        Guid id, InvitationResendReview reviewed, string ipHash, string? ip, string? ua, DateTimeOffset? reviewExpiresAt, CancellationToken ct)
+        Guid id, InvitationResendReview reviewed, string ipHash, string? ip, string? ua, DateTimeOffset? reviewExpiresAt, CancellationToken ct,ProductionRecordOperation? operation)
     {
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
         InvitationResendOutcome outcome;
         await using (var tx = await db.Database.BeginTransactionAsync(ct)) {
             var scope = await ScopeAsync(envelopeId, senderEmail, publicId, ct); if (scope is null) return InvitationResendOutcome.Closed;
+            if(operation is not null)await HoldAdmission!.DemandStartingLockedAsync(db,operation,ct);
             await InvitationResendRules.VerifyIndexAsync(db, envelopeId, ct,time);
             await InvitationResendRules.LockAsync(db, ct);
             if(reviewed.Contact is not null) {
@@ -128,6 +135,12 @@ public sealed class InvitationResends(QuillSignDbContext db, InvitationResendOpt
             if(saved is null)throw InvitationResendRules.Invalid();
             if (saved.Deadline <= time.GetUtcNow()) return InvitationResendOutcome.Closed;
             if (reviewExpiresAt <= time.GetUtcNow()) return InvitationResendOutcome.Conflict;
+            if(operation is not null)
+            {
+                await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+                if(until<=time.GetUtcNow()||reviewExpiresAt<=time.GetUtcNow()||saved.Deadline<=time.GetUtcNow()||scope.Value.Envelope.ExpiresAt<=time.GetUtcNow())return InvitationResendOutcome.Closed;
+                DocumentRetentionAccess.Check(scope.Value.Deadline,time);
+            }
             await QuillSign.Email.Pilot.EmailPilotReadBounds.CommitAsync(pilotBounds,tx,ct);
         }
         try { await signals().PublishAsync(id, TimeSpan.Zero, ct); }

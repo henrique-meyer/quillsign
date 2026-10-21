@@ -21,6 +21,7 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
     CompletionCertificateRenderer renderer,PlatformPdfSeal engine,SealCms verifier,IBlobStore blobs,AuditWriter audit,TimeProvider time,CompletionCommitScope? scope=null,
     PilotTimestampBoundary? timestamps=null)
 {
+    internal bool UsesContext(QuillSignDbContext value)=>ReferenceEquals(db,value)&&candidates.UsesContext(value)&&collector.UsesContext(value);
     public const string RecipeVersion="completion-seal-v1";
     private const long MaximumBytes=64*1024*1024;
     private sealed record Metadata(string Provider,string CertificateSha256,string CertificateDer,DateTimeOffset SealedAt,
@@ -55,17 +56,23 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
     public async Task<CompletionSealPair?> ReadAsync(Guid envelopeId,CancellationToken ct=default)
         =>await ReadCore(envelopeId,null,ct);
     internal Task<CompletionSealPair?> ReadPublishedAsync(Guid id,PublishedCompletionSource source,CancellationToken ct)=>ReadCore(id,source,ct);
-    private async Task<CompletionSealPair?> ReadCore(Guid envelopeId,PublishedCompletionSource? published,CancellationToken ct)
+    internal Task<CompletionSealPair?> ReadLockedAsync(Guid id,CancellationToken ct,PublishedCompletionSource? published=null)
+    {
+        if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A caller-owned completion transaction is required.");
+        return ReadCore(id,published,ct,true);
+    }
+    private async Task<CompletionSealPair?> ReadCore(Guid envelopeId,PublishedCompletionSource? published,CancellationToken ct,bool locked=false)
     {
         ct.ThrowIfCancellationRequested(); if(envelopeId==Guid.Empty)return null;
         try
         {
-            var candidate=published is null ? await candidates.ReadAsync(envelopeId,ct) : await candidates.ReadPublishedAsync(envelopeId,published,ct); if(candidate is null)return null;
+            var candidate=locked ? await candidates.ReadLockedAsync(envelopeId,ct,published) :
+                published is null ? await candidates.ReadAsync(envelopeId,ct) : await candidates.ReadPublishedAsync(envelopeId,published,ct); if(candidate is null)return null;
             var rows=await Rows(envelopeId,ct); if(rows.Length==0)return null;
             var first=rows.SingleOrDefault(x=>x.Kind==CompletionSealKind.Executed) ?? throw Invalid();
-            var executed=await ReadStage(first,candidate,null,ct,published);
+            var executed=await ReadStage(first,candidate,null,ct,published,locked);
             var second=rows.SingleOrDefault(x=>x.Kind==CompletionSealKind.Certificate); if(second is null)return null;
-            return new(envelopeId,candidate.Id,executed,await ReadStage(second,candidate,executed,ct,published));
+            return new(envelopeId,candidate.Id,executed,await ReadStage(second,candidate,executed,ct,published,locked));
         }
         catch(Azure.RequestFailedException) {throw new IOException("Completion seal storage is unavailable.");}
         catch(Exception error) when(error is JsonException or FormatException or InvalidOperationException or ArgumentException or UnauthorizedAccessException or KeyNotFoundException or DocumentRejectedException or CryptographicException)
@@ -90,15 +97,7 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
             var sealedPdf=executed is null ? await engine.SealAsync(source,sourceHash,ct,timestampArtifact) :
                 await engine.SealBoundAsync(source,sourceHash,Convert.FromHexString(executed.Pdf.CertificateSha256),ct,timestampArtifact);
             if(!Same(sealedPdf.SourceSha256,sourceHash) || sealedPdf.PageCount!=pages || sealedPdf.SealedAt<candidate.Evidence.PreparedAt)throw Invalid();
-            var row=new CompletionSealOutput {
-                EnvelopeId=candidate.EnvelopeId,CandidateId=candidate.Id,Kind=kind,SourceObjectId=kind==CompletionSealKind.Executed ? candidate.PdfObjectId : Guid.NewGuid(),
-                SourceLength=source.LongLength,SourceSha256=sourceHash,PdfObjectId=Guid.NewGuid(),PdfLength=sealedPdf.Bytes.LongLength,PdfSha256=sealedPdf.Sha256.ToArray(),
-                PageCount=sealedPdf.PageCount,EvidenceSha256=candidate.Packet.EvidenceSha256.ToArray(),CandidateRecipeSha256=candidate.RecipeSha256.ToArray(),
-                ExecutedSha256=executed?.Pdf.Sha256.ToArray(),RecipeVersion=RecipeVersion,
-                MetadataJson=JsonSerializer.Serialize(new Metadata(sealedPdf.Provider,sealedPdf.CertificateSha256,Convert.ToBase64String(sealedPdf.CertificateDer),
-                    sealedPdf.SealedAt,sealedPdf.TimestampAt,sealedPdf.TimestampCertificateSha256,sealedPdf.TimestampPolicy))
-            };
-            row.RecipeSha256=Recipe(row);
+            var row=CreateOwned(candidate,kind,new(Guid.NewGuid(),kind==CompletionSealKind.Executed ? candidate.PdfObjectId : Guid.NewGuid(),Guid.NewGuid()),source,sealedPdf,executed);
             // Independently verify the actual engine result and source before giving it durable ownership.
             _=await Verify(row,source,sealedPdf.Bytes,candidate,executed,ct);
             if(kind==CompletionSealKind.Certificate)await Upload(SourceBlob(row),source,sourceHash,owned,ct);
@@ -135,7 +134,58 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
         finally {if(!commitStarted && !committed)await Cleanup(owned);}
     }
 
-    private async Task<CompletionSealData> ReadStage(CompletionSealOutput row,CompletionCandidateData candidate,CompletionSealData? executed,CancellationToken ct,PublishedCompletionSource? published=null)
+    internal static CompletionSealOutput CreateOwned(CompletionCandidateData candidate,CompletionSealKind kind,CompletionSealTargets targets,
+        byte[] source,SealedPdf sealedPdf,CompletionSealData? executed)
+    {
+        if(!Enum.IsDefined(kind)||targets.RowId==Guid.Empty||targets.SourceObjectId==Guid.Empty||targets.PdfObjectId==Guid.Empty||
+            targets.SourceObjectId==targets.PdfObjectId||kind==CompletionSealKind.Executed&&(targets.SourceObjectId!=candidate.PdfObjectId||executed is not null)||
+            kind==CompletionSealKind.Certificate&&(targets.SourceObjectId==candidate.PdfObjectId||executed is null))throw Invalid();
+        var sourceHash=SHA256.HashData(source);
+        var row=new CompletionSealOutput {
+                Id=targets.RowId,EnvelopeId=candidate.EnvelopeId,CandidateId=candidate.Id,Kind=kind,SourceObjectId=targets.SourceObjectId,
+                SourceLength=source.LongLength,SourceSha256=sourceHash,PdfObjectId=targets.PdfObjectId,PdfLength=sealedPdf.Bytes.LongLength,PdfSha256=sealedPdf.Sha256.ToArray(),
+                PageCount=sealedPdf.PageCount,EvidenceSha256=candidate.Packet.EvidenceSha256.ToArray(),CandidateRecipeSha256=candidate.RecipeSha256.ToArray(),
+                ExecutedSha256=executed?.Pdf.Sha256.ToArray(),RecipeVersion=RecipeVersion,
+                MetadataJson=MetadataJson(sealedPdf)
+            };
+            row.RecipeSha256=Recipe(row);
+            return row;
+    }
+
+    internal Task<SealedPdf> VerifyOwnedAsync(CompletionSealOutput row,byte[] source,byte[] bytes,CompletionCandidateData candidate,
+        CompletionSealData? executed,CancellationToken ct)=>Verify(row,source,bytes,candidate,executed,ct);
+    internal static string MetadataJson(SealedPdf value)=>JsonSerializer.Serialize(new Metadata(value.Provider,value.CertificateSha256,Convert.ToBase64String(value.CertificateDer),
+        value.SealedAt,value.TimestampAt,value.TimestampCertificateSha256,value.TimestampPolicy));
+
+    internal byte[] PrepareSource(CompletionCandidateData candidate,CompletionSealKind kind,CompletionSealData? executed,CancellationToken ct)
+    {
+        if(kind==CompletionSealKind.Executed&&executed is null)return candidate.Packet.Bytes.ToArray();
+        if(kind!=CompletionSealKind.Certificate||executed is null)throw Invalid();
+        return renderer.PrepareStandalone(candidate.Evidence,candidate.Packet,executed.Pdf,ct).Bytes;
+    }
+    internal async Task<CompletionSealData?> ReadOwnedLockedAsync(CompletionCandidateData candidate,CompletionSealKind kind,CompletionSealData? executed,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A caller-owned completion transaction is required.");
+        var rows=await Rows(candidate.EnvelopeId,ct);if(rows.Any(x=>x.CandidateId!=candidate.Id))throw Invalid();
+        var row=rows.SingleOrDefault(x=>x.Kind==kind);return row is null?null:await ReadStage(row,candidate,executed,ct,null,true);
+    }
+    internal async Task InsertOwnedLockedAsync(CompletionOwnedSeal actual,byte[] source,CompletionCandidateData candidate,
+        CompletionSealData? executed,DateTimeOffset recordedAt,CancellationToken ct)
+    {
+        if(db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges())throw new InvalidOperationException("A clean caller-owned completion transaction is required.");
+        var row=actual.Row;
+        if(recordedAt.Offset!=TimeSpan.Zero||recordedAt<actual.Pdf.SealedAt||recordedAt>time.GetUtcNow())throw Invalid();
+        _=await Verify(row,source,actual.Pdf.Bytes,candidate,executed,ct);
+        if(!Same(actual.Pdf.Sha256,row.PdfSha256)||await db.CompletionSealOutputs.AnyAsync(x=>x.EnvelopeId==row.EnvelopeId&&x.Kind==row.Kind,ct))throw Invalid();
+        await RecheckLocked(candidate,ct);await RecheckPredecessor(executed,candidate,ct);
+        if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct);
+        db.CompletionSealOutputs.Add(row);await db.SaveChangesAsync(ct);
+        await new AuditWriter(db,new CompletionRecordedTime(recordedAt)).AppendAsync(row.EnvelopeId,Event(row.Kind),null,null,null,ct,Evidence(row),PartyType.System);
+        await RecheckLocked(candidate,ct);await RecheckPredecessor(executed,candidate,ct);
+        if(scope is not null)await scope.CheckLockedAsync(row.EnvelopeId,ct);
+    }
+
+    private async Task<CompletionSealData> ReadStage(CompletionSealOutput row,CompletionCandidateData candidate,CompletionSealData? executed,CancellationToken ct,PublishedCompletionSource? published=null,bool locked=false)
     {
         var proof=await Proof(row,ct);
         var source=row.Kind==CompletionSealKind.Executed ? candidate.Packet.Bytes : await ReadExact(SourceBlob(row),row.SourceLength,row.SourceSha256,ct);
@@ -143,14 +193,14 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
         var value=await Verify(row,source,bytes,candidate,executed,ct);
         if(proof.Sequence<=candidate.AuditSequence || proof.At<value.SealedAt || executed is not null && proof.Sequence<=executed.AuditSequence)throw Invalid();
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct);
-        await using(var transaction=await db.Database.BeginTransactionAsync(ct))
+        await using(var transaction=locked ? null : await db.Database.BeginTransactionAsync(ct))
         {
             await RecheckLocked(candidate,ct,published);
             await RecheckPredecessor(executed,candidate,ct);
             var saved=await db.CompletionSealOutputs.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==row.Id && x.EnvelopeId==row.EnvelopeId,ct);
             if(saved is null || !saved.RowVersion.AsSpan().SequenceEqual(row.RowVersion) || !Same(saved.RecipeSha256,row.RecipeSha256))throw new DocumentConflictException();
             var current=await Proof(saved,ct); if(current.Id!=proof.Id || !Same(current.Hash,proof.Hash))throw new DocumentConflictException();
-            await transaction.CommitAsync(ct);
+            if(transaction is not null)await transaction.CommitAsync(ct);
         }
         return new(row.Id,row.PdfObjectId,row.Kind,value,row.RecipeSha256.ToArray(),row.RowVersion.ToArray(),proof.Sequence,proof.Hash.ToArray());
     }
@@ -227,7 +277,7 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
     {
         if(expectedLength is <16 or >MaximumBytes || hash is not {Length:32})throw Invalid();
         using var memory=new MemoryStream(); using var bounded=new BoundedDocumentStream(memory,MaximumBytes);
-        var length=await blobs.CopyToAsync(Capability(blob,AssetOperation.Read),blob,bounded,ct);
+        var length=await CompletionReadRestriction.ReadAsync(db,()=>blobs.CopyToAsync(Capability(blob,AssetOperation.Read),blob,bounded,ct));
         if(length!=expectedLength || length!=memory.Length || !Same(hash,SHA256.HashData(memory.GetBuffer().AsSpan(0,checked((int)memory.Length)))))throw Invalid();
         return memory.ToArray();
     }
@@ -245,17 +295,17 @@ public sealed class CompletionSealOutputs(QuillSignDbContext db,CompletionCandid
         }
         catch(Exception error) when(error is not OutOfMemoryException) { /* Possibly owned bytes remain private for privileged envelope retention. */ }
     }
-    private static byte[] Recipe(CompletionSealOutput row)=>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {
+    internal static byte[] Recipe(CompletionSealOutput row)=>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {
         row.Id,row.EnvelopeId,row.CandidateId,row.Kind,row.SourceObjectId,row.SourceLength,row.SourceSha256,row.PdfObjectId,row.PdfLength,row.PdfSha256,
         row.PageCount,row.EvidenceSha256,row.CandidateRecipeSha256,row.ExecutedSha256,row.RecipeVersion,metadataSha256=SHA256.HashData(Encoding.UTF8.GetBytes(row.MetadataJson))
     }));
-    private static string Evidence(CompletionSealOutput row)=>JsonSerializer.Serialize(new {
+    internal static string Evidence(CompletionSealOutput row)=>JsonSerializer.Serialize(new {
         outputId=row.Id,row.CandidateId,row.Kind,row.SourceObjectId,row.SourceLength,sourceSha256=Hex(row.SourceSha256),row.PdfObjectId,row.PdfLength,
         pdfSha256=Hex(row.PdfSha256),row.PageCount,evidenceSha256=Hex(row.EvidenceSha256),candidateRecipeSha256=Hex(row.CandidateRecipeSha256),
         executedSha256=row.ExecutedSha256 is null ? null : Hex(row.ExecutedSha256),metadataSha256=Hex(SHA256.HashData(Encoding.UTF8.GetBytes(row.MetadataJson))),
         row.RecipeVersion,recipeSha256=Hex(row.RecipeSha256),serverEvidence="verified_private_completion_seal_not_final_publication"
     });
-    private static string Event(CompletionSealKind kind)=>kind==CompletionSealKind.Executed ? "completion_executed_sealed" : "completion_certificate_sealed";
+    internal static string Event(CompletionSealKind kind)=>kind==CompletionSealKind.Executed ? "completion_executed_sealed" : "completion_certificate_sealed";
     private static DocumentBlob PdfBlob(CompletionSealOutput row)=>new(row.EnvelopeId,row.Kind==CompletionSealKind.Executed ? DocumentBlobKind.CompletionExecutedSeal : DocumentBlobKind.CompletionCertificateSeal,row.PdfObjectId);
     private static DocumentBlob SourceBlob(CompletionSealOutput row)=>row.Kind==CompletionSealKind.Certificate ? new(row.EnvelopeId,DocumentBlobKind.CompletionCertificateSource,row.SourceObjectId) : throw Invalid();
     private ClaimsPrincipal Capability(DocumentBlob blob,AssetOperation operation)=>CompletionSealCapability.Create(blob,operation,time);

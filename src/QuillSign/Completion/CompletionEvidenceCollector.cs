@@ -17,16 +17,22 @@ public sealed record CompletionMaterialization(Guid EnvelopeId,string PublicId,b
 public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerCheckpointState checkpoints,
     SignerCheckpointBlobs accepted,IBlobStore storage,TimeProvider time)
 {
+    internal bool UsesContext(QuillSignDbContext value)=>ReferenceEquals(db,value);
     private sealed record Frame(Envelope Envelope,Signer[] Signers,Recipient[] Recipients,DocumentField[] Fields,
         SignerFinishAcceptance[] Finishes,SignaturePreview[] Adoptions,AuditEvent[] Events,byte[] Binding,byte[] FrozenBinding,VerifiedSignerContacts? Contacts);
     public async Task<CompletionMaterialization?> CollectAsync(Guid envelopeId,CancellationToken ct=default)
         =>await CollectCore(envelopeId,null,ct);
     internal Task<CompletionMaterialization?> CollectPublishedAsync(Guid id,PublishedCompletionSource source,CancellationToken ct)=>CollectCore(id,source,ct);
-    private async Task<CompletionMaterialization?> CollectCore(Guid envelopeId,PublishedCompletionSource? published,CancellationToken ct)
+    internal Task<CompletionMaterialization?> CollectLockedAsync(Guid id,CancellationToken ct,PublishedCompletionSource? source=null)
+    {
+        if(db.Database.CurrentTransaction is null)throw new InvalidOperationException("A caller-owned completion transaction is required.");
+        return CollectCore(id,source,ct,true);
+    }
+    private async Task<CompletionMaterialization?> CollectCore(Guid envelopeId,PublishedCompletionSource? published,CancellationToken ct,bool locked=false)
     {
         ct.ThrowIfCancellationRequested(); if(envelopeId==Guid.Empty)return null;
         try {
-            var frame=await Capture(envelopeId,ct,published); if(frame is null)return null;
+            var frame=locked ? await CaptureLocked(envelopeId,ct,published) : await Capture(envelopeId,ct,published); if(frame is null)return null;
             var e=frame.Envelope;
             await Verify(new(e.Id,DocumentBlobKind.Original,Id(e.OriginalBlob)),e.OriginalSha256!,ct);
             await Verify(new(e.Id,DocumentBlobKind.Normalized,Id(e.PdfBlob)),e.PdfSha256!,ct);
@@ -48,7 +54,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
             }
             var expected=JsonSerializer.Deserialize<PageGeometry[]>(e.PageSizesJson!) ?? throw Invalid();
             if(pages.Length!=e.PageCount || !SenderPdfRenderer.GeometryMatches(pages,expected))throw Invalid();
-            var current=await Capture(envelopeId,ct,published);
+            var current=locked ? await CaptureLocked(envelopeId,ct,published) : await Capture(envelopeId,ct,published);
             if(current is null || !Same(current.Binding,frame.Binding))throw new DocumentConflictException();
             var evidence=Project(current,marks,time.GetUtcNow());
             evidence=CompletionEvidenceValidation.Own(evidence,ct);
@@ -128,7 +134,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
         _=Id(e.OriginalBlob); _=Id(e.PdfBlob); _=Id(e.SentPdfBlob);
         if(e.OriginalSha256 is not {Length:32} || e.PdfSha256 is not {Length:32} || e.PageCount is not >0 || e.PageSizesJson is null)throw Invalid();
         var previews=adoptions.OrderBy(x=>x.Id).ToArray();
-        var frozen=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {e,signers,recipients,fields,finishes,previews}));
+        var frozen=FrozenState(e,signers,recipients,fields,finishes,previews);
         var binding=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {frozen,auditAnchor=previous}));
         var frame=new Frame(e,signers,recipients,fields,finishes,previews,events,binding,frozen,contacts);
         // Project validates semantic link/consent/publication evidence while the frozen frame is locked.
@@ -191,6 +197,15 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
         }
         throw Invalid();
     }
+    // Pure producer formulas reused by the closed historical hold graph AFTER
+    // that graph authenticates the exact original rows and their audit cut.
+    // These factual inputs issue no SQL, participant or provider capability.
+    internal static byte[] FrozenState(Envelope e,Signer[] signers,Recipient[] recipients,DocumentField[] fields,
+        SignerFinishAcceptance[] finishes,SignaturePreview[] previews)
+        =>SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new {e,signers,recipients,fields,finishes,previews}));
+    internal static CompletionEvidence ProjectHistorical(Envelope e,Signer[] signers,Recipient[] recipients,DocumentField[] fields,
+        SignerFinishAcceptance[] finishes,SignaturePreview[] previews,AuditEvent[] events,Dictionary<Guid,SignerPdfMarks> marks,DateTimeOffset prepared)
+        =>Project(new(e,signers,recipients,fields,finishes,previews,events,[],[],null),marks,prepared);
     private static CompletionEvidence Project(Frame frame,Dictionary<Guid,SignerPdfMarks> marks,DateTimeOffset prepared)
     {
         var e=frame.Envelope; var sender=One(frame.Events,"sender_email_verified",PartyType.Sender,null,e.SenderEmail);
@@ -227,7 +242,7 @@ public sealed class CompletionEvidenceCollector(QuillSignDbContext db,SignerChec
     private async Task Verify(DocumentBlob blob,byte[] expected,CancellationToken ct)
     {
         if(expected is not {Length:32})throw Invalid(); using var output=new HashSink(64*1024*1024);
-        var length=await storage.CopyToAsync(CompletionReadCapability.Create(blob,time),blob,output,ct);
+        var length=await CompletionReadRestriction.ReadAsync(db,()=>storage.CopyToAsync(CompletionReadCapability.Create(blob,time),blob,output,ct));
         if(length!=output.Length || length<16 || !Same(expected,output.Digest()))throw Invalid();
     }
     private static AuditEvent One(AuditEvent[] events,string kind,PartyType actor,Guid? id,string email)

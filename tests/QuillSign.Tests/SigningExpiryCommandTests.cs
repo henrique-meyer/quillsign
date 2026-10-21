@@ -1,8 +1,21 @@
 using System.Diagnostics;
+using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using QuillSign.Data;
+using QuillSign.Documents;
+using QuillSign.Email;
+using QuillSign.Lifecycle;
+using QuillSign.Sender;
 using QuillSign.Signing;
+using QuillSign.Storage;
 using QuillSign.Work;
 using Shared=QuillSign.Tests.SendDraftWorkflowTests.Harness;
 
@@ -38,16 +51,26 @@ public sealed class SigningExpiryCommandTests(SqlDatabaseFixture fixture) : ICla
     [Fact]
     public async Task Actual_finite_command_expires_once_with_work_email_and_storage_disabled_without_issuing_new_authority()
     {
-        await using var h=await Shared.Create(fixture);var end=h.Clock.GetUtcNow().AddSeconds(1);
-        await using(var seed=fixture.Open()) {await seed.Envelopes.Where(x=>x.Id==h.Envelope.Id).ExecuteUpdateAsync(s=>s.SetProperty(x=>x.ExpiresAt,end));h.Version=(await seed.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==h.Envelope.Id)).RowVersion;}
-        Assert.NotNull(await h.Send());var wait=end-DateTimeOffset.UtcNow+TimeSpan.FromMilliseconds(50);if(wait>TimeSpan.Zero)await Task.Delay(wait);
-        await using var db=fixture.Open();var work=await db.WorkItems.CountAsync();var mail=await db.EmailOutbox.CountAsync();var tokens=await db.AuthTokens.CountAsync();
         var root=Path.Combine(Path.GetTempPath(),"quillsign-expiry-cli-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
+        // The child has no storage configured: it must authenticate the actual
+        // original demo carrier, not infer no hold from a hand-built legacy row.
+        // Same application/content root uses the framework's persistent local
+        // keyring in both processes. Never delete that shared keyring.
+        var builder=WebApplication.CreateBuilder(new WebApplicationOptions {ApplicationName=typeof(SigningExpiry).Assembly.GetName().Name,
+            ContentRootPath=root,EnvironmentName="Development"});
+        builder.Logging.ClearProviders();builder.Services.AddRazorPages();builder.Services.AddScoped<RazorEmailViews>();
+        await using var app=builder.Build();using var scope=app.Services.CreateScope();
+        var keys=app.Services.GetRequiredService<IDataProtectionProvider>();
+        await using var db=fixture.Open();var h=await PrepareGenuineSentDemo(db,keys,scope.ServiceProvider.GetRequiredService<RazorEmailViews>());
+        var wait=h.Envelope.ExpiresAt!.Value-DateTimeOffset.UtcNow+TimeSpan.FromMilliseconds(50);if(wait>TimeSpan.Zero)await Task.Delay(wait);
+        var work=await db.WorkItems.CountAsync();var mail=await db.EmailOutbox.CountAsync();var tokens=await db.AuthTokens.CountAsync();
         try {
             var first=await Run();Assert.Equal(1,first.GetProperty("Expired").GetInt32());Assert.Equal("ok",first.GetProperty("status").GetString());
             Assert.Equal(0,(await Run()).GetProperty("Examined").GetInt32());Assert.Equal(EnvelopeStatus.Expired,(await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==h.Envelope.Id)).Status);
             Assert.Equal(work,await db.WorkItems.CountAsync());Assert.Equal(mail,await db.EmailOutbox.CountAsync());Assert.Equal(tokens,await db.AuthTokens.CountAsync());
-            Assert.Single(await db.AuditEvents.Where(x=>x.EnvelopeId==h.Envelope.Id && x.Event=="expired").ToArrayAsync());Assert.Equal(0,h.Sender.Calls);
+            Assert.Single(await db.AuditEvents.Where(x=>x.EnvelopeId==h.Envelope.Id && x.Event=="expired").ToArrayAsync());Assert.Equal(1,h.Sender.Calls);
+            Assert.Equal(h.OriginalCarrier,(await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==h.VerificationMailId)).PayloadJson);
+            Assert.Equal(h.OriginalTokenExpiry,(await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==h.VerificationTokenId)).ExpiresAt);
         } finally {Directory.Delete(root);}
         async Task<JsonElement> Run() {
             var testAssembly=typeof(SigningExpiryCommandTests).Assembly.Location;var start=new ProcessStartInfo("dotnet") {RedirectStandardOutput=true,RedirectStandardError=true,UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=root};
@@ -59,5 +82,60 @@ public sealed class SigningExpiryCommandTests(SqlDatabaseFixture fixture) : ICla
             var text=await output;var failure=await error;Assert.True(process.ExitCode==0,$"Finite expiry command failed: {failure}");Assert.DoesNotContain(h.Envelope.PublicId,text);Assert.DoesNotContain(h.Envelope.SenderEmail,text);
             using var json=JsonDocument.Parse(text);return json.RootElement.Clone();
         }
+    }
+
+    private async Task<FiniteDemo> PrepareGenuineSentDemo(QuillSignDbContext db,IDataProtectionProvider keys,RazorEmailViews views)
+    {
+        var time=TimeProvider.System;var work=new WorkOptions{Enabled=true};
+        var email=new EmailOptions{Enabled=true,FromEmail="noreply@example.invalid",BaseUrl="https://example.invalid"};
+        var signals=new DocumentWorkflowTests.PurgeTestSignals();var protection=new EmailPayloadProtection(keys);
+        var closed=new ClosedProductionStores();var operations=new ProductionRecordOperationAdmission(fixture.Open,keys,time,new(closed,keys,time,""))
+            {AuthenticatedDemoOrigin=true,ProductionAdmissionEnabled=false};
+        var admission=new ProductionWorkAdmission(fixture.Open,operations);
+        var config=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?> {
+            ["ConnectionStrings:Database"]="synthetic-configured",["Storage:Provider"]="Azurite"}).Build();
+        var sender=new SenderWorkflow(db,new(),new(email,work,config),()=>new(db,signals,protection,work,email,time),new(db,time),time,
+            lifecycle:new()){HoldAdmission=operations};
+        var address="expiry-origin-"+Guid.NewGuid().ToString("N")+"@example.invalid";
+        Assert.Equal(SenderRequestOutcome.Neutral,await sender.RequestAsync(address,"127.0.0.1","Synthetic expiry command"));
+        var verification=await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.To==address);var payload=protection.Unprotect(verification.PayloadJson);
+        Assert.NotNull(payload.DemoOrigin);
+        var store=new WorkStore(db,work,time,admission);var lease=(await store.ClaimAsync(verification.Id,default)).Lease!;
+        var capture=new CapturedSender();var handler=new EmailWorkHandler(db,email,protection,new(email,views),capture,time){HoldAdmission=admission};
+        var result=await handler.ExecuteAsync(lease,default);Assert.Equal(WorkOutcome.Completed,result.Outcome);await store.FinishAsync(lease,result,default);
+        Assert.NotNull(await sender.VerifyAsync(payload.Token,"127.0.0.1","Synthetic expiry command"));
+        var originalTokenExpiry=(await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==payload.TokenId)).ExpiresAt;
+        db.ChangeTracker.Clear();var e=await db.Envelopes.SingleAsync(x=>x.Id==verification.EnvelopeId);
+        using var normalized=new MemoryStream();var pages=new PdfValidation(new()).Rewrite(new MemoryStream(PdfFixtures.Create(text:"Synthetic expiry command")),normalized);
+        var bytes=normalized.ToArray();e.Title="Synthetic expiry command";e.PdfBlob=Guid.NewGuid().ToString("N");e.PdfSha256=SHA256.HashData(bytes);
+        e.PageCount=pages.Count;e.PageSizesJson=JsonSerializer.Serialize(pages);e.PreviewConfirmedAt=time.GetUtcNow();
+        var signer=new Signer{EnvelopeId=e.Id,FullName="Synthetic signer",Email="signer-"+Guid.NewGuid().ToString("N")+"@example.invalid",Order=1};
+        db.Add(signer);db.Add(new DocumentField{EnvelopeId=e.Id,SignerId=signer.Id,Type=FieldType.Signature,Page=1,X=.1m,Y=.5m,Width=.4m,Height=.1m});
+        // Establish one original signing deadline after genuine intake/verification;
+        // it is frozen by normal Send and never extended by either CLI invocation.
+        e.ExpiresAt=time.GetUtcNow().AddSeconds(10);await db.SaveChangesAsync();var version=e.RowVersion.ToArray();
+        var principal=SenderConfiguration.Principal(new(e.Id,e.PublicId,e.SenderEmail));var blobs=new MemoryBlobs();
+        await blobs.WriteAsync(principal,new(e.Id,DocumentBlobKind.Normalized,Guid.Parse(e.PdfBlob)),new MemoryStream(bytes),bytes.Length);
+        var workflow=new SendDraftWorkflow(db,blobs,new(),new(),new(),new(),new(32*1024*1024,200,200),new(ElectronicRecordDisclosureTests.Policy()),
+            new(db,()=>signals,work,email,new(keys),time),work,email,new(db,time),time,NullLogger<SendDraftWorkflow>.Instance,new(db,new(db,time),()=>signals,work,time))
+            {HoldAdmission=new(operations,closed)};
+        db.ChangeTracker.Clear();Assert.NotNull(await workflow.SendAsync(principal,e.PublicId,version,true,true,SenderSendStatement.Version,null,null));
+        return new(e,capture,verification.Id,payload.TokenId,verification.PayloadJson,originalTokenExpiry);
+    }
+    private sealed record FiniteDemo(Envelope Envelope,CapturedSender Sender,Guid VerificationMailId,Guid VerificationTokenId,string OriginalCarrier,DateTimeOffset OriginalTokenExpiry);
+    private sealed class CapturedSender:IEmailSender
+    {
+        internal int Calls;
+        public Task<EmailDelivery> SendAsync(OutgoingEmail message,CancellationToken ct=default){Calls++;return Task.FromResult(new EmailDelivery("SyntheticCapture","synthetic-expiry-receipt"));}
+    }
+    private sealed class MemoryBlobs:IBlobStore
+    {
+        private readonly Dictionary<DocumentBlob,byte[]> objects=[];
+        public async Task WriteAsync(ClaimsPrincipal sender,DocumentBlob blob,Stream source,long length,CancellationToken ct=default)
+        {EnvelopeStorageAuthorization.Demand(sender,blob);using var bytes=new MemoryStream();await source.CopyToAsync(bytes,ct);Assert.Equal(length,bytes.Length);objects.Add(blob,bytes.ToArray());}
+        public async Task<long> CopyToAsync(ClaimsPrincipal sender,DocumentBlob blob,Stream destination,CancellationToken ct=default)
+        {EnvelopeStorageAuthorization.DemandRead(sender,blob);var bytes=objects[blob];await destination.WriteAsync(bytes,ct);return bytes.Length;}
+        public Task DeleteAsync(ClaimsPrincipal sender,DocumentBlob blob,CancellationToken ct=default)
+        {EnvelopeStorageAuthorization.DemandDelete(sender,blob);objects.Remove(blob);return Task.CompletedTask;}
     }
 }

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
 using QuillSign.Documents;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Signing;
 
@@ -12,6 +13,7 @@ public sealed record SignerOwnCheckpoint(SignerFinishAccepted Acceptance,byte[] 
 public sealed class SignerCheckpointReads(QuillSignDbContext db,SignerAccess access,SignerCheckpointState state,SignerCheckpointBlobs blobs,
     SignerReviewProtection protection,TimeProvider time)
 {
+    internal ProductionSignerMutationAdmission? HoldAdmission {get;init;}
     public async Task<SignerFinishAccepted?> ConfirmAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct=default)
         =>(await GetAsync(principal,publicId,receipt,false,ct))?.Acceptance;
     internal Task<SignerOwnCheckpoint?> ConfirmScopeAsync(ClaimsPrincipal principal,string publicId,string? receipt,CancellationToken ct)
@@ -20,8 +22,10 @@ public sealed class SignerCheckpointReads(QuillSignDbContext db,SignerAccess acc
         =>GetAsync(principal,publicId,receipt,true,ct);
     private async Task<SignerOwnCheckpoint?> GetAsync(ClaimsPrincipal principal,string publicId,string? receipt,bool published,CancellationToken ct)
     {
+        if(HoldAdmission is not null)ProductionSignerMutationAdmission.DemandStandalone(db);
         await SqlResume.RunAsync(()=>db.Database.OpenConnectionAsync(ct),ct); await using var transaction=await db.Database.BeginTransactionAsync(ct);
         var context=await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true); if(context?.ConsentAt is null)return null;
+        if(HoldAdmission is null&&access.HoldAdmission is not null&&!await access.HoldAdmission.IsUnenrolledDemoAsync(db,context.Identity.EnvelopeId,ct))return null;
         var token=protection.ReadAccepted(receipt,context.Identity); if(token is null)return null;
         var f=await db.SignerFinishAcceptances.AsNoTracking().SingleOrDefaultAsync(x=>x.EnvelopeId==context.Identity.EnvelopeId && x.SignerId==context.Identity.SignerId,ct);
         if(f is null || published && f.ProcessedAt is null)return null;
@@ -31,9 +35,14 @@ public sealed class SignerCheckpointReads(QuillSignDbContext db,SignerAccess acc
         if(await state.CurrentAsync(envelope,ct) is null)return null;
         var signer=await db.Signers.AsNoTracking().SingleAsync(x=>x.Id==f.SignerId && x.EnvelopeId==f.EnvelopeId,ct);
         var adoption=await state.AcceptanceAsync(f,signer,ct); if(adoption is null)return null;
-        var bytes=await blobs.PdfAsync(f,false,ct); await blobs.AssetsAsync(f,adoption,ct);
+        if(HoldAdmission is not null){await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);if(!access.IsLive(context))return null;}
+        var bytes=await blobs.PdfAsync(f,false,ct);
+        if(HoldAdmission is not null){await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);if(!access.IsLive(context))return null;}
+        await blobs.AssetsAsync(f,adoption,ct);
+        if(HoldAdmission is not null){await HoldAdmission.DemandNewProofLockedAsync(db,context,ct);if(!access.IsLive(context))return null;}
         if((await access.GetLockedContextAsync(principal,publicId,ct,finishConfirmation:true))?.ConsentAt is null || context.Identity.SessionExpiresAt<=time.GetUtcNow())return null;
         await access.CommitAsync(transaction,ct);DocumentRetentionAccess.Check(context.RetentionDeadline,time);
+        if(HoldAdmission is not null){await transaction.DisposeAsync();await HoldAdmission.DemandNewProofAsync(context,ct);if(!access.IsLive(context))return null;}
         if(context.Identity.SessionExpiresAt<=time.GetUtcNow())return null;
         return new(SignerFinish.Result(f),bytes){RetentionDeadline=context.RetentionDeadline};
     }

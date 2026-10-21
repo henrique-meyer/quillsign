@@ -6,6 +6,8 @@ Run commands from the repository root. Keep deployment names, identifiers, domai
 
 ## Azure database
 
+Parameter files may also live outside the checkout: copy an example anywhere private, change its `using` line to the template's path, and pass that file to `--parameters` (or `file://...` for AWS) in the commands below.
+
 Copy `infra/main.bicepparam.example` to the ignored `infra/main.bicepparam` and fill in the required values. Set `AZURE_RESOURCE_GROUP` to the same group name. Choose a supported SQL region; it may differ from the resource group's location.
 
 The template uses the Azure SQL free offer and pauses the database if its monthly allowance is exhausted rather than charging for overflow.

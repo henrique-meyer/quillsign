@@ -16,7 +16,9 @@ from email.message import EmailMessage
 
 ROOT = Path(__file__).resolve().parents[2]
 os.chdir(ROOT)
-for line in (ROOT / '.env').read_text(encoding='utf-8-sig').splitlines():
+# QUILLSIGN_ENV_FILE may point outside the checkout; values never override process variables.
+ENV_FILE = Path(os.environ.get('QUILLSIGN_ENV_FILE') or ROOT / '.env')
+for line in ENV_FILE.read_text(encoding='utf-8-sig').splitlines():
     if '=' in line and not line.lstrip().startswith('#'):
         key, value = line.split('=', 1)
         os.environ.setdefault(key.strip(), value.strip().strip('\"\''))

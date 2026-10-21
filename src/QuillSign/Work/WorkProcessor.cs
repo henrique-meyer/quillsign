@@ -1,4 +1,5 @@
 using QuillSign.Data;
+using QuillSign.Lifecycle;
 
 namespace QuillSign.Work;
 
@@ -27,6 +28,11 @@ public sealed class WorkProcessor(WorkStore store, IWorkSignals signals, IEnumer
         }
         WorkClaim claim;
         try { claim = await store.ClaimAsync(id, cancellationToken); }
+        catch (ProductionWorkBlockedException)
+        {
+            await signals.DeferAsync(delivery, TimeSpan.FromMinutes(15), cancellationToken);
+            return true;
+        }
         catch (Exception e) when (SqlResume.IsUnavailable(e))
         {
             // A database paused on allowance exhaustion must not cause a hot loop.

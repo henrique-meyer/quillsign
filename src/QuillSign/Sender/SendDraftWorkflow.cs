@@ -27,6 +27,7 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
     AuditWriter audit,TimeProvider time,ILogger<SendDraftWorkflow> logger,SigningExpiryJobs expiry,SignerReminderOptions? reminderOptions=null,SignerReminderJobs? reminderJobs=null,
     EmailPilotEnvelopeAccess? pilot=null)
 {
+    internal ProductionRecordSendAdmission? HoldAdmission { get; init; }
     public async Task<SentDraft?> SendAsync(ClaimsPrincipal sender,string publicId,byte[] expectedVersion,bool exclusionsAcknowledged,
         bool sendAcknowledged,string? statementVersion,string? ip,string? userAgent,CancellationToken ct = default,string? reviewedRetentionSha256=null,
         string? reviewedReminderSha256=null,string? reviewedReminderSchedulingVersion=null,string? reviewedDisclosureSha256=null)
@@ -35,8 +36,10 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
         if (!exclusionsAcknowledged) throw new DocumentRejectedException("Confirm that this transaction is suitable for electronic signing.");
         if(!sendAcknowledged || statementVersion!=SenderSendStatement.Version)throw new DocumentRejectedException("Confirm the reviewed Send statement.");
         if (expectedVersion is not { Length: 8 }) throw new DocumentConflictException();
+        if(HoldAdmission is not null)ProductionRecordSendAdmission.DemandStandalone(db);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct),ct);
         DocumentBlob? created = null; var commitStarted = false; SentDraft? result = null;Guid? expiryId=null;DateTimeOffset? expiryDue=null;IReadOnlyList<ScheduledSignerReminder> reminderSchedule=[];
+        ProductionRecordOperation? operation=null;
         try
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -63,7 +66,9 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
                     }
                 }
                 if(cohort is not null)SameCohort(cohort,await pilot!.RequireSendRosterLockedAsync(envelope,ct));
-                await transaction.CommitAsync(ct); await transaction.DisposeAsync();
+                if(HoldAdmission is null)await transaction.CommitAsync(ct);else await transaction.RollbackAsync(ct);
+                await transaction.DisposeAsync();
+                if(HoldAdmission is not null)await HoldAdmission.ReconcileAsync(envelope.Id,publicId,expectedVersion,existing,ct);
                 if(cohort?.IsEnrolled==true)SameCohort(cohort,await pilot!.ReadAsync(envelope.Id,ct));
                 if(queued)await outbox.PublishAsync(existing.InvitationWorkId,ct);
                 if(expiryId is Guid pending)await expiry.PublishAsync(pending,expiryDue!.Value,ct);return existing;
@@ -109,8 +114,28 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             var pages = JsonSerializer.Deserialize<List<PageGeometry>>(envelope.PageSizesJson!) ?? throw new DocumentRejectedException("The PDF page information is unavailable.");
             var rendered = renderer.Render(source.ToArray(),envelope.PdfSha256!,pages,fields.Where(x => x.SignerId is null).Select(x =>
                 new SenderPrefillField(x.Id,null,x.Type.ToString(),x.Page,x.X,x.Y,x.Width,x.Height,x.Value)).ToArray());
+            if(HoldAdmission is not null)
+            {
+                // Copying and rendering are read-only, but can outlive the
+                // originally reviewed request. Reject before reserving effects.
+                if(production is not null)CheckProductionDraft(production);
+                RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
+                if(envelope.ExpiresAt<=time.GetUtcNow())throw new DocumentRejectedException("This draft has expired.");
+                try { operation=await HoldAdmission.BeginLockedAsync(db,envelope.Id,publicId,expectedVersion,ct); }
+                catch(Exception error) when(error is InvalidDataException or UnauthorizedAccessException or DocumentConflictException){return null;}
+            }
             created = new(envelope.Id,DocumentBlobKind.Normalized,Guid.NewGuid());
-            using (var frozen = new MemoryStream(rendered.Bytes)) await storage.WriteAsync(sender,created.Value,frozen,frozen.Length,ct);
+            using(var frozen=new MemoryStream(rendered.Bytes))
+            {
+                if(operation is null)await storage.WriteAsync(sender,created.Value,frozen,frozen.Length,ct);
+                else
+                {
+                    var target=new ProductionRecordWriteDescriptor(created.Value,frozen.Length,Convert.ToHexStringLower(rendered.Sha256));
+                    var original=new ProductionRecordWriteDescriptor(new(envelope.Id,DocumentBlobKind.Normalized,originalId),length,Convert.ToHexStringLower(envelope.PdfSha256!));
+                    await HoldAdmission!.PrepareAsync(db,operation,original,target,ct);
+                    await HoldAdmission.WriteAsync(db,operation,sender,target,frozen,ct);
+                }
+            }
             // Slow storage must not let a now-expired draft become Sent.
             if (envelope.ExpiresAt <= time.GetUtcNow()) throw new DocumentRejectedException("This draft has expired.");
             var now = time.GetUtcNow(); envelope.Status = EnvelopeStatus.Sent; envelope.SentAt = now; envelope.ExclusionsAckAt = now;
@@ -121,7 +146,9 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
                     .SetProperty(x => x.SentPdfBlob,envelope.SentPdfBlob).SetProperty(x => x.SentPdfSha256,rendered.Sha256)
                     .SetProperty(x => x.ExpiresAt,envelope.ExpiresAt).SetProperty(x => x.Title,disclosure.Title).SetProperty(x => x.ErsdVersion,disclosure.Version).SetProperty(x => x.ErsdText,disclosure.Text).SetProperty(x => x.ErsdSha256,disclosure.Sha256),ct);
             if (changed != 1) throw new DocumentConflictException();
-            var invitation = await outbox.PrepareAsync(envelope.Id,signers[0].Id,signers[0].Email,ct);
+            Func<Guid,DateTimeOffset,CancellationToken,Task>? demandHint=operation is null?null:
+                (id,due,token)=>HoldAdmission!.DemandHintAsync(db,operation,id,due,token);
+            var invitation = await outbox.PrepareAsync(envelope.Id,signers[0].Id,signers[0].Email,ct,demandHint:demandHint);
             RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             var fieldSnapshot = JsonSerializer.SerializeToUtf8Bytes(fields.Select(x => new { x.Id,x.SignerId,x.Type,x.Page,x.X,x.Y,x.Width,x.Height,x.Required,x.Label,x.Value }));
             var documentHash = Convert.ToHexStringLower(rendered.Sha256); var disclosureHash = Convert.ToHexStringLower(disclosure.Sha256);
@@ -143,8 +170,8 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             await audit.AppendAsync(envelope.Id,"sent",envelope.SenderEmail,ip,userAgent,ct,sentData);
             if(production is not null)CheckProductionDraft(production);
             RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
-            expiryId=await expiry.PrepareAsync(envelope.Id,ct);expiryDue=envelope.ExpiresAt;
-            if(reminderJobs is not null)reminderSchedule=await reminderJobs.PrepareCurrentLockedAsync(envelope.Id,ct);
+            expiryId=await expiry.PrepareAsync(envelope.Id,ct,demandHint);expiryDue=envelope.ExpiresAt;
+            if(reminderJobs is not null)reminderSchedule=await reminderJobs.PrepareCurrentLockedAsync(envelope.Id,ct,demandHint);
             result = new(envelope.Id,envelope.PublicId,invitation,documentHash,disclosureHash){Reminders=reminders,ReminderSchedulingVersion=SignerReminderEvidence.Version};
             RetentionSigningDeadline.CheckDeadline(retention,time.GetUtcNow());
             if((reminderOptions??new()).Freeze(envelope.IsDemo).Sha256!=reminders.Sha256)throw new DocumentConflictException();
@@ -154,12 +181,17 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
                 if(await SenderSentStatus.ReadSentAsync(db,savedParent,expectedVersion,ct)!=result)throw new DocumentConflictException();
             }
             if(production is not null)CheckProductionDraft(production);
+            if(operation is not null)
+            {
+                await HoldAdmission!.PrepareOutcomeLockedAsync(db,operation,ct);
+                if(production is not null)CheckProductionDraft(production);
+            }
             commitStarted = true; await transaction.CommitAsync(ct);
         }
         catch
         {
             // A failed commit can have an unknown outcome. Preserve potentially referenced bytes.
-            if (!commitStarted && created is DocumentBlob orphan)
+            if (!commitStarted && operation is null && created is DocumentBlob orphan)
             {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                 try { await storage.DeleteAsync(sender,orphan,timeout.Token); }
@@ -168,6 +200,7 @@ public sealed class SendDraftWorkflow(QuillSignDbContext db,IBlobStore storage,D
             }
             throw;
         }
+        if(operation is not null)await HoldAdmission!.CompleteAsync(operation,result!,ct);
         if(pilot is not null) {
             var cohort=await pilot.ReadAsync(result!.EnvelopeId,ct);
             if(cohort.IsEnrolled && !cohort.Allowed || !cohort.EnvelopeExists)throw new EmailDisabledException();
