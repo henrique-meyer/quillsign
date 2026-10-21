@@ -12,9 +12,9 @@ using QuillSign.Work;
 
 namespace QuillSign.Lifecycle;
 
-// Complete acceptance of the current production INITIAL Sent state only. Other
-// historical readers deliberately support broader histories; this closed gate
-// must not reinterpret progressed, legacy or reminder-enabled records as this cut.
+// Complete acceptance of current production Send through its FIRST original
+// invitation, one-use opening and consent only. Frozen-Send proof is unchanged;
+// the separate dispatch verifier composes each exact closed progress stage.
 internal static class ProductionHoldSentAuditReferences
 {
     private static readonly JsonSerializerOptions Rows = new() { Converters = { new JsonStringEnumConverter() } };
@@ -53,7 +53,7 @@ internal static class ProductionHoldSentAuditReferences
         ProductionHoldAdmissionAuditReferences.Demand(sql);
         var audits = tables["AuditEvents"].Deserialize<AuditEvent[]>(Rows) ?? throw Invalid();
         var sent = audits.Single(x => x.Event == "sent");
-        if (sent.DataJson.Length > 16384 || Encoding.UTF8.GetByteCount(sent.DataJson) > 16384 || audits.Any(x => x.Sequence > sent.Sequence)) throw Invalid();
+        if (sent.DataJson.Length > 16384 || Encoding.UTF8.GetByteCount(sent.DataJson) > 16384) throw Invalid();
         var p = JsonSerializer.Deserialize<Sent>(sent.DataJson, Strict) ?? throw Invalid();
         if (JsonSerializer.Serialize(p) != sent.DataJson || !p.exclusionsAcknowledged || !p.senderConfirmed || p.dispatch != "queued" ||
             p.senderStatementVersion != SenderSendStatement.Version || p.senderStatement != SenderSendStatement.Text || p.senderStatementSha256 != SenderSendStatement.Sha256 ||
@@ -75,12 +75,15 @@ internal static class ProductionHoldSentAuditReferences
         if (recipients.Select(x => x.Id).Distinct().Count() != recipients.Length || recipients.Select(x => x.Email).Distinct(StringComparer.OrdinalIgnoreCase).Count() != recipients.Length ||
             recipients.Any(x => x.Id == Guid.Empty || x.EnvelopeId != e.Id || !Address(x.Email) || string.IsNullOrWhiteSpace(x.Name) || x.Name.Length > 512 || x.Name.Any(char.IsControl))) throw Invalid();
         signers = signers.OrderBy(x => x.Order).ToArray();
+        var progress = ProductionHoldInvitationDispatchReferences.Demand(sql, objects, keys, p.invitationWorkId);
         for (var i = 0; i < signers.Length; i++)
         {
             var s = signers[i];
-            if (s.Id == Guid.Empty || s.EnvelopeId != e.Id || s.Order != i + 1 || s.Status != SignerStatus.Pending ||
+            var consented = i == 0 && progress == HoldInitialSignerStage.Consented;
+            var status = i != 0 || progress == HoldInitialSignerStage.Queued ? SignerStatus.Pending : consented ? SignerStatus.Viewed : SignerStatus.Notified;
+            if (s.Id == Guid.Empty || s.EnvelopeId != e.Id || s.Order != i + 1 || s.Status != status ||
                 !Address(s.Email) || string.IsNullOrWhiteSpace(s.FullName) || s.FullName.Length > 512 || s.FullName.Any(char.IsControl) ||
-                s.ConsentAt is not null || s.ConsentIp is not null || s.ConsentUa is not null || s.SignedAt is not null || s.SignedIp is not null || s.SignedUa is not null ||
+                !consented && (s.ConsentAt is not null || s.ConsentIp is not null || s.ConsentUa is not null) || s.SignedAt is not null || s.SignedIp is not null || s.SignedUa is not null ||
                 s.DeclineReason is not null || s.SignatureImageBlob is not null || s.InitialsImageBlob is not null || s.SignatureMethod is not null ||
                 s.SignatureAdoptionId is not null || s.SignatureImageSha256 is not null || s.InitialsImageSha256 is not null || s.SignatureAdoptedAt is not null ||
                 s.SignatureTypedName is not null || s.SignatureTypedInitials is not null || s.SignatureNormalizationVersion is not null || s.SignatureAdoptionVersion is not null) throw Invalid();
@@ -92,7 +95,7 @@ internal static class ProductionHoldSentAuditReferences
                 f.SignerId is null && (f.Value is null ? f.FilledAt is not null || f.FilledBy is not null :
                     f.FilledBy != PartyType.Sender || !Utc(f.FilledAt) || f.FilledAt < e.PreviewConfirmedAt || f.FilledAt > e.SentAt) ||
                 f.SignatureAdoptionId is not null || f.ImageSha256 is not null) throw Invalid();
-        // No participant progress is admitted, so these values are still the
+        // No participant fields/adoption are admitted, so these values are still the
         // frozen sender preparation. The existing codec owns SQL ordering,
         // decimal scale, exact field digest, actor/time/hash and event adjacency.
         ProductionHoldFinalizedFieldReferences.Demand(sql, objects, fields.Select(f => new FieldInput(f.Id, f.SignerId, f.Type.ToString(),
@@ -107,17 +110,15 @@ internal static class ProductionHoldSentAuditReferences
             mail.Any(x => x.EnvelopeId != e.Id) || work.Any(x => x.EnvelopeId != e.Id)) throw Invalid();
         var invitation = mail.Single(x => x.Id == p.invitationWorkId);
         if (invitation.Template != "signer-invitation" || invitation.To != signers[0].Email || invitation.AttachmentsJson != "[]" ||
-            invitation.Status != EmailStatus.Queued || invitation.Attempts != 0 || invitation.SubmissionStartedAt is not null || invitation.Provider is not null ||
-            invitation.ProviderMessageId is not null || invitation.LastError is not null || invitation.LeaseOwner is not null || invitation.LeaseExpiresAt is not null ||
+            invitation.LastError is not null || invitation.LeaseOwner is not null || invitation.LeaseExpiresAt is not null ||
             !Utc(invitation.AvailableAt) || invitation.AvailableAt < e.SentAt || invitation.AvailableAt > sent.At ||
             invitation.PayloadJson is not { Length: > 0 and <= 12000 } || Encoding.UTF8.GetByteCount(invitation.PayloadJson) > 12000) throw Invalid();
         var wrapped = JsonSerializer.Deserialize<ProtectedWorkPayload>(invitation.PayloadJson, Strict) ?? throw Invalid();
         var payload = new SignerInvitationProtection(keys).Read(invitation.PayloadJson);
         if (JsonSerializer.Serialize(wrapped) != invitation.PayloadJson ||
             keys.CreateProtector("QuillSign.SignerInvitationPayload.v1").Unprotect(wrapped.Protected) != JsonSerializer.Serialize(payload) ||
-            payload.SignerId != signers[0].Id || payload.LastTokenId is not null || payload.ContactRevisionId != Guid.Empty || payload.ContactRevisionNumber != 0 ||
+            payload.SignerId != signers[0].Id || payload.ContactRevisionId != Guid.Empty || payload.ContactRevisionNumber != 0 ||
             payload.DocumentId.ToString("N") != e.SentPdfBlob || payload.DocumentSha256 != p.documentSha256 || payload.DisclosureSha256 != p.disclosureSha256) throw Invalid();
-        DemandQueued(work.Single(x => x.Id == invitation.Id), WorkKind.Email, invitation.AvailableAt, "{}");
         var verification = mail.Single(x => x.Id != invitation.Id);
         var verificationWork = work.Single(x => x.Id == verification.Id);
         if (verification.Id == Guid.Empty || verification.Template != "sender-verification" || verification.Status != EmailStatus.Sent || verification.To != e.SenderEmail ||
@@ -130,8 +131,7 @@ internal static class ProductionHoldSentAuditReferences
             verificationWork.LeaseOwner is not null || verificationWork.LeaseExpiresAt is not null || verificationWork.LastError is not null ||
             verificationWork.PayloadJson != JsonSerializer.Serialize(new { emailId = verification.Id })) throw Invalid();
         ProductionHoldDecisionNotificationReferences.Demand(sql, objects, keys);
-        if (tables["AuthTokens"].GetArrayLength() != 1) throw Invalid();
-        var token = tables["AuthTokens"].EnumerateArray().Single().Deserialize<AuthToken>(Rows) ?? throw Invalid();
+        var token = tables["AuthTokens"].EnumerateArray().Single(x => x.GetProperty("Purpose").GetString() == nameof(TokenPurpose.SenderVerify)).Deserialize<AuthToken>(Rows) ?? throw Invalid();
         if (token.Purpose != TokenPurpose.SenderVerify || token.UsedAt != e.SenderVerifiedAt) throw Invalid();
         if (e.ExpiresAt is { } deadline)
         {
