@@ -57,8 +57,25 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         Tuple(recordId, operationId, kind, reference);
         var before = await witness.ReadAsync(recordId, ct);
         if (before.Operations?.ContainsKey(operationId) == true) return await ResumeAsync(recordId, operationId, kind, reference, ct);
-        if (!before.Initialized || before.Frozen) throw Invalid();
         await using var db = open(); await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var scope = await BeginLockedAsync(db, recordId, operationId, kind, reference, ct);
+        await tx.RollbackAsync(ct); return scope;
+    }
+
+    // Reserve only after the caller's ordinary validation/local rendering and
+    // immediately before its first mutation, without acquiring a second connection.
+    internal async Task<ProductionRecordOperation> BeginLockedAsync(QuillSignDbContext db, Guid recordId,
+        Guid operationId, string kind, string reference, CancellationToken ct = default)
+    {
+        Tuple(recordId, operationId, kind, reference);
+        if (db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges()) throw Invalid();
+        var before = await witness.ReadAsync(recordId, ct);
+        if (before.Operations?.ContainsKey(operationId) == true)
+        {
+            var replay = Scope(recordId, operationId, kind, reference, before);
+            await DemandStartingLockedAsync(db, replay, ct); return replay;
+        }
+        if (!before.Initialized || before.Frozen) throw Invalid();
         var requests = await Requests(db, recordId, ct); ProductionHoldWitnessJournal.DemandSql(before, requests);
         var sql = await Capture(db, recordId, requests, ct); var content = ContentDigest(sql, keys);
         if (content != before.BusinessStateSha256 || before.SqlStateSha256 is not null && sql.StateSha256 != before.SqlStateSha256) throw Invalid();
@@ -66,7 +83,7 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         var state = await witness.ReserveOperationAsync(recordId, operationId, kind, reference, requests, content, sql.StateSha256,
             Id(recordId, operationId, "reserve"), ct);
         var scope = Scope(recordId, operationId, kind, reference, state);
-        DemandActive(scope, state); await tx.RollbackAsync(ct); return scope;
+        DemandActive(scope, state); return scope;
     }
 
     internal async Task<ProductionRecordOperation> ResumeAsync(Guid recordId, Guid operationId, string kind, string reference, CancellationToken ct = default)
@@ -78,6 +95,18 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         if (!state.SettledOperations.ContainsKey(operationId) && state.Outcomes?.ContainsKey(operationId) != true &&
             state.HandlerOutcomes?.ContainsKey(operationId) != true) await DemandAsync(scope, ct);
         return scope;
+    }
+
+    // Receipt-only reconciliation after the caller has disposed its read-only
+    // Sent transaction. An unknown/unsealed operation cannot replay business IO.
+    internal async Task<ProductionRecordOperation?> ReadSendOutcomeAsync(Guid recordId, string reference, CancellationToken ct = default)
+    {
+        if (recordId == Guid.Empty || !ProductionHoldWitnessJournal.OperationText(reference, 512)) throw Invalid();
+        var state = await witness.ReadAsync(recordId, ct);
+        if (state.OutstandingOperation is not { } operationId) return null;
+        var scope = Scope(recordId, operationId, ProductionRecordSendWriteContract.Kind, reference, state);
+        if (state.Outcomes?.ContainsKey(operationId) != true) throw Invalid();
+        DemandActive(scope, state, allowOutcome: true); return scope;
     }
 
     internal async Task DemandAsync(ProductionRecordOperation scope, CancellationToken ct = default)
@@ -141,6 +170,7 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
             // Without a precommit outcome only the EXACT originally reserved
             // SQL may be acknowledged. Fresh changed SQL is never authority.
             if (state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true || state.UploadWrites?.ContainsKey(scope.OperationId) == true ||
+                state.SendWrites?.ContainsKey(scope.OperationId) == true ||
                 current.StateSha256 != scope.SqlStateSha256 || content != scope.ContentSha256) throw Invalid();
             state = await witness.PrepareOperationOutcomeAsync(scope.RecordId, operation, content, current.StateSha256,
                 Id(scope.RecordId, scope.OperationId, "outcome"), ct);
@@ -168,6 +198,8 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
         var current = await Capture(db, scope.RecordId, requests, ct);
         if (scope.Kind == ProductionRecordUploadWriteContract.Kind)
             ProductionRecordUploadWriteContract.DemandSaved(current, keys, state.UploadWrites?.GetValueOrDefault(scope.OperationId) ?? throw Invalid());
+        if (scope.Kind == ProductionRecordSendWriteContract.Kind)
+            await DemandSendOutcomeLocked(db, scope, current, state, ct);
         var result = await witness.PrepareOperationOutcomeAsync(scope.RecordId, state.Operations![scope.OperationId],
             ContentDigest(current, keys), current.StateSha256, Id(scope.RecordId, scope.OperationId, "outcome"), ct);
         DemandActive(scope, result, allowOutcome: true, allowHandler: true);
