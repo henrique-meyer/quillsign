@@ -31,7 +31,7 @@ internal static class ProductionDeletionBrowserProof
 {
     internal const string Statement="Synthetic operator attests exact completed packet copies were retained; software does not prove possession or legal adequacy.";
     internal static async Task<bool> RunIfRequestedAsync(SqlDatabaseFixture fixture,Guid recordId,IDataProtectionProvider keys,
-        TimeProvider time,ProductionHoldWitnessJournal journal,ProductionHoldCoordinator holds,ProductionDeletionCoordinator deletion,Func<Task> performWork)
+        TimeProvider time,ProductionHoldWitnessJournal journal,ProductionHoldCoordinator holds,ProductionDeletionCoordinator deletion,Func<Task> performWork,Action synchronizeBrowserClock)
     {
         if(Environment.GetEnvironmentVariable("QUILLSIGN_Q149_BROWSER_PROOF")!="1")return false;
         var privateRoot=Environment.GetEnvironmentVariable("QUILLSIGN_PRIVATE_DATA");
@@ -69,7 +69,14 @@ internal static class ProductionDeletionBrowserProof
             o.Events.OnRedirectToIdentityProvider=c=>{c.ProtocolMessage.IssuerAddress=origin+"/__fixture/idp";return Task.CompletedTask;};
         });
         builder.Services.Configure<CookieAuthenticationOptions>(ProductionOperatorAuthority.CookieScheme,o=>o.TimeProvider=time);
-        await using var app=builder.Build();app.UseProductionOperatorPrivacy();app.UseStaticFiles();app.UseRouting();app.UseRateLimiter();app.UseAuthentication();app.UseAuthorization();
+        await using var app=builder.Build();
+        // The historical business fixture reaches this bridge only after its
+        // original policy, completion and preservation proofs. Real browsers
+        // use wall time for nonce/correlation cookies, so catch up the SAME
+        // fixture monotonically before each request, including reauthentication.
+        // No existing token, policy, provider or session deadline is rewritten.
+        app.Use(async(_,next)=>{synchronizeBrowserClock();await next();});
+        app.UseProductionOperatorPrivacy();app.UseStaticFiles();app.UseRouting();app.UseRateLimiter();app.UseAuthentication();app.UseAuthorization();
         app.MapRazorPages().WithProductionOperatorRateLimit();
         var done=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var workStarted=0;var workDone=false;
         app.MapGet("/__fixture/idp",(HttpContext c)=>{
