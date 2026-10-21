@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace QuillSign.Lifecycle;
 
-internal enum HoldWitnessKind { OperationReserved, OperationSettled, CommandIntent, SqlAccepted, Preserved, Released, PreservationReserved, ReleaseReserved, PlanFrozen, Initialized, OperationOutcomePrepared, HandlerOutcomePrepared }
+internal enum HoldWitnessKind { OperationReserved, OperationSettled, CommandIntent, SqlAccepted, Preserved, Released, PreservationReserved, ReleaseReserved, PlanFrozen, Initialized, OperationOutcomePrepared, HandlerOutcomePrepared, UploadWritesPrepared, UploadWriteStarted, UploadWriteRecorded }
 internal sealed record HoldWitnessEvent(string Version, Guid RecordId, long Sequence, Guid EventId,
     HoldWitnessKind Kind, DateTimeOffset At, string? PreviousHash, ProductionHoldCommand? Command,
     string? Issuer, string? Subject, Guid? OperationId, long RequestRevision, string? RequestFenceHash,
@@ -15,7 +15,12 @@ internal sealed record HoldWitnessEvent(string Version, Guid RecordId, long Sequ
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OperationReference = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SqlStateSha256 = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OutcomeVersion = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? HandlerOutcomeVersion = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? HandlerOutcomeVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? UploadWriteVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteDescriptor? UploadOriginal = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteDescriptor? UploadNormalized = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteDescriptor? UploadItem = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteReceipt? UploadReceipt = null);
 internal sealed record HoldWitnessOutcome(string ContentSha256, string SqlStateSha256, long Sequence);
 internal sealed record HoldWitnessHold(ProductionHoldCommand Placement, ProductionHoldCommand? Release,
     bool Effective, bool Released, Guid? PlanId, string? PlanSha256, string? PreservationSha256, string? ReleaseSha256,
@@ -25,7 +30,8 @@ internal sealed record HoldWitnessState(long Sequence, string? HeadHash, long Re
     string? BusinessStateSha256, IReadOnlyDictionary<Guid, string> SettledOperations, bool Initialized = false,
     string? SqlStateSha256 = null, IReadOnlyDictionary<Guid, HoldWitnessOperation>? Operations = null,
     IReadOnlyDictionary<Guid, HoldWitnessOutcome>? Outcomes = null,
-    IReadOnlyDictionary<Guid, HoldWitnessOutcome>? HandlerOutcomes = null)
+    IReadOnlyDictionary<Guid, HoldWitnessOutcome>? HandlerOutcomes = null,
+    IReadOnlyDictionary<Guid, HoldWitnessUploadWrites>? UploadWrites = null)
 {
     internal bool Frozen => Unacknowledged is not null || OutstandingOperation is not null || Holds.Values.Any(x => !x.Released);
 }
@@ -87,6 +93,33 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
             RequestRevision = operation.RequestRevision, RequestFenceHash = operation.RequestFenceHash,
             ReceiptSha256 = receiptSha256, BusinessStateSha256 = contentSha256, SqlStateSha256 = sqlStateSha256 });
     }
+
+    internal Task<HoldWitnessState> PrepareUploadWritesAsync(Guid recordId, HoldWitnessOperation operation,
+        ProductionRecordWriteDescriptor original, ProductionRecordWriteDescriptor normalized, Guid eventId, CancellationToken ct = default)
+        => Change(recordId, eventId, HoldWitnessKind.UploadWritesPrepared, ct, x => UploadEvent(x, operation) with {
+            UploadOriginal = original, UploadNormalized = normalized });
+
+    internal async Task<bool> BeginUploadWriteAsync(Guid recordId, HoldWitnessOperation operation, ProductionRecordWriteDescriptor item,
+        Guid eventId, CancellationToken ct = default)
+    {
+        var prior = await Read(recordId, ct); var proposed = UploadEvent(New(recordId, eventId, HoldWitnessKind.UploadWriteStarted), operation) with { UploadItem = item };
+        var replay = prior.Events.SingleOrDefault(x => x.EventId == eventId);
+        if (replay is not null)
+        {
+            if (replay != (proposed with { At = replay.At, Sequence = replay.Sequence, PreviousHash = replay.PreviousHash })) throw Invalid();
+            return false; // Durable intent can authorize readback ONLY on replay.
+        }
+        await Append(prior, proposed, ct); return true; // A lost create acknowledgement never returns true.
+    }
+
+    internal Task<HoldWitnessState> RecordUploadWriteAsync(Guid recordId, HoldWitnessOperation operation,
+        ProductionRecordWriteReceipt receipt, Guid eventId, CancellationToken ct = default)
+        => Change(recordId, eventId, HoldWitnessKind.UploadWriteRecorded, ct,
+            x => UploadEvent(x, operation) with { UploadReceipt = receipt });
+
+    private static HoldWitnessEvent UploadEvent(HoldWitnessEvent value, HoldWitnessOperation operation) => value with {
+        OperationId = operation.OperationId, OperationKind = operation.Kind, OperationReference = operation.Reference,
+        RequestRevision = operation.RequestRevision, RequestFenceHash = operation.RequestFenceHash, UploadWriteVersion = ProductionRecordUploadWriteContract.Version };
 
     internal async Task<HoldWitnessState> IntentAsync(ProductionOperatorAuthority authority, ProductionOperatorPolicy policy,
         ProductionHoldCommand command, Guid eventId, CancellationToken ct = default)
@@ -240,6 +273,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         var typed = new Dictionary<Guid, HoldWitnessOperation>(); bool initialized = false; string? sqlState = null;
         var outcomes = new Dictionary<Guid, HoldWitnessOutcome>(); var outcomeRequired = new HashSet<Guid>();
         var handlerOutcomes = new Dictionary<Guid, HoldWitnessOutcome>();
+        var uploads = new Dictionary<Guid, HoldWitnessUploadWrites>();
         Guid? operation = null; ProductionHoldCommand? pending = null; long revision = 0; string? fence = null; string? business = null;
         DateTimeOffset? lastAt = null;
         foreach (var e in events)
@@ -284,10 +318,42 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                         e.OperationKind != preparing.Kind || e.OperationReference != preparing.Reference ||
                         e.RequestRevision != preparing.RequestRevision || e.RequestFenceHash != preparing.RequestFenceHash ||
                         revision != preparing.RequestRevision || fence != preparing.RequestFenceHash ||
-                        !Hash(e.BusinessStateSha256) || !Hash(e.SqlStateSha256)) throw Invalid();
+                        !Hash(e.BusinessStateSha256) || !Hash(e.SqlStateSha256) ||
+                        uploads.TryGetValue(operation.Value, out var uploadOutcome) && !ProductionRecordUploadWriteContract.Complete(uploadOutcome)) throw Invalid();
                     outcomes.Add(operation.Value, new(e.BusinessStateSha256!, e.SqlStateSha256!, e.Sequence));
                     canonical = canonical with { OperationId = e.OperationId, OperationKind = e.OperationKind, OperationReference = e.OperationReference,
                         RequestRevision = revision, RequestFenceHash = fence, BusinessStateSha256 = e.BusinessStateSha256, SqlStateSha256 = e.SqlStateSha256 };
+                    break;
+                case HoldWitnessKind.UploadWritesPrepared:
+                case HoldWitnessKind.UploadWriteStarted:
+                case HoldWitnessKind.UploadWriteRecorded:
+                    if (maintenance || operation is null || e.OperationId != operation || !typed.TryGetValue(operation.Value, out var uploading) ||
+                        uploading.Kind != ProductionRecordUploadWriteContract.Kind || e.OperationKind != uploading.Kind || e.OperationReference != uploading.Reference ||
+                        e.RequestRevision != uploading.RequestRevision || e.RequestFenceHash != uploading.RequestFenceHash ||
+                        revision != uploading.RequestRevision || fence != uploading.RequestFenceHash || outcomes.ContainsKey(operation.Value) ||
+                        handlerOutcomes.ContainsKey(operation.Value) || e.UploadWriteVersion != ProductionRecordUploadWriteContract.Version) throw Invalid();
+                    canonical = UploadEvent(canonical, uploading);
+                    if (e.Kind == HoldWitnessKind.UploadWritesPrepared)
+                    {
+                        if (uploads.ContainsKey(operation.Value) || !ProductionRecordUploadWriteContract.Pair(id, e.UploadOriginal, e.UploadNormalized)) throw Invalid();
+                        uploads.Add(operation.Value, new(e.UploadOriginal!, e.UploadNormalized!, [], System.Collections.Immutable.ImmutableDictionary<QuillSign.Storage.DocumentBlob, ProductionRecordWriteReceipt>.Empty));
+                        outcomeRequired.Add(operation.Value); canonical = canonical with { UploadOriginal = e.UploadOriginal, UploadNormalized = e.UploadNormalized };
+                    }
+                    else
+                    {
+                        if (!uploads.TryGetValue(operation.Value, out var upload)) throw Invalid();
+                        if (e.Kind == HoldWitnessKind.UploadWriteStarted)
+                        {
+                            if (e.UploadItem is not { } item || !ProductionRecordUploadWriteContract.Member(upload, item) || upload.Begun.Contains(item.Blob)) throw Invalid();
+                            uploads[operation.Value] = upload with { Begun = upload.Begun.Add(item.Blob) }; canonical = canonical with { UploadItem = item };
+                        }
+                        else
+                        {
+                            if (e.UploadReceipt is not { } receipt || !ProductionRecordUploadWriteContract.Receipt(id, receipt) ||
+                                !ProductionRecordUploadWriteContract.Member(upload, receipt.Item) || !upload.Begun.Contains(receipt.Item.Blob) || upload.Receipts.ContainsKey(receipt.Item.Blob)) throw Invalid();
+                            uploads[operation.Value] = upload with { Receipts = upload.Receipts.Add(receipt.Item.Blob, receipt) }; canonical = canonical with { UploadReceipt = receipt };
+                        }
+                    }
                     break;
                 case HoldWitnessKind.HandlerOutcomePrepared:
                     if (maintenance || operation is null || e.OperationId != operation ||
@@ -375,7 +441,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
             }
             if (canonical != e) throw Invalid();
         }
-        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed, outcomes, handlerOutcomes);
+        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed, outcomes, handlerOutcomes, uploads);
     }
 
     private static bool Prefix(ProductionHoldControlPrefix? value) => value is { Sequence: > 0 } && Hash(value.Hash);

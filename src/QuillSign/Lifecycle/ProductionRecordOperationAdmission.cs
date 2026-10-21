@@ -20,7 +20,7 @@ internal sealed record ProductionRecordOperation(Guid RecordId, Guid OperationId
 // durable worker Finish are the caller's responsibility BEFORE CompleteAsync.
 // A receipt is their verified exact outcome digest, never an absence listing or
 // proof manufactured from an expired lease. Failed/unknown work remains open.
-internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
+internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness)
 {
     private sealed record HandlerFinalizationPermit(ProductionRecordOperation Scope, Guid TransactionId, HoldWitnessOutcome HandlerOutcome);
@@ -140,7 +140,7 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
         {
             // Without a precommit outcome only the EXACT originally reserved
             // SQL may be acknowledged. Fresh changed SQL is never authority.
-            if (state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true ||
+            if (state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true || state.UploadWrites?.ContainsKey(scope.OperationId) == true ||
                 current.StateSha256 != scope.SqlStateSha256 || content != scope.ContentSha256) throw Invalid();
             state = await witness.PrepareOperationOutcomeAsync(scope.RecordId, operation, content, current.StateSha256,
                 Id(scope.RecordId, scope.OperationId, "outcome"), ct);
@@ -166,6 +166,8 @@ internal sealed class ProductionRecordOperationAdmission(Func<QuillSignDbContext
         var requests = await Requests(db, scope.RecordId, ct); DemandHead(scope, requests);
         await DemandControls(db, scope.RecordId, state, ct);
         var current = await Capture(db, scope.RecordId, requests, ct);
+        if (scope.Kind == ProductionRecordUploadWriteContract.Kind)
+            ProductionRecordUploadWriteContract.DemandSaved(current, keys, state.UploadWrites?.GetValueOrDefault(scope.OperationId) ?? throw Invalid());
         var result = await witness.PrepareOperationOutcomeAsync(scope.RecordId, state.Operations![scope.OperationId],
             ContentDigest(current, keys), current.StateSha256, Id(scope.RecordId, scope.OperationId, "outcome"), ct);
         DemandActive(scope, result, allowOutcome: true, allowHandler: true);
