@@ -182,7 +182,7 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         using var voidMail=MimeMessage.Load(new MemoryStream(capture.Messages[1]));Assert.Empty(voidMail.Attachments);
         Assert.Equal(2,await db.EmailPilotCloseoutOperations.CountAsync(x=>x.CloseoutId==created.AuthorizationId&&x.Kind==1));
         Assert.Equal(originals,await OriginalRows(db,originalComplete.Concat(originalVoid).Select(x=>x.Id)));Assert.Equal(failedPairRequests,t.Run.Seal.Requests);
-        settings.Enabled=false;Assert.Null((await store.ClaimAsync(created.CompletionWork.Last(),default)).Lease);Assert.Equal(2,capture.Messages.Count);
+        settings.Enabled=false;await Assert.ThrowsAsync<InvalidDataException>(()=>store.ClaimAsync(created.CompletionWork.Last(),default));Assert.Equal(2,capture.Messages.Count);
         Assert.True(clockAt<clock.GetUtcNow());
         }
         finally
