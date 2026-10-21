@@ -18,7 +18,7 @@ internal interface IProductionHoldReleaseFence
 
 // One exact, newly-created private archive version belonging to one separately
 // authorized release. This never authorizes source/final-file protection changes.
-internal sealed class ProductionHoldArchiveReleaseCapability
+internal sealed class ProductionHoldArchiveReleaseCapability : IProductionHoldArchiveReadScope
 {
     private readonly IProductionHoldReleaseFence fence;
     private readonly TimeProvider time;
@@ -32,6 +32,8 @@ internal sealed class ProductionHoldArchiveReleaseCapability
     internal long RequestRevision { get; }
     internal string RequestFenceHash { get; }
     internal ProductionHoldArchiveStoredObject Stored { get; }
+    ProductionHoldArchiveStoredObject IProductionHoldArchiveReadScope.Stored => Stored;
+    Task IProductionHoldArchiveReadScope.DemandAsync(CancellationToken ct) => DemandAsync(ct);
 
     private ProductionHoldArchiveReleaseCapability(ProductionHoldProtectedPlan plan, ProductionHoldFrozenPlan body,
         ProductionHoldItemReceipt receipt, ProductionHoldRequestSnapshot current, Guid releaseCommandId,
