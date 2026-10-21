@@ -172,7 +172,7 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
             // Without a precommit outcome only the EXACT originally reserved
             // SQL may be acknowledged. Fresh changed SQL is never authority.
             if (state.HandlerOutcomes?.ContainsKey(scope.OperationId) == true || state.UploadWrites?.ContainsKey(scope.OperationId) == true ||
-                state.SendWrites?.ContainsKey(scope.OperationId) == true ||
+                state.SendWrites?.ContainsKey(scope.OperationId) == true || scope.Kind == ProductionRecordPreviewWriteContract.Kind ||
                 current.StateSha256 != scope.SqlStateSha256 || content != scope.ContentSha256) throw Invalid();
             state = await witness.PrepareOperationOutcomeAsync(scope.RecordId, operation, content, current.StateSha256,
                 Id(scope.RecordId, scope.OperationId, "outcome"), ct);
@@ -202,6 +202,8 @@ internal sealed partial class ProductionRecordOperationAdmission(Func<QuillSignD
             ProductionRecordUploadWriteContract.DemandSaved(current, keys, state.UploadWrites?.GetValueOrDefault(scope.OperationId) ?? throw Invalid());
         if (scope.Kind == ProductionRecordSendWriteContract.Kind)
             await DemandSendOutcomeLocked(db, scope, current, state, ct);
+        if (scope.Kind == ProductionRecordPreviewWriteContract.Kind)
+            await DemandPreviewOutcomeLocked(db, scope, current, state, ct);
         var result = await witness.PrepareOperationOutcomeAsync(scope.RecordId, state.Operations![scope.OperationId],
             ContentDigest(current, keys), current.StateSha256, Id(scope.RecordId, scope.OperationId, "outcome"), ct);
         DemandActive(scope, result, allowOutcome: true, allowHandler: true);
