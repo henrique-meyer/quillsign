@@ -37,7 +37,13 @@ internal static class ProductionHoldSignaturePreviewReferences
         catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException or FormatException or OverflowException or NullReferenceException)
         { throw Invalid(); }
     }
-    private static HoldSignatureProgress Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, Guid invitationId)
+    // The review graph proves the removed schemas and original full chain. Field
+    // transitions still use their ORIGINAL predecessors, including review events.
+    internal static HoldSignatureProgress ReadVerifiedReviewProjection(JsonElement projection, JsonElement typedHistory,
+        IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, Guid invitationId)
+        => Verify(projection, objects, keys, invitationId, typedHistory);
+
+    private static HoldSignatureProgress Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, Guid invitationId, JsonElement? typedHistory = null)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         var raw = tables["SignaturePreviews"]; if (raw.GetArrayLength() > SignatureAdoption.MaximumPreviewsPerSigner) throw Invalid();
@@ -103,9 +109,10 @@ internal static class ProductionHoldSignaturePreviewReferences
         foreach (var p in previews)
             if (previews.Count(x => x.CreatedAt <= p.CreatedAt && x.ExpiresAt > p.CreatedAt &&
                 (x.UsedAt is null || x.UsedAt > p.CreatedAt)) > SignatureAdoption.MaximumActivePreviews) throw Invalid();
-        ProductionHoldConsentAuditReferences.Demand(sql, objects);
-        var adoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(sql, objects);
-        ProductionHoldFieldAuditReferences.Demand(sql, objects, definitions, adoptions);
+        var history = typedHistory ?? sql;
+        ProductionHoldConsentAuditReferences.Demand(history, objects);
+        var adoptions = ProductionHoldAdoptionAuditReferences.ReadVerified(history, objects);
+        ProductionHoldFieldAuditReferences.Demand(history, objects, definitions, adoptions);
         return new(initial, true, result.AsReadOnly(), definitions);
 
         void Match(Guid objectId, byte[] hash)

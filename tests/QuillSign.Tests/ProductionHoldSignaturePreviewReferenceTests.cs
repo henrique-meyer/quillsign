@@ -136,7 +136,7 @@ public sealed class ProductionHoldSignaturePreviewReferenceTests
         f.Sync(); using var sql = f.F.Sql(); Assert.Throws<InvalidDataException>(() => f.F.Demand(sql));
     }
 
-    private sealed class MarksFrame
+    internal sealed class MarksFrame
     {
         internal readonly ProductionHoldSentAuditReferenceTests.Frame F = new(); internal readonly List<SignaturePreview> Previews = [];
         internal SignaturePreview P => Previews[^1]; internal DocumentField Signature => F.Fields.Single(x => x.Type == FieldType.Signature);

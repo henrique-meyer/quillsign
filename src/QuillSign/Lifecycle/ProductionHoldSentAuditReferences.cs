@@ -32,12 +32,18 @@ internal static class ProductionHoldSentAuditReferences
 
     internal static IReadOnlyList<HoldVerifiedSignaturePreview> ReadVerified(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys)
     {
-        try { return Verify(sql, objects, keys); }
+        try { return Verify(sql, objects, keys, true); }
         catch (Exception error) when (error is JsonException or CryptographicException or KeyNotFoundException or InvalidOperationException or
             ArgumentException or FormatException or OverflowException) { throw Invalid(); }
     }
 
-    private static IReadOnlyList<HoldVerifiedSignaturePreview> Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys)
+    // Only the connected review codec calls this after validating the ORIGINAL
+    // full chain and proving every row removed from its older-stage projection.
+    // The projection is never a new SQL capture or a replacement fingerprint.
+    internal static IReadOnlyList<HoldVerifiedSignaturePreview> ReadVerifiedReviewProjection(JsonElement projection,
+        IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, JsonElement typedHistory) => Verify(projection, objects, keys, false, typedHistory);
+
+    private static IReadOnlyList<HoldVerifiedSignaturePreview> Verify(JsonElement sql, IReadOnlyList<HoldObjectEvidence> objects, IDataProtectionProvider keys, bool fullChain, JsonElement? typedHistory = null)
     {
         var tables = sql.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         if (tables.Values.Any(x => x.ValueKind != JsonValueKind.Array || x.GetArrayLength() > 4096) || tables.Values.Sum(x => x.GetArrayLength()) > 4096) throw Invalid();
@@ -52,7 +58,7 @@ internal static class ProductionHoldSentAuditReferences
             e.CurrentFinishId is not null || e.CurrentCopyVersion != 0 || e.CompletedAt is not null || e.PurgeAfter is not null ||
             e.FinalBlob is not null || e.FinalSha256 is not null || e.CertificateBlob is not null || e.CertificateSha256 is not null ||
             e.SealProvider is not null || e.SealCertThumbprint is not null || e.TsaUrl is not null || EmptyTables.Any(x => tables[x].GetArrayLength() != 0)) throw Invalid();
-        ProductionHoldAuditChain.Demand(sql);
+        if (fullChain) ProductionHoldAuditChain.Demand(sql);
         ProductionHoldAdmissionAuditReferences.Demand(sql);
         var audits = tables["AuditEvents"].Deserialize<AuditEvent[]>(Rows) ?? throw Invalid();
         var sent = audits.Single(x => x.Event == "sent");
@@ -78,7 +84,9 @@ internal static class ProductionHoldSentAuditReferences
         if (recipients.Select(x => x.Id).Distinct().Count() != recipients.Length || recipients.Select(x => x.Email).Distinct(StringComparer.OrdinalIgnoreCase).Count() != recipients.Length ||
             recipients.Any(x => x.Id == Guid.Empty || x.EnvelopeId != e.Id || !Address(x.Email) || string.IsNullOrWhiteSpace(x.Name) || x.Name.Length > 512 || x.Name.Any(char.IsControl))) throw Invalid();
         signers = signers.OrderBy(x => x.Order).ToArray();
-        var marks = ProductionHoldSignaturePreviewReferences.ReadVerified(sql, objects, keys, p.invitationWorkId);
+        var marks = typedHistory is { } originalHistory
+            ? ProductionHoldSignaturePreviewReferences.ReadVerifiedReviewProjection(sql, originalHistory, objects, keys, p.invitationWorkId)
+            : ProductionHoldSignaturePreviewReferences.ReadVerified(sql, objects, keys, p.invitationWorkId);
         var progress = marks.Initial;
         for (var i = 0; i < signers.Length; i++)
         {
