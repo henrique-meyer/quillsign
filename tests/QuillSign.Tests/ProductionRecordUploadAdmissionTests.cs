@@ -174,15 +174,34 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
         public override Task TransactionCommittedAsync(DbTransaction transaction,TransactionEndEventData eventData,CancellationToken cancellationToken=default)
             =>throw new IOException("Synthetic lost production upload SQL acknowledgement.");
     }
-    internal sealed class Blobs:IProductionRecordUploadStore,IProductionRecordSendStore,IProductionSignaturePreviewStore,IBlobStore,IProductionHoldObjectSource
+    internal sealed class Blobs:IProductionRecordUploadStore,IProductionRecordSendStore,IProductionSignaturePreviewStore,IProductionSignerReviewStore,IProductionReviewInputSource,IBlobStore,IProductionHoldObjectSource
     {
         internal readonly Dictionary<DocumentBlob,byte[]> Objects=[];internal int Deletes,UnwitnessedWrites,Copies;
         internal bool LoseFirstAcknowledgement;internal Func<int,Task>? AfterWrite;internal Func<Task>? BeforeWrite;internal Func<Task>? AfterCopy;
         internal int MarkWrites,LoseMarkAcknowledgementAt;internal Func<int,Task>? AfterMarkWrite;internal Func<Task>? BeforeMarkWrite;
         internal string MarkVersionSuffix="";
+        internal int ReviewWrites,LoseReviewAcknowledgementAt;internal Func<int,Task>? AfterReviewWrite;internal Func<Task>? BeforeReviewWrite;
+        internal string ReviewVersionSuffix="";
         public async Task<ProductionRecordWriteReceipt> WriteAsync(ProductionRecordOperation scope,VerifiedSigner identity,ProductionRecordWriteDescriptor item,Stream source,
             bool mayWrite,ProductionRecordWriteReceipt? saved,Func<CancellationToken,Task> demand,CancellationToken ct=default)
         {
+            if(scope.Kind==ProductionRecordReviewWriteContract.Kind)
+            {
+                Assert.Equal(scope.RecordId,identity.EnvelopeId);Assert.True(ProductionRecordReviewWriteContract.Item(scope.RecordId,item));
+                if(BeforeReviewWrite is not null)await BeforeReviewWrite();await demand(ct);
+                if(mayWrite)
+                {
+                    using var copy=new MemoryStream();await source.CopyToAsync(copy,ct);await demand(ct);
+                    Assert.Equal(item.Length,copy.Length);Assert.Equal(item.Sha256,Convert.ToHexStringLower(SHA256.HashData(copy.ToArray())));
+                    Objects.Add(item.Blob,copy.ToArray());ReviewWrites++;
+                    if(AfterReviewWrite is not null)await AfterReviewWrite(ReviewWrites);
+                    if(LoseReviewAcknowledgementAt==ReviewWrites)throw new IOException("Synthetic unknown review write acknowledgement.");
+                }
+                await demand(ct);var retained=Objects[item.Blob];Assert.Equal(item.Length,retained.LongLength);
+                Assert.Equal(item.Sha256,Convert.ToHexStringLower(SHA256.HashData(retained)));
+                var proof=new ProductionRecordWriteReceipt(item,"synthetic-version-"+item.Blob.ObjectId.ToString("N"),"\"synthetic-etag\"");
+                if(saved is not null)Assert.Equal(saved,proof);return proof;
+            }
             Assert.Equal(scope.RecordId,identity.EnvelopeId);Assert.True(ProductionRecordPreviewWriteContract.Item(scope.RecordId,item));
             if(BeforeMarkWrite is not null)await BeforeMarkWrite();await demand(ct);
             if(mayWrite)
@@ -221,8 +240,15 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
         public Task DeleteAsync(ClaimsPrincipal sender,DocumentBlob blob,CancellationToken cancellationToken=default)
         {Deletes++;throw new InvalidOperationException("Production upload must retain historical and uncertain bytes.");}
         internal HoldObjectAddress Address(DocumentBlob blob)=>new(blob.Kind==DocumentBlobKind.Original?"originals":"normalized",
-            $"{blob.EnvelopeId:N}/{blob.ObjectId:N}","synthetic-version-"+blob.ObjectId.ToString("N")+
-            (blob.Kind is DocumentBlobKind.Signature or DocumentBlobKind.Initials?MarkVersionSuffix:""),"","\"synthetic-etag\"",Objects[blob].LongLength);
+            blob.Kind==DocumentBlobKind.ReviewInput?$"{blob.EnvelopeId:N}/review-inputs/{blob.ObjectId:N}":$"{blob.EnvelopeId:N}/{blob.ObjectId:N}","synthetic-version-"+blob.ObjectId.ToString("N")+
+            (blob.Kind is DocumentBlobKind.Signature or DocumentBlobKind.Initials?MarkVersionSuffix:blob.Kind==DocumentBlobKind.ReviewInput?ReviewVersionSuffix:""),"","\"synthetic-etag\"",Objects[blob].LongLength);
+        public Task<byte[]> ReadAsync(ProductionReviewInputReadScope scope,CancellationToken ct=default)
+        {
+            scope.Demand(ct);var blob=Objects.Keys.Single(x=>Address(x)==scope.Address);
+            Assert.Equal(DocumentBlobKind.ReviewInput,blob.Kind);var bytes=Objects[blob];
+            Assert.Equal(scope.Address.Length,bytes.LongLength);Assert.Equal(scope.Sha256,Convert.ToHexStringLower(SHA256.HashData(bytes)));
+            scope.Demand(ct);return Task.FromResult(bytes.ToArray());
+        }
         public Task<HoldObjectPage> ListAsync(ProductionHoldObjectScope scope,string area,string? continuation,int maximum,CancellationToken ct)
         {scope.Demand(ct);Assert.Null(continuation);return Task.FromResult(new HoldObjectPage(Objects.Keys.Select(Address).Where(x=>x.Area==area).ToArray(),null));}
         public Task<string> HashAsync(ProductionHoldObjectScope scope,HoldObjectAddress address,CancellationToken ct)

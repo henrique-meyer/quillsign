@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using QuillSign.Data;
+using QuillSign.Signing;
 using QuillSign.Storage;
 
 namespace QuillSign.Lifecycle;
@@ -14,7 +15,8 @@ namespace QuillSign.Lifecycle;
 // before exposing placement. No caller may turn a raw provider DTO into a hold.
 internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness, IProductionHoldObjectSource objects,
-    AzureProductionHoldArchiveWriter archive, AzureProductionHoldArchiveReleaseStore releases) : IProductionHoldReleaseFence
+    AzureProductionHoldArchiveWriter archive, AzureProductionHoldArchiveReleaseStore releases,
+    IProductionReviewInputSource? reviewInputs=null) : IProductionHoldReleaseFence
 {
     private static readonly JsonSerializerOptions PreviewRows=new(){Converters={new JsonStringEnumConverter()}};
     internal async Task<HoldWitnessState> SubmitAsync(ProductionOperatorAuthority authority, ProductionOperatorPolicy operators,
@@ -76,11 +78,11 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
             {
                 var snapshot = await new ProductionHoldObjectInventory(db, keys, time, objects)
                     .CaptureLockedAsync(recordId, requests.Revision, requests.FenceHash!, ct: ct);
-                DemandCompleteSchemas(snapshot,state);
+                await DemandCompleteSchemas(db,snapshot,state,ct);
                 plan = await ProductionHoldBundlePlan.FreezeLockedAsync(db, keys, time, holdId, planId, snapshot, ct);
                 plan = await controls.SavePlanLockedAsync(plan, ct);
             }
-            DemandCompleteSchemas(ProductionHoldBundlePlan.OpenVerified(plan, keys, time).Snapshot,state);
+            await DemandCompleteSchemas(db,ProductionHoldBundlePlan.OpenVerified(plan, keys, time).Snapshot,state,ct);
             frozenPrefix = hold.PlanSha256 is not null ? hold.Control! : (await controls.ReadLockedAsync(recordId, ct)).Prefix;
             await tx.CommitAsync(ct);
         }
@@ -216,7 +218,7 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
             body.Snapshot.SqlStateSha256, body.Snapshot.ManifestSha256, Items = receipts });
     }
 
-    private void DemandCompleteSchemas(ProductionHoldObjectSnapshot snapshot,HoldWitnessState state)
+    private async Task DemandCompleteSchemas(QuillSignDbContext db,ProductionHoldObjectSnapshot snapshot,HoldWitnessState state,CancellationToken ct)
     {
         // Fail closed while the remaining sent/review/Finish/publication graph is
         // being connected. Existing per-schema codecs have already run in the
@@ -228,19 +230,62 @@ internal sealed class ProductionHoldCoordinator(Func<QuillSignDbContext> open, I
         if (status == "Sent")
         {
             var inventory=ProductionHoldObjectInventory.OpenVerified(snapshot,keys,time);
-            var previews=ProductionHoldSentAuditReferences.ReadVerified(sql.RootElement,inventory,keys);
-            DemandPreviewPlans(tables["SignaturePreviews"],previews,state,inventory);
+            var inputs=await ReadReviewInputs(db,snapshot.RecordId,tables["SignerReviewCandidates"],state,inventory,ct);
+            var history=ProductionHoldReviewCheckpointReferences.ReadVerified(sql.RootElement,inventory,keys,inputs);
+            DemandPreviewPlans(tables["SignaturePreviews"],history.Previews,state,inventory);
         }
-        else if (status != "Draft") throw Invalid();
+        else if (status != "Draft"||(state.ReviewWrites?.Count??0)!=0) throw Invalid();
         foreach (var audit in tables["AuditEvents"].EnumerateArray())
         {
             if (status == "Sent" && audit.GetProperty("Event").GetString() is "fields_finalized" or "sent" or "invitation_submitted" or "link_opened" or "consent_given" or
-                "signature_adopted" or "field_filled" or "field_cleared") continue;
+                "signature_adopted" or "field_filled" or "field_cleared" or "signer_review_prepared" or "signer_finish_accepted" or "signer_completed") continue;
             if (audit.GetProperty("Event").GetString() is not (ProductionRetentionLedger.EnrollmentEvent or
                 "draft_created" or "sender_verification_requested" or "sender_email_verified" or
                 "document_uploaded" or "document_replaced" or "preview_confirmed" or "signer_added" or "signer_updated" or "signer_removed" or
                 "signers_reordered" or "recipient_added" or "recipient_updated" or "recipient_removed" or "envelope_details_updated" or "fields_saved")) throw Invalid();
         }
+    }
+
+    // The old frozen capture is evidence, not a fresh IO capability. Reopened
+    // plans get a new bounded read scope from CURRENT authenticated hold SQL
+    // under this same parent lock; original sidecar bytes and clocks stay fixed.
+    private async Task<IReadOnlyList<VerifiedReviewInput>> ReadReviewInputs(QuillSignDbContext db,Guid recordId,JsonElement rows,
+        HoldWitnessState state,IReadOnlyList<HoldObjectEvidence> inventory,CancellationToken ct)
+    {
+        var plans=state.ReviewWrites;
+        if(rows.GetArrayLength()>SignerReviewCandidates.MaximumCandidatesPerSigner||rows.GetArrayLength()!=(plans?.Count??0))throw Invalid();
+        if(rows.GetArrayLength()==0)return [];
+        var source=reviewInputs??objects as IProductionReviewInputSource??throw Invalid();
+        var current=await new ProductionHoldSqlInventory(db,keys,time).CaptureLockedAsync(recordId,state.RequestRevision,state.RequestFenceHash!,ct:ct);
+        var scope=ProductionHoldObjectScope.FromVerified(current,keys,time);
+        var result=new List<VerifiedReviewInput>();
+        foreach(var raw in rows.EnumerateArray())
+        {
+            var candidateId=raw.GetProperty("Id").GetGuid();
+            var matches=plans!.Where(x=>ProductionRecordReviewWriteContract.ReadRow(x.Value.Plan.CandidateRowJson).Id==candidateId).ToArray();
+            if(matches.Length!=1)throw Invalid();
+            var (operationId,writes)=matches.Single();var plan=writes.Plan;
+            ProductionRecordReviewWriteContract.Validate(plan);
+            if(operationId!=plan.OperationId||plan.Identity.EnvelopeId!=recordId||
+                !ProductionRecordReviewWriteContract.Complete(writes)||!state.SettledOperations.ContainsKey(operationId)||
+                state.Outcomes?.ContainsKey(operationId)!=true||state.Operations?.GetValueOrDefault(operationId) is not {} operation||
+                operation.Kind!=ProductionRecordReviewWriteContract.Kind||operation.Reference!=candidateId.ToString("N"))throw Invalid();
+            foreach(var receipt in writes.Receipts.Values)
+            {
+                var item=receipt.Item;var name=item.Blob.Kind==DocumentBlobKind.ReviewInput
+                    ?$"{recordId:N}/review-inputs/{item.Blob.ObjectId:N}":$"{recordId:N}/{item.Blob.ObjectId:N}";
+                if(!inventory.Any(x=>x.Address.Area=="normalized"&&x.Address.Name==name&&x.Address.VersionId==receipt.VersionId&&
+                    x.Address.Snapshot.Length==0&&x.Address.ETag==receipt.ETag&&x.Address.Length==item.Length&&x.Sha256==item.Sha256))throw Invalid();
+            }
+            var inputReceipt=writes.Receipts[plan.Input.Blob];
+            var input=inventory.Single(x=>x.Address.Area=="normalized"&&x.Address.Name==$"{recordId:N}/review-inputs/{plan.Input.Blob.ObjectId:N}"&&
+                x.Address.VersionId==inputReceipt.VersionId&&x.Address.Snapshot.Length==0&&x.Address.ETag==inputReceipt.ETag&&
+                x.Address.Length==plan.Input.Length&&x.Sha256==plan.Input.Sha256);
+            var read=ProductionReviewInputReadScope.FromHold(scope,plan,inputReceipt,input);
+            var bytes=await source.ReadAsync(read,ct);read.Demand(ct);
+            result.Add(ProductionReviewInputCodec.OpenVerified(keys,plan,bytes));
+        }
+        return result;
     }
 
     // Historical SQL and hashes alone cannot attest to normalized mark output.
