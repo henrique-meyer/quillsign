@@ -1,6 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([string]$Path = (Join-Path $PSScriptRoot '../../.env'))
+# Default: QUILLSIGN_ENV_FILE when set (e.g. a private file outside the checkout), else the ignored repo .env.
+param([string]$Path = $(if ($env:QUILLSIGN_ENV_FILE) { $env:QUILLSIGN_ENV_FILE } else { Join-Path $PSScriptRoot '../../.env' }))
 
 $ErrorActionPreference = 'Stop'
 $envPath = [IO.Path]::GetFullPath($Path)

@@ -2034,3 +2034,11 @@ Status: In Progress. Depends on completed QUILS-31.
 - Validation: 110 focused .NET regressions and 29 Node cases pass. Real local synthetic browser checks passed keyboard tab navigation, prefilled/required name confirmation, edit/method invalidation, typed/drawn/PNG/JPEG preview and adoption, clear/retry, phone-layout resize without overflow, explicit signature/initials application and exact-review Finish. No phone handoff or hosted/provider changes.
 
 CI follow-up for QUILS-154: the full suite found three retention-access cases whose shared HTTP fixture omitted the new name confirmation. The fixture now confirms its own frozen signer name; all 16 retention-access cases pass with their original cutoff assertions unchanged. Application source and passing browser flows are unchanged. Fresh exact-head CI remains required.
+
+## QUILS-156 - Private configuration outside the checkout
+
+- Story: [QUILS-156](https://nitro.atlassian.net/browse/QUILS-156)
+- Status: In progress
+- `scripts/dev/Initialize-LocalEnvironment.ps1` and `scripts/dev/smoke.py` honor `QUILLSIGN_ENV_FILE`; the default stays the ignored repo `.env`, so CI is unchanged. Compose reads the same file through `COMPOSE_ENV_FILES`. Loading keeps process-variable precedence and never executes file contents.
+- The infrastructure README documents passing parameter files from a private path outside the checkout.
+
