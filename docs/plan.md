@@ -1870,6 +1870,10 @@ Fresh closeout lookup tokens use an explicit durable discriminator in existing c
 
 The new encrypted exact-queue carrier expires no later than the earliest original parent secret deletion deadline. Its dedicated exact-ID database-UTC cleanup procedure clears only ProtectedManifest and preserves header/counter tombstones; the existing explicit pilot-retention provisioning command grants only worker EXECUTE for that procedure. A finite configured-ID cleanup command may invoke it after expiry. No runtime UPDATE/DELETE grant, recurring service, altered original retention or automatic provider activation is included.
 
+CI assertion closeout: the genuine alias handlers, exact attachment pair, captured submission count, original failed-row preservation and unchanged TSA assertions now pass. Disabled alias Claim correctly throws InvalidDataException before mutation; change only the final test expectation to that exception. Preserve the guard and all earlier assertions, reuse the measured connected proof and require fresh current-head CI.
+
+Main-only integration after the checked QUILS-147 merge preserves both mappings/migrations/permissions, adds the two closeout CLR types to both exhaustive known-model and global-pilot registries, refuses direct closeout operation association before global exclusion, retains all 22 owned archive tables and verifies the combined 32-entity model. The isolated hosted candidate receives no QUILS-147 source.
+
 ## QUILS-140: Preserve privacy-safe SES refusal diagnostics for hosted pilot
 
 Status: Done after checked PR #146 merge; native Jira Done verified. Assigned to ChatGPT Codex. Source-only diagnostic follow-up to the QUILS-139 hosted rejection; public email and pilot sending remain disabled.
