@@ -27,6 +27,9 @@ internal sealed class ProductionCompletionDeletionTransport(TimeProvider time):H
     internal readonly HashSet<string> ListedAreas=[];
     internal readonly HashSet<string> ListedPrefixes=[];
     internal readonly List<(string Path,string Version,string Match)> Deletes=[];
+    internal readonly List<(string Area,string Prefix,string Marker)> Cursors=[];
+    internal int PageLength=128;
+    internal bool DuplicateSecondPage,RepeatMarker;
     private readonly Dictionary<string,byte[]> hints=[];
     private readonly HashSet<(string,bool)> attempts=[];
     internal int HintCreates {get;private set;}
@@ -44,20 +47,40 @@ internal sealed class ProductionCompletionDeletionTransport(TimeProvider time):H
         string Q(string name)=>query.TryGetValue(name,out var value)?value.ToString():"";
         string H(string name)=>request.Headers.TryGetValues(name,out var value)?value.Single():"";
         var area=path.TrimStart('/').Split('/')[0];
+        (T[] Items,string Next) Page<T>(T[] items)
+        {
+            Assert.InRange(PageLength,1,128);var marker=Q("marker");
+            var offset=marker.Length==0?0:int.Parse(marker,CultureInfo.InvariantCulture);
+            Assert.Equal(marker.Length==0?"":offset.ToString(CultureInfo.InvariantCulture),marker);
+            Assert.InRange(offset,0,items.Length);
+            var count=Math.Min(PageLength,int.Parse(Q("maxresults"),CultureInfo.InvariantCulture));
+            var page=items.Skip(DuplicateSecondPage&&offset>0?0:offset).Take(count).ToArray();
+            var next=offset+page.Length<items.Length?(offset+page.Length).ToString(CultureInfo.InvariantCulture):"";
+            if(RepeatMarker&&offset>0)next=marker;
+            return(page,next);
+        }
         if(Q("restype")=="container")
         {
             Assert.Equal(HttpMethod.Get,request.Method);
             if(Q("comp")!="list")return Reply([]);
             var prefix=Q("prefix");ListedAreas.Add(area);ListedPrefixes.Add(area+"/"+prefix);
+            Cursors.Add((area,prefix,Q("marker")));
+            if(area=="recovery-index")
+            {
+                Assert.Empty(Q("include"));var hintPage=Page(hints.OrderBy(x=>x.Key,StringComparer.Ordinal).ToArray());
+                var hintXml=new XDocument(new XElement("EnumerationResults",new XAttribute("ServiceEndpoint","https://storage.example.invalid/"),new XAttribute("ContainerName",area),
+                    new XElement("Blobs",hintPage.Items.Select(x=>new XElement("Blob",new XElement("Name",x.Key[(area.Length+2)..]),new XElement("Properties",new XElement("Content-Length",x.Value.Length),new XElement("BlobType","BlockBlob"))))),new XElement("NextMarker",hintPage.Next)));
+                return Reply(Encoding.UTF8.GetBytes(hintXml.ToString(SaveOptions.DisableFormatting)));
+            }
             var includes=Q("include").Split(',');Assert.Equal(4,includes.Length);
             foreach(var required in new[]{"Versions","Snapshots","Deleted","DeletedWithVersions"})Assert.Contains(required,includes,StringComparer.OrdinalIgnoreCase);
             var entries=Objects.Values.Where(x=>x.Address.Area==area&&x.Address.Name.StartsWith(prefix,StringComparison.Ordinal)).OrderBy(x=>x.Address.Name,StringComparer.Ordinal).ToArray();
-            Assert.InRange(entries.Length,0,int.Parse(Q("maxresults"),CultureInfo.InvariantCulture));Assert.Empty(Q("marker"));
+            var page=Page(entries);Assert.InRange(page.Items.Length,0,int.Parse(Q("maxresults"),CultureInfo.InvariantCulture));
             var xml=new XDocument(new XElement("EnumerationResults",new XAttribute("ServiceEndpoint","https://storage.example.invalid/"),new XAttribute("ContainerName",area),
-                new XElement("Blobs",entries.Select(x=>new XElement("Blob",new XElement("Name",x.Address.Name),new XElement("VersionId",x.Address.VersionId),
+                new XElement("Blobs",page.Items.Select(x=>new XElement("Blob",new XElement("Name",x.Address.Name),new XElement("VersionId",x.Address.VersionId),
                     new XElement("IsCurrentVersion",x.Current&&!x.Deleted),new XElement("Deleted",x.Deleted),new XElement("Properties",
                         new XElement("Content-Length",x.Bytes.LongLength),new XElement("BlobType","BlockBlob"),new XElement("Etag",x.Address.ETag),
-                        new XElement("Last-Modified","Tue, 01 Jan 2030 00:00:00 GMT"))))),new XElement("NextMarker")));
+                        new XElement("Last-Modified","Tue, 01 Jan 2030 00:00:00 GMT"))))),new XElement("NextMarker",page.Next)));
             return Reply(Encoding.UTF8.GetBytes(xml.ToString(SaveOptions.DisableFormatting)));
         }
         if(area=="recovery-index")
