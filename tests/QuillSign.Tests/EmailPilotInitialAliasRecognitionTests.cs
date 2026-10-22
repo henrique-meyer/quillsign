@@ -90,7 +90,8 @@ public sealed class EmailPilotInitialAliasRecognitionTests
         var ordinary=new EmailOutbox{EnvelopeId=records[0].Id,To="sender@example.invalid",AvailableAt=at};
         db.Add(ordinary);db.Add(new WorkItem{Id=ordinary.Id,EnvelopeId=ordinary.EnvelopeId,Kind=WorkKind.Email,PayloadJson="{}",AvailableAt=at});await db.SaveChangesAsync();db.ChangeTracker.Clear();
         Assert.False(await closeout.IsKnownWorkAsync(ordinary.Id));
-        Assert.NotNull((await new WorkStore(db,options,TimeProvider.System,closeout).ClaimAsync(ordinary.Id,default)).Lease);
+        var ordinaryLease=(await new WorkStore(db,options,TimeProvider.System,closeout).ClaimAsync(ordinary.Id,default)).Lease;
+        Assert.NotNull(ordinaryLease);
         db.ChangeTracker.Clear();
         await using(var tx=await db.Database.BeginTransactionAsync()) {
             db.Add(new EmailPilotCloseoutHeaderRecord{Id=Guid.NewGuid(),CreatedAt=at,Until=at.AddMinutes(30),DeleteAfter=at.AddDays(1),CapabilitySha256=new byte[32],ManifestSha256=new byte[32]});
@@ -106,6 +107,27 @@ public sealed class EmailPilotInitialAliasRecognitionTests
             await tx.RollbackAsync();
         }
         db.ChangeTracker.Clear();
+        // Syntactically complete rotated configuration is Available, but names
+        // no header. Exercise standalone ReadWork, not its Clean/transaction guard.
+        var parentIds=new[]{Guid.NewGuid(),Guid.NewGuid()};
+        var rotatedOptions=new EmailPilotCloseoutOptions{Enabled=true,AuthorizationId=Guid.NewGuid().ToString("N"),CapabilitySha256=new string('c',64),
+            StartsAt=at,Until=at.AddMinutes(30),AccountingParentRunIds=parentIds.Select(x=>x.ToString("N")).ToArray(),
+            CompletionParentRunId=parentIds[0].ToString("N"),VoidParentRunId=parentIds[1].ToString("N"),CompletionRecordId=records[0].Id.ToString("N"),
+            VoidRecordId=records[1].Id.ToString("N"),DeclineRecordId=Guid.NewGuid().ToString("N"),CompletionWorkIds=pairs.Take(4).Select(x=>x.OriginalId.ToString("N")).ToArray(),
+            VoidWorkIds=pairs.Skip(4).Select(x=>x.OriginalId.ToString("N")).ToArray()};
+        var rotatedConfig=rotatedOptions.Capture();Assert.NotEqual(auth,rotatedConfig.AuthorizationId);
+        Assert.False(await db.EmailPilotCloseouts.AnyAsync(x=>x.Id==rotatedConfig.AuthorizationId));
+        var alias=pairs[0];var currentLease=new WorkLease(alias.WorkId,Guid.NewGuid(),WorkKind.Email,1,DateTimeOffset.UtcNow.AddMinutes(3));
+        var aliasWork=await db.WorkItems.SingleAsync(x=>x.Id==alias.WorkId);aliasWork.Status=WorkStatus.Leased;aliasWork.Attempts=1;
+        aliasWork.LeaseOwner=currentLease.Owner;aliasWork.LeaseExpiresAt=currentLease.Until;await db.SaveChangesAsync();db.ChangeTracker.Clear();
+        Assert.Null(db.Database.CurrentTransaction);Assert.False(db.ChangeTracker.HasChanges());
+        var databaseReads=0;var rotated=new EmailPilotCloseout(rotatedOptions,new(),options,()=>{databaseReads++;return db;},
+            ()=>throw new InvalidOperationException("No authority"),()=>proof,TimeProvider.System);
+        Assert.True(rotated.Available);var beforeRotated=await Rows(db,alias.WorkId);
+        await Assert.ThrowsAsync<InvalidDataException>(()=>rotated.ReadWorkAsync(currentLease));
+        Assert.True(databaseReads>=2);Assert.Null(db.Database.CurrentTransaction);Assert.False(db.ChangeTracker.HasChanges());
+        Assert.Equal(beforeRotated,await Rows(db,alias.WorkId));
+        Assert.Null(await rotated.ReadWorkAsync(ordinaryLease!));
         for(var n=0;n<6;n++) {
             var original=originals[n];Assert.Equal(originalBytes[n],JsonSerializer.Serialize(new {Mail=await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==original.Mail.Id),Work=await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==original.Work.Id)}));
         }
