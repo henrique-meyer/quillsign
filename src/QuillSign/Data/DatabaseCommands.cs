@@ -7,6 +7,8 @@ public static class DatabaseCommands
 {
     public static async Task<int> RunAsync(string[] args)
     {
+        if(args.Length>0 && args[0]=="verify-hosted-closeout-state")
+            return await HostedCloseoutStateVerificationCommand.RunAsync(args);
         IConfiguration? configuration = null;
         if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "grant-demo-purge" or "grant-lookup-retention" or "grant-email-pilot-retention" or "remove-expired-closeout-secret" or "verify-runtime"))
         {
