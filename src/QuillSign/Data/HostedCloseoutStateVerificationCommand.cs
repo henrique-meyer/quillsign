@@ -21,6 +21,8 @@ internal sealed class HostedCloseoutVerificationOutput
     public string Reason {get;set;}="configuration";
     public int WorkerOpenAttempts {get;set;}
     public int? FirstWorkerOpenSqlError {get;set;}
+    public int? FailureSqlErrorNumber {get;set;}
+    public string? FailureKind {get;set;}
     public bool QueriesStarted {get;set;}
     public int RuntimeOpenAttempts {get;set;}
     public bool WorkerIdentityVerified {get;set;}
@@ -88,12 +90,25 @@ internal static class HostedCloseoutStateVerificationCommand
             }
             output.Complete=true;output.Status="passed";output.Reason="verified";
         }
-        catch(OperationCanceledException){output.Complete=false;output.Status="refused";output.Reason="cancelled";}
-        catch(Exception)
-        { output.Complete=false;output.Status="refused"; /* Never output exception text, queries, endpoints or protected cells. */ }
+        catch(Exception failure){RecordFailure(output,failure);}
         output.FinishedAt=DateTimeOffset.UtcNow;
         var encoded=JsonSerializer.Serialize(output,Json);if(Encoding.UTF8.GetByteCount(encoded)>16384)throw Refused();
         Console.WriteLine(Prefix+encoded);return output.Complete?0:1;
+    }
+    // Closed diagnostic facts only. These never authorize a retry or reveal
+    // exception text, stack, type names, endpoints, identity or protected cells.
+    internal static void RecordFailure(HostedCloseoutVerificationOutput output,Exception failure)
+    {
+        output.Complete=false;output.Status="refused";
+        output.FailureSqlErrorNumber=failure is SqlException sql?sql.Number:null;
+        output.FailureKind=failure switch {
+            SqlException=>"sql",
+            AuthenticationFailedException=>"credential",
+            OperationCanceledException=>"cancelled",
+            InvalidDataException=>"refused",
+            _=>"other"
+        };
+        if(failure is OperationCanceledException)output.Reason="cancelled";
     }
     internal static async Task OpenWorkerAsync(Func<CancellationToken,Task> open,HostedCloseoutVerificationOutput state,
         Func<TimeSpan,CancellationToken,Task> delay,CancellationToken ct)
