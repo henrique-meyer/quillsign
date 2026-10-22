@@ -84,7 +84,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
             .SingleOrDefaultAsync(cancellationToken);
         // A kind change after the read-only routing probe cannot enter ordinary
         // retry/lease mutation while this unrelated parent transaction is held.
-        if(row?.Kind==WorkKind.ProductionPurge)throw new InvalidOperationException("Production deletion requires its dedicated work effectiveAdmission.");
+        if(row?.Kind==WorkKind.ProductionPurge)throw new InvalidOperationException("Production deletion requires its dedicated work admission.");
         if (effectiveAdmission is not null)
         {
             // A changed/missing candidate is not proof that our reservation had
@@ -108,7 +108,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         }
         else if(closeout is not null)await closeout.DemandClaimLockedAsync(db,row,cancellationToken);
         else if(await Email.Pilot.EmailPilotCloseout.RecognizesWorkAsync(db,row.Id,cancellationToken))
-            throw new InvalidDataException("Known closeout work requires its dedicated effectiveAdmission.");
+            throw new InvalidDataException("Known closeout work requires its dedicated admission.");
         if (row.AvailableAt > now) return new(null, row.AvailableAt, false);
         if (row.Status == WorkStatus.Leased && row.LeaseExpiresAt > now) return new(null, row.LeaseExpiresAt, false);
         if (row.Kind == WorkKind.Email)
@@ -149,7 +149,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         row.LeaseOwner = owner;
         if(originalCompletionMailUntil<=now)throw new ProductionWorkBlockedException();
         row.LeaseExpiresAt = originalCompletionMailUntil??now.AddSeconds(options.LeaseSeconds);
-        if(closeout?.PassHost==true){if(!closeout.CanSend)throw new InvalidDataException("Private dispatch effectiveAdmission expired.");row.LeaseExpiresAt=new[]{row.LeaseExpiresAt.Value,closeout.HostOptions.Until}.Min();}
+        if(closeout?.PassHost==true){if(!closeout.CanSend)throw new InvalidDataException("Private dispatch admission expired.");row.LeaseExpiresAt=new[]{row.LeaseExpiresAt.Value,closeout.HostOptions.Until}.Min();}
         await db.SaveChangesAsync(cancellationToken);
         if(completionClaim is not null)await effectiveAdmission!.PrepareCompletionClaimExpectedLockedAsync(db,completionClaim,cancellationToken);
         await transaction.CommitAsync(cancellationToken);

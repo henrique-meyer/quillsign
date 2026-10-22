@@ -32,6 +32,7 @@ public sealed class ProductionCloseoutWorkRoutingTests
     {
         var services=new ServiceCollection();services.AddLogging();services.AddSingleton<TimeProvider>(TimeProvider.System);
         services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
+        services.AddSingleton(new DbContextOptionsBuilder<QuillSignDbContext>().UseSqlServer("Server=localhost;Database=unused;Integrated Security=true;Encrypt=false").Options);
         services.AddScoped<EmailWorkHandler>(_=>new(null!,new(),null!,null!,null!,TimeProvider.System));
         services.AddScoped<IWorkHandler>(sp=>sp.GetRequiredService<EmailWorkHandler>());
         services.AddProductionHoldRuntime(new ConfigurationBuilder().Build());
