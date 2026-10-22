@@ -91,7 +91,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         if (row is null || row.Status is WorkStatus.Completed or WorkStatus.Failed)
             return new(null, null, true);
         if(closeout is not null)await closeout.DemandClaimLockedAsync(db,row,cancellationToken);
-        else if(await db.EmailPilotCloseoutOperations.AsNoTracking().AnyAsync(x=>x.WorkId==row.Id,cancellationToken))
+        else if(await Email.Pilot.EmailPilotCloseout.RecognizesWorkAsync(db,row.Id,cancellationToken))
             throw new InvalidDataException("Known closeout work requires its dedicated admission.");
         if (row.AvailableAt > now) return new(null, row.AvailableAt, false);
         if (row.Status == WorkStatus.Leased && row.LeaseExpiresAt > now) return new(null, row.LeaseExpiresAt, false);

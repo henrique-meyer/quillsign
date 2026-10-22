@@ -38,7 +38,7 @@ public sealed partial class EmailPilotCloseout
     internal async Task DemandClaimLockedAsync(QuillSignDbContext db,WorkItem item,CancellationToken ct)
     {
         if(!ReferenceEquals(db,database()) || db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges())throw Invalid();
-        var bound=await db.EmailPilotCloseoutOperations.AsNoTracking().AnyAsync(x=>x.WorkId==item.Id,ct);
+        var bound=await RecognizesWorkAsync(db,item.Id,ct);
         var selected=ConfiguredNotice(item.Id);
         if(!bound && !selected)return;
         var state=await ReadLockedAsync(db,ct)??throw Invalid();

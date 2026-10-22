@@ -29,8 +29,12 @@ public sealed class EmailPilotDispatch(QuillSignDbContext db,EmailOptions option
         return decision.Scope is null ? await ordinary.SendAsync(message,ct) : await pilotSend(lease,message,ct);
     }
 
-    internal Task<EmailPilotCloseout.AliasFact?> ReadAliasLockedAsync(QuillSignDbContext context,WorkLease lease,string recipient,CancellationToken ct=default)
-        =>authority().Closeout?.Invoke().ReadAliasLockedAsync(context,lease,recipient,ct)??Task.FromResult<EmailPilotCloseout.AliasFact?>(null);
+    internal async Task<EmailPilotCloseout.AliasFact?> ReadAliasLockedAsync(QuillSignDbContext context,WorkLease lease,string recipient,CancellationToken ct=default)
+    {
+        if(authority().Closeout is {} closeout)return await closeout().ReadAliasLockedAsync(context,lease,recipient,ct);
+        if(await EmailPilotCloseout.RecognizesWorkAsync(context,lease.Id,ct))throw EmailPilotProtection.Invalid();
+        return null;
+    }
 
     internal static DateTimeOffset Clamp(EmailPilotDispatchDecision? decision,DateTimeOffset expiry)=>
         decision?.Scope is {} scope && scope.RunExpiresAt<expiry ? scope.RunExpiresAt : expiry;

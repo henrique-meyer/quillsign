@@ -46,7 +46,10 @@ public sealed partial class EmailPilotCloseout
         internal static async Task<AliasFact?> ReadAsync(EmailPilotCloseout owner,QuillSignDbContext db,WorkLease lease,string recipient,CancellationToken ct)
         {
         if(!ReferenceEquals(db,owner.AliasDatabase)||db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges())throw Invalid();
-        if(!owner.ConfiguredNotice(lease.Id))return null;
+        if(!owner.ConfiguredNotice(lease.Id)) {
+            if(await RecognizesWorkAsync(db,lease.Id,ct))throw Invalid();
+            return null;
+        }
         var current=await owner.ReadLockedAsync(db,ct)??throw Invalid();
         var pair=current.Manifest.Queue.SingleOrDefault(x=>x.WorkId==lease.Id)??throw Invalid();
         var mail=await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==lease.Id,ct);
