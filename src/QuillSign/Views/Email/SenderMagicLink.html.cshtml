@@ -1,13 +1,10 @@
 @model QuillSign.Email.SenderMagicLinkModel
-@{ Layout = null; }
-<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><title>Verify your email</title></head>
-<body>
-<p>QuillSign</p>
-<h1>Start your document</h1>
-<p><a href="@Model.Link.AbsoluteUri">Verify your email and continue</a></p>
-<p>This single-use link is valid for 15 minutes after this email is sent.</p>
-<p>If you did not request this email, you can ignore it.</p>
-</body>
-</html>
+@{
+    Layout = "/Views/Email/_Layout.cshtml";
+    ViewData["Title"] = "Start your document";
+    ViewData["Preheader"] = "Verify your email to get started with QuillSign.";
+}
+<p style="margin:0 0 16px">You're one step away from preparing your document. Verify your email to continue.</p>
+@await Html.PartialAsync("/Views/Email/_Action.cshtml", new QuillSign.Email.EmailActionModel(Model.Link, "Verify your email and continue"))
+<p style="margin:0 0 16px">This single-use link is valid for <strong>15 minutes</strong> after this email is sent.</p>
+<p style="margin:0 0 8px;color:#566579;font-size:14px">If you did not request this email, you can ignore it.</p>
