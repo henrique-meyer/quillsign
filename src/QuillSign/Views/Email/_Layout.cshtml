@@ -1,9 +1,11 @@
-@inject QuillSign.Email.EmailOptions EmailOptions
 @{
     Layout = null;
     // A static, first-party asset: never include recipient identifiers or link tokens.
+    // Standalone worker renderers may pass template options directly rather than
+    // register email services. Branding must not become a delivery dependency.
+    var emailOptions = Context.RequestServices.GetService(typeof(QuillSign.Email.EmailOptions)) as QuillSign.Email.EmailOptions;
     Uri? logo = null;
-    if (Uri.TryCreate(EmailOptions.BaseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var root) &&
+    if (Uri.TryCreate((emailOptions?.BaseUrl ?? "").TrimEnd('/') + "/", UriKind.Absolute, out var root) &&
         (root.Scheme == "https" || root.Scheme == "http" && root.IsLoopback) &&
         root.UserInfo.Length == 0 && root.Query.Length == 0 && root.Fragment.Length == 0)
         logo = new Uri(root, "logo.png");

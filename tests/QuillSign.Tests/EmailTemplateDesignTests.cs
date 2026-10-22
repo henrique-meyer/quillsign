@@ -17,7 +17,9 @@ public sealed class EmailTemplateDesignTests : IAsyncLifetime
     private static readonly DateTimeOffset At = new(2026, 10, 22, 12, 0, 0, TimeSpan.Zero);
     private const string Untrusted = "<script>alert(\"synthetic\")</script>&";
 
-    public async Task InitializeAsync()
+    public async Task InitializeAsync() => app = await Host();
+
+    private static async Task<WebApplication> Host(bool configured = true)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -27,10 +29,11 @@ public sealed class EmailTemplateDesignTests : IAsyncLifetime
         builder.Logging.ClearProviders();
         builder.WebHost.UseTestServer();
         builder.Services.AddRazorPages();
-        builder.Services.AddSingleton(new EmailOptions { BaseUrl = "https://example.invalid/demo/" });
+        if (configured) builder.Services.AddSingleton(new EmailOptions { BaseUrl = "https://example.invalid/demo/" });
         builder.Services.AddScoped<RazorEmailViews>();
-        app = builder.Build();
+        var app = builder.Build();
         await app.StartAsync();
+        return app;
     }
 
     public Task DisposeAsync() => app.DisposeAsync().AsTask();
@@ -123,5 +126,18 @@ public sealed class EmailTemplateDesignTests : IAsyncLifetime
         Assert.DoesNotContain("<img", html);
         Assert.Contains("QuillSign", html);
         Assert.Contains(Link.AbsoluteUri, html);
+    }
+
+    [Fact]
+    public async Task Standalone_worker_renderer_without_registered_email_options_keeps_the_wordmark_and_verification_link()
+    {
+        await using var standalone = await Host(configured: false);
+        using var scope = standalone.Services.CreateScope();
+        var email = await new VerificationEmailTemplate(new EmailOptions { BaseUrl = "https://example.invalid/demo/" },
+            scope.ServiceProvider.GetRequiredService<RazorEmailViews>()).RenderAsync("recipient@example.invalid", new string('a', 43));
+        Assert.DoesNotContain("<img", email.Html);
+        Assert.Contains("QuillSign", email.Html);
+        Assert.Contains("href=\"https://example.invalid/demo/sender/verify?token=" + new string('a', 43) + "\"", email.Html);
+        Assert.Contains("https://example.invalid/demo/sender/verify?token=" + new string('a', 43), email.Text);
     }
 }
