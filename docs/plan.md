@@ -1915,6 +1915,12 @@ Derive the send cutoff once from original StartsAt plus twenty-five minutes, cla
 
 This is source preparation only: no resource, identity, grant, provider configuration, job template, controller, package, packet, purpose clock, hosted SQL, rollout, provider window or new allowance. A later reviewed shutdown closes only the distinct private provider boundary and owned filtered executions, preserving normal services. Reuse focused existing fixtures/mock/native local SQL proofs and a warning-free build, secret scans and a curated operational branch push. Do not repeat signing, browser, TSA, emulator or full-suite campaigns. Main source integration follows reviewed operational code; native status remains In Progress and the main PR stays draft until actual hosted acceptance.
 
+### Bounded preparation: normal-email coexistence metadata
+
+After accepted coexistence source and offline artifacts, prepare only a fixed, project-scoped AWS metadata reader. Select eight ordered read-only controls: approved-profile account identity, exact sender identity and policy-source census, its named policy, the normal transport configuration and the existing sending identity default. Unexpected policy sources, truncation, mismatched targets, failures or unknown outcomes stop the phase without pagination, discovery, retry or repair. No secret values, account-approval monitoring, policy simulation, send, SQL, resource/configuration change or new recurring service. Normal Email, Work and the normal transport remain enabled.
+
+Preserve the closed 108 consumed controls and original ceilings; this separately selected maximum-eight phase has ceiling 116, consumes each slot before invocation and never refunds or carries unused slots. A new private reader requires exact root and independent review plus meaningful pure/fake-child cases before one explicit root invocation. Azure metadata, private transport creation/permission changes, rollout, controller implementation, packets, purpose clocks, hosted closeout windows and Run remain unselected. Source/CI/artifact evidence stays frozen; these plan-only edits do not change application bytes or require another source/build/test/CI campaign. Keep the main PR draft and native status In Progress until actual hosted acceptance.
+
 
 ## QUILS-140: Preserve privacy-safe SES refusal diagnostics for hosted pilot
 
