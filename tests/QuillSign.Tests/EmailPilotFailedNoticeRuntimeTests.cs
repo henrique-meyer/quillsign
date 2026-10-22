@@ -148,8 +148,15 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         var settings=new EmailPilotCloseoutOptions{Enabled=true,AuthorizationId=Guid.NewGuid().ToString("N"),CapabilitySha256=HashOptions().CapabilitySha256,StartsAt=clock.GetUtcNow(),Until=clock.GetUtcNow().AddMinutes(30),AccountingParentRunIds=parentIds.ToArray(),
             CompletionParentRunId=t.Options.RunId,VoidParentRunId=voidOptions.RunId,CompletionRecordId=t.Id.ToString("N"),VoidRecordId=draft.Id.ToString("N"),DeclineRecordId=decline.SubjectEnvelopeId.ToString("N"),
             CompletionWorkIds=originalComplete.Select(x=>x.Id.ToString("N")).ToArray(),VoidWorkIds=originalVoid.Select(x=>x.Id.ToString("N")).ToArray()};
-        var core=new EmailPilotCloseout(settings,email,work,()=>db,()=>t.LedgerFor(db),()=>new(keys),clock){Payloads=()=>t.Payload,CompletionPayloads=()=>completionProtection,CompletionJobs=()=>completionJobs,VoidPayloads=()=>voidProtection,VoidJobs=()=>voidJobs};
+        t.Options.Enabled=false; // The new closeout does not reactivate an old pilot.
+        var core=new EmailPilotCloseout(settings,email,work,()=>db,()=>t.LedgerFor(db),()=>new(keys),clock){ReceiptPilotOptions=t.Options,Payloads=()=>t.Payload,CompletionPayloads=()=>completionProtection,CompletionJobs=()=>completionJobs,VoidPayloads=()=>voidProtection,VoidJobs=()=>voidJobs};
         var created=await core.CreateAsync(Capability);Assert.Equal(6,created.Manifest.Queue.Length);
+        EmailPilotCloseoutCommittedReceipt initialReceipt;
+        await using(var receiptTx=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable)) {
+            initialReceipt=await core.ReadCommittedReceiptLockedAsync(db,created.AuthorizationId,default);
+            Assert.Equal(5,initialReceipt.OriginalParentIds.Length);Assert.Equal(0,initialReceipt.NewApplication);Assert.True(initialReceipt.OriginalPairsPreserved);
+            await receiptTx.RollbackAsync();
+        }
         Assert.Equal(originals,await OriginalRows(db,originalComplete.Concat(originalVoid).Select(x=>x.Id)));
         var capture=new Capture();var closeoutSender=new EmailPilotCloseoutSender(email,()=>core,()=>db,_=>capture,clock);
         var authority=new EmailPilotWorkAuthority(t.Options,email,work,t.Admission,()=>t.LedgerFor(db),()=>db,()=>t.Payload,clock){Closeout=()=>core};
@@ -183,6 +190,12 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         Assert.Equal(2,await db.EmailPilotCloseoutOperations.CountAsync(x=>x.CloseoutId==created.AuthorizationId&&x.Kind==1));
         Assert.Equal(originals,await OriginalRows(db,originalComplete.Concat(originalVoid).Select(x=>x.Id)));Assert.Equal(failedPairRequests,t.Run.Seal.Requests);
         settings.Enabled=false;await Assert.ThrowsAsync<InvalidDataException>(()=>store.ClaimAsync(created.CompletionWork.Last(),default));Assert.Equal(2,capture.Messages.Count);
+        await using(var receiptTx=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable)) {
+            var finalReceipt=await core.ReadCommittedReceiptLockedAsync(db,created.AuthorizationId,default);
+            Assert.Equal(2,finalReceipt.NewApplication);Assert.Equal(initialReceipt.HeaderFactsSha256,finalReceipt.HeaderFactsSha256);
+            Assert.Equal(initialReceipt.OriginalMailSha256,finalReceipt.OriginalMailSha256);Assert.Equal(initialReceipt.OriginalWorkSha256,finalReceipt.OriginalWorkSha256);
+            await receiptTx.RollbackAsync();
+        }
         Assert.True(clockAt<clock.GetUtcNow());
         }
         finally

@@ -38,6 +38,7 @@ internal sealed class EmailPilotCloseoutSnapshot
     internal EmailPilotManifest Parent(Guid record) => Parents[record == VoidRecord ? Configuration.VoidParent :
         record == CompletionRecord || record == DeclineRecord ? Configuration.CompletionParent : throw EmailPilotProtection.Invalid()].Manifest;
     internal EmailPilotEnrollment Enrollment(Guid record) => Parents[Parent(record).RunId].Enrollments.Single(x => x.SubjectEnvelopeId == record);
+    internal IEnumerable<EmailPilotHistoricalState> ReceiptParents => Parents.Values;
 }
 
 // Purpose-specific bounded finishing authority. Original manifests and every
@@ -47,6 +48,7 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
 {
     internal Func<EmailPilotCloseoutLookup>? Lookup { get; init; }
     internal Func<EmailPayloadProtection>? Payloads { get; init; }
+    internal EmailPilotOptions? ReceiptPilotOptions { get; init; }
     private static readonly JsonSerializerOptions Json = new() { Converters = { new JsonStringEnumConverter() } };
     private const string Purpose = "bounded-failed-notice-closeout-manifest-v1", ReceiptPurpose = "bounded-failed-notice-closeout-operation-v1";
     internal bool Available => options.Enabled && !email.Enabled && work.Enabled && time.GetUtcNow().Offset == TimeSpan.Zero &&
@@ -141,8 +143,14 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
     internal async Task<EmailPilotCloseoutSnapshot?> ReadLockedAsync(QuillSignDbContext db,CancellationToken ct=default)
     {
         if(!Available)return null;
+        var result=await ReadSnapshotLockedAsync(db,options.Capture(),ct);
+        if(!Available)throw Invalid();return result;
+    }
+
+    private async Task<EmailPilotCloseoutSnapshot?> ReadSnapshotLockedAsync(QuillSignDbContext db,EmailPilotCloseoutConfiguration cfg,CancellationToken ct)
+    {
         if(!ReferenceEquals(db,database())||db.Database.CurrentTransaction is null||db.ChangeTracker.HasChanges())throw Invalid();
-        var cfg=options.Capture();var row=await db.EmailPilotCloseouts.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==cfg.AuthorizationId,ct);if(row is null)return null;
+        var row=await db.EmailPilotCloseouts.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==cfg.AuthorizationId,ct);if(row is null)return null;
         var value=protection().Read<EmailPilotCloseoutManifest>(row.Id,Purpose,row.ProtectedManifest??throw Invalid(),65536);
         if(value.Version!=EmailPilotCloseoutLimits.Version||value.AuthorizationId!=row.Id||value.CreatedAt!=row.CreatedAt||value.Until!=row.Until||value.DeleteAfter!=row.DeleteAfter||
             value.ConfigurationSha256!=Hash(cfg)||value.CreatedAt<cfg.StartsAt||value.CreatedAt>Now||value.Until!=cfg.Until||value.DeleteAfter<=Now||
@@ -153,7 +161,7 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
             !value.Queue.Select(x=>x.OriginalId).ToHashSet().SetEquals(cfg.CompletionWork.Concat(cfg.VoidWork))||
             value.Queue.Any(x=>x.OriginalId==Guid.Empty||x.WorkId!=AliasId(cfg.AuthorizationId,x.OriginalId)||x.OriginalMailJson is null||x.OriginalWorkJson is null))throw Invalid();
         foreach(var pair in value.Queue)await DemandFailedOriginalLockedAsync(db,pair,ct);
-        if(!Available)throw Invalid();return new(cfg,value,parents);
+        return new(cfg,value,parents);
     }
 
     private async Task<Dictionary<Guid,EmailPilotHistoricalState>> Parents(QuillSignDbContext db,EmailPilotCloseoutConfiguration cfg,CancellationToken ct)

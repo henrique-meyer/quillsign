@@ -19,7 +19,7 @@ public sealed class EmailPilotCloseoutOperatorSession
 }
 
 public sealed class EmailPilotCloseoutOperatorBrowser(EmailPilotCloseoutOptions options,EmailOptions email,Work.WorkOptions work,
-    TimeProvider time,IHostEnvironment environment,Func<IDataProtectionProvider> keys)
+    TimeProvider time,IHostEnvironment environment,Func<IDataProtectionProvider> keys,EmailPilotOptions? pilot=null)
 {
     private sealed record Proof(string Version,Guid Id,string Capability,Guid Nonce,string Configuration,DateTimeOffset IssuedAt,DateTimeOffset Until);
     private sealed record Notice(Guid Id,Guid Nonce,EmailPilotOperatorNotice Code,DateTimeOffset Until);
@@ -51,13 +51,28 @@ public sealed class EmailPilotCloseoutOperatorBrowser(EmailPilotCloseoutOptions 
         if(!Live(s))return false;http.Response.Cookies.Append(Cookie,raw,Cookies(p.Until));return true;
     }
     public EmailPilotCloseoutOperatorSession? Read(HttpContext http)
+        => ReadCore(http,false);
+    internal EmailPilotCloseoutOperatorSession? ReadReceipt(HttpContext http)
+        => ReadCore(http,true);
+    internal bool LiveReceipt(EmailPilotCloseoutOperatorSession s)
     {
-        if(!Available || !http.Request.Cookies.TryGetValue(Cookie,out var raw) || raw.Length is <32 or >4096)return null;
+        var c=ReceiptConfiguration();return c is not null && s.AuthorizationId==c.AuthorizationId && s.Until==c.Until &&
+            s.Until>time.GetUtcNow() && s.Configuration==Digest(c) && Capability(s.Capability,c.CapabilitySha256);
+    }
+    private EmailPilotCloseoutConfiguration? ReceiptConfiguration()
+    {
+        if(email.Enabled||!work.Enabled||pilot is not {Enabled:false}||time.GetUtcNow().Offset!=TimeSpan.Zero)return null;
+        try {var c=options.CaptureReceiptConfiguration();return c.StartsAt<=time.GetUtcNow()&&c.Until>time.GetUtcNow()?c:null;}
+        catch(InvalidOperationException){return null;}
+    }
+    private EmailPilotCloseoutOperatorSession? ReadCore(HttpContext http,bool receipt)
+    {
+        if((receipt?ReceiptConfiguration() is null:!Available) || !http.Request.Cookies.TryGetValue(Cookie,out var raw) || raw.Length is <32 or >4096)return null;
         try {
             var json=Protector("session").Unprotect(raw);var p=JsonSerializer.Deserialize<Proof>(json);var now=time.GetUtcNow();
             if(p is null || JsonSerializer.Serialize(p)!=json || p.Version!=Version || p.Nonce==Guid.Empty || p.IssuedAt.Offset!=TimeSpan.Zero ||
                 p.Until.Offset!=TimeSpan.Zero || p.IssuedAt>now || p.IssuedAt>=p.Until || p.Until>p.IssuedAt.AddMinutes(30))return null;
-            var s=new EmailPilotCloseoutOperatorSession(p.Id,p.Capability,p.Nonce,p.Configuration,p.Until);return Live(s)?s:null;
+            var s=new EmailPilotCloseoutOperatorSession(p.Id,p.Capability,p.Nonce,p.Configuration,p.Until);return (receipt?LiveReceipt(s):Live(s))?s:null;
         }catch(Exception e)when(e is CryptographicException or JsonException or ArgumentException){return null;}
     }
     public void SetNotice(HttpContext http,EmailPilotCloseoutOperatorSession s,EmailPilotOperatorNotice code)

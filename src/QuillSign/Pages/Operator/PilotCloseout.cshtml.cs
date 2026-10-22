@@ -29,6 +29,13 @@ public sealed class PilotCloseoutModel(EmailPilotCloseoutOperatorBrowser browser
         return SenderConfiguration.WantsJson(HttpContext)?new JsonResult(new{message="Closeout controls opened."}):Redirect(EmailPilotCloseoutOperatorBrowser.Path);
     }
     public IActionResult OnPostLock(){EmailPilotOperatorBrowser.PrivateHeaders(HttpContext);browser.Lock(HttpContext);return Redirect(EmailPilotCloseoutOperatorBrowser.Path);}
+    public async Task<IActionResult> OnPostReceiptAsync(CancellationToken ct)
+    {
+        EmailPilotOperatorBrowser.PrivateHeaders(HttpContext);Capability="";ModelState.Clear();
+        var session=browser.ReadReceipt(HttpContext);if(session is null)return Failure(403,"A live closeout receipt session is required.");
+        try {return new JsonResult(await backend().ReadCommittedReceiptAsync(session,ct),new JsonSerializerOptions{PropertyNamingPolicy=null});}
+        catch(Exception e)when(Unavailable(e)){return Failure(503,"The committed receipt is unavailable.");}
+    }
     public Task<IActionResult> OnPostStartAsync(CancellationToken ct)=>Act((b,s)=>b.StartAsync(s,ct));
     public Task<IActionResult> OnPostVerificationAsync(CancellationToken ct)=>Act((b,s)=>b.VerifyDeclineAsync(s,ct));
     public Task<IActionResult> OnPostLookupAsync(CancellationToken ct)=>Act((b,s)=>b.LookupAsync(s,HttpContext.Connection.RemoteIpAddress?.ToString(),ct));
@@ -42,7 +49,7 @@ public sealed class PilotCloseoutModel(EmailPilotCloseoutOperatorBrowser browser
     }
     private IActionResult Failure(int status,string message)
     {Capability="";ModelState.Clear();Message=message;Response.StatusCode=status;return SenderConfiguration.WantsJson(HttpContext)?new JsonResult(new{message}){StatusCode=status}:Page();}
-    private static bool Unavailable(Exception e)=>e is InvalidOperationException or CryptographicException or JsonException or ArgumentException or IOException or HttpRequestException or Azure.RequestFailedException or EmailPilotAccessUnavailableException || SqlResume.IsUnavailable(e);
+    private static bool Unavailable(Exception e)=>e is InvalidOperationException or InvalidDataException or CryptographicException or JsonException or ArgumentException or IOException or HttpRequestException or Azure.RequestFailedException or EmailPilotAccessUnavailableException || SqlResume.IsUnavailable(e);
     private static string? Text(EmailPilotOperatorNotice? n)=>n switch {
         EmailPilotOperatorNotice.EnvelopeSaved=>"The selected work is saved. Continue only through the ordinary test inbox links.",
         EmailPilotOperatorNotice.LookupSaved=>"The single lookup is saved. Delivery is not yet confirmed.",

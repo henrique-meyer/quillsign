@@ -26,6 +26,11 @@ public static class DatabaseCommands
             var db = scope.ServiceProvider.GetRequiredService<QuillSignDbContext>();
             if (args[0] == "migrate") await SqlResume.RunAsync(() => db.Database.MigrateAsync());
             else if(args[0]=="remove-expired-closeout-secret") {
+                if(configuration["EmailPilot:Closeout:EmitCleanupReceipt"]=="true") {
+                    var receipt=await HostedCloseoutCleanupReceipt.RunAsync(db,configuration);
+                    Console.WriteLine(HostedCloseoutCleanupReceipt.Prefix+System.Text.Json.JsonSerializer.Serialize(receipt));return 0;
+                }
+                if(configuration["EmailPilot:Closeout:CleanupProofBase64"] is not null)throw new InvalidOperationException("Select the explicit closeout cleanup receipt path.");
                 var id=Guid.TryParseExact(configuration["EmailPilot:Closeout:AuthorizationId"],"N",out var selected)&&selected!=Guid.Empty?selected:throw new InvalidOperationException("Configure one exact closeout purpose.");
                 await db.Database.ExecuteSqlInterpolatedAsync($"EXEC dbo.RemoveExpiredEmailPilotCloseoutSecret @Id={id}");
                 if(await db.EmailPilotCloseouts.AnyAsync(x=>x.Id==id && x.ProtectedManifest!=null))throw new InvalidOperationException("The closeout secret is not yet due in database UTC.");

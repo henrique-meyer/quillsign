@@ -10,7 +10,7 @@ public static class EmailPilotCloseoutActions
     internal static IServiceCollection AddEmailPilotCloseoutActions(this IServiceCollection services)
     {
         services.AddScoped<EmailPilotCloseoutOperatorBrowser>(sp=>new(sp.GetRequiredService<EmailPilotCloseoutOptions>(),sp.GetRequiredService<EmailOptions>(),
-            sp.GetRequiredService<WorkOptions>(),sp.GetRequiredService<TimeProvider>(),sp.GetRequiredService<IHostEnvironment>(),()=>sp.GetRequiredService<IDataProtectionProvider>()));
+            sp.GetRequiredService<WorkOptions>(),sp.GetRequiredService<TimeProvider>(),sp.GetRequiredService<IHostEnvironment>(),()=>sp.GetRequiredService<IDataProtectionProvider>(),sp.GetRequiredService<EmailPilotOptions>()));
         services.AddScoped<EmailPilotCloseoutLookup>(sp=>new(sp.GetRequiredService<QuillSignDbContext>(),()=>sp.GetRequiredService<EmailPilotCloseout>(),
             sp.GetRequiredService<CompletionAccessState>(),sp.GetRequiredService<LookupDeliveryProtection>(),sp.GetRequiredService<LookupContactRetention>(),
             sp.GetRequiredService<LookupDeliveryOptions>(),sp.GetRequiredService<DocumentLookupOptions>(),sp.GetRequiredService<DocumentLookupProtection>(),
