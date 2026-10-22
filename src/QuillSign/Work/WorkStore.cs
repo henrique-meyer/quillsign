@@ -18,14 +18,17 @@ public interface IWorkHandler
 
 public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimeProvider time, Email.Pilot.EmailPilotCloseout? closeout=null)
 {
+    internal IProductionDeletionWorkAdmission? DeletionAdmission {get;init;}
     private readonly IProductionWorkAdmission? admission;
-    internal WorkStore(QuillSignDbContext db, WorkOptions options, TimeProvider time, IProductionWorkAdmission admission)
-        : this(db, options, time) => this.admission = admission;
+    internal WorkStore(QuillSignDbContext db, WorkOptions options, TimeProvider time, IProductionWorkAdmission admission, Email.Pilot.EmailPilotCloseout? closeout=null)
+        : this(db, options, time, closeout) => this.admission = admission;
 
     public async Task<WorkClaim> ClaimAsync(Guid id, CancellationToken cancellationToken)
     {
         db.ChangeTracker.Clear(); // Each claim reads current state, including repeat CLI/test calls.
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(cancellationToken), cancellationToken);
+        var selectedKind=await db.WorkItems.AsNoTracking().Where(x=>x.Id==id).Select(x=>(WorkKind?)x.Kind).SingleOrDefaultAsync(cancellationToken);
+        if(selectedKind==WorkKind.ProductionPurge)return await Deletion().ClaimAsync(db,id,cancellationToken);
         var now = time.GetUtcNow();
         Guid? expectedRecord = null; WorkKind? expectedKind = null; string? expectedRow = null; var expectedAttempt = 0; var owner = Guid.NewGuid();
         DateTimeOffset? originalCompletionMailUntil=null;
@@ -44,6 +47,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
                     .AsNoTracking().SingleOrDefaultAsync(cancellationToken);
                 await probe.RollbackAsync(cancellationToken);
             }
+            if(candidate?.Kind==WorkKind.ProductionPurge)return await Deletion().ClaimAsync(db,id,cancellationToken);
             if (candidate is null || candidate.Status is WorkStatus.Completed or WorkStatus.Failed) return new(null, null, true);
             if (candidate.AvailableAt > now) return new(null, candidate.AvailableAt, false);
             if (candidate.Status == WorkStatus.Leased && candidate.LeaseExpiresAt > now) return new(null, candidate.LeaseExpiresAt, false);
@@ -73,6 +77,9 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         // persisted its hint but has not committed must settle before we remove it.
         var row = await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {id}")
             .SingleOrDefaultAsync(cancellationToken);
+        // A kind change after the read-only routing probe cannot enter ordinary
+        // retry/lease mutation while this unrelated parent transaction is held.
+        if(row?.Kind==WorkKind.ProductionPurge)throw new InvalidOperationException("Production deletion requires its dedicated work admission.");
         if (admission is not null)
         {
             // A changed/missing candidate is not proof that our reservation had
@@ -84,6 +91,8 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         if (row is null || row.Status is WorkStatus.Completed or WorkStatus.Failed)
             return new(null, null, true);
         if(closeout is not null)await closeout.DemandClaimLockedAsync(db,row,cancellationToken);
+        else if(await db.EmailPilotCloseoutOperations.AsNoTracking().AnyAsync(x=>x.WorkId==row.Id,cancellationToken))
+            throw new InvalidDataException("Known closeout work requires its dedicated admission.");
         if (row.AvailableAt > now) return new(null, row.AvailableAt, false);
         if (row.Status == WorkStatus.Leased && row.LeaseExpiresAt > now) return new(null, row.LeaseExpiresAt, false);
         if (row.Kind == WorkKind.Email)
@@ -139,6 +148,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
 
     public async Task<DateTimeOffset?> FinishAsync(WorkLease lease, WorkResult result, CancellationToken cancellationToken)
     {
+        if(lease.Kind==WorkKind.ProductionPurge)return await Deletion().FinishAsync(db,lease,result,cancellationToken);
         Guid? recordId = null;
         if (admission is not null)
         {
@@ -189,5 +199,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
     // Explicit readback after a lost Finish acknowledgement. It performs no
     // handler/provider execution and never obtains a new lease or extends one.
     internal Task ReconcileCompletedAsync(WorkLease lease, Guid recordId, CancellationToken ct = default)
-        => admission?.CompleteAsync(lease, recordId, ct) ?? throw new InvalidOperationException("Record admission is not configured.");
+        =>lease.Kind==WorkKind.ProductionPurge?Deletion().ReconcileCompletedAsync(lease,recordId,ct):
+            admission?.CompleteAsync(lease, recordId, ct) ?? throw new InvalidOperationException("Record admission is not configured.");
+    private IProductionDeletionWorkAdmission Deletion()=>DeletionAdmission??throw new InvalidOperationException("Production deletion work admission is not configured.");
 }

@@ -13,6 +13,8 @@ public static class WorkCommands
 {
     public static async Task<int> RunAsync(string[] args)
     {
+        var productionDeletionBatch=args.Length is 1 or 2&&args[0]=="recover-production-deletions";
+        var productionDeletion=args.Length==2&&args[0] is "prepare-production-deletion" or "recover-production-deletion"&&Guid.TryParseExact(args[1],"N",out _);
         var republish = args.Length == 2 && args[0] == "publish-notification" && Guid.TryParseExact(args[1],"N",out _);
         var completion=args.Length==2 && args[0]=="resume-completion-notifications" && Guid.TryParseExact(args[1],"N",out _);
         var voids=args.Length==2 && args[0]=="resume-void-notifications" && Guid.TryParseExact(args[1],"N",out _);
@@ -24,8 +26,8 @@ public static class WorkCommands
         if(purgeRecovery && args.Length==2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out purgeBatch) || purgeBatch is <1 or >32))purgeRecovery=false;
         var batch=32;
         if(expiry && args.Length>=2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out batch) || batch is <1 or >64))expiry=false;
-        if (!lookupRetention && !republish && !completion && !voids && !expiry && !scheduleExpiry && !schedulePurge && !purgeRecovery && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
-        { Console.Error.WriteLine("Usage: work once|recover|listen|verify OR work resume-lookup-retention <32-character-request-id> OR work purge-recover [1-32] OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications|resume-signing-expiry|resume-demo-purge <32-character-envelope-id>"); return 2; }
+        if (!productionDeletionBatch && !productionDeletion && !lookupRetention && !republish && !completion && !voids && !expiry && !scheduleExpiry && !schedulePurge && !purgeRecovery && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
+        { Console.Error.WriteLine("Usage: work recover-production-deletions [opaque-continuation] OR work prepare-production-deletion|recover-production-deletion <32-character-record-id> OR work once|recover|listen|verify OR work resume-lookup-retention <32-character-request-id> OR work purge-recover [1-32] OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications|resume-signing-expiry|resume-demo-purge <32-character-envelope-id>"); return 2; }
         try
         {
             var builder = WebApplication.CreateBuilder();
@@ -91,6 +93,19 @@ public static class WorkCommands
                 var result=await scope.ServiceProvider.GetRequiredService<SigningExpiry>().RunBatchAsync(batch,args.Length==3 ? args[2] : null,timeout.Token);
                 Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new {operation="work-expire",status=result.Failed==0 ? "ok" : "partial",result.Examined,result.Expired,result.AlreadyExpired,result.Skipped,result.Failed,result.NextCursor}));
                 return result.Failed==0 ? 0 : 1;
+            }
+            if(productionDeletionBatch){
+                await using var scope=app.Services.CreateAsyncScope();var deletion=scope.ServiceProvider.GetRequiredService<QuillSign.Lifecycle.ProductionDeletionCoordinator>();
+                var result=await deletion.RecoverBatchAsync(args.Length==2?args[1]:null,timeout.Token);
+                Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new{operation="production-deletion-recovery",result.Examined,result.Pending,result.Continuation}));return result.Pending==0?0:1;
+            }
+            if(productionDeletion){
+                await using var scope=app.Services.CreateAsyncScope();
+                var deletion=scope.ServiceProvider.GetRequiredService<QuillSign.Lifecycle.ProductionDeletionCoordinator>();
+                var record=Guid.ParseExact(args[1],"N");
+                if(args[0]=="prepare-production-deletion")await deletion.PrepareAsync(record,timeout.Token);
+                else await deletion.RecoverAsync(record,timeout.Token);
+                Console.WriteLine("{\"operation\":\"production-deletion-maintenance\",\"status\":\"recorded\"}");return 0;
             }
             var signals = app.Services.GetRequiredService<IWorkSignals>();
             var count = 0;

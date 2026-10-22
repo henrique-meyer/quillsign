@@ -4,8 +4,7 @@ The source includes a private operator workflow at `/operator/retention`. It is
 disabled by default. Participant magic links, participant cookies, email
 addresses and identity-provider roles do not grant operator permission. This is
 source functionality, not a hosted deployment or a claim of production readiness.
-Production deletion/recovery and complete installation acceptance remain separate
-requirements in the [implementation plan](plan.md).
+Eligible production deletion/recovery is described in [production deletion](production-deletion.md). Complete hosted/installation acceptance remains required by QUILS-150 in the [implementation plan](plan.md).
 
 ## Explicit configuration
 
@@ -25,7 +24,8 @@ authorization-code requests use PKCE and correlation/state. No automatic public
 signup or participant challenge is added.
 
 Each `ProductionOperator__Grants` entry explicitly supplies `Subject`, plus the
-separate booleans `Status`, `PlaceHold`, `ReleaseHold` and `ReadEvidence`. The
+separate booleans `Status`, `PlaceHold`, `ReleaseHold`, `ReadEvidence` and
+`AuthorizeDeletion`. The
 issuer and subject must match exactly. Status does not imply sensitive-read or
 hold permission. Configure status together with the desired action permission
 so an operator can select and review the record before acting. A dedicated
@@ -78,6 +78,35 @@ The route uses no-store, noindex and no-referrer responses, fixed clean URLs,
 request bounds, CSRF and a private rate limit. GET does not read record metadata
 or perform a command. Reasons, operator subjects, provider selectors and record
 identifiers are not added to public discovery metadata or participant pages.
+
+## Completed-copy and archive disposition
+
+Production deletion is separately disabled by default. Enabling it requires
+`ProductionDeletion__Enabled` plus a nonempty, explicitly configured
+`CompletedCommitmentStatement` of at most 2048 characters. The project supplies
+no legal statement or production duration. `AuthorizeDeletion` is a separate
+exact issuer/subject permission; hold release, status and email delivery do not
+imply it.
+
+A trusted maintenance operator first prepares an eligible exact record through
+the bounded deletion command. For a completed record, the browser then reviews
+the actual prepared job, original publication and final receipt digests, current
+witness head, purpose and configured commitment. Explicit affirmation and a
+second CSRF-protected confirmation are required. The encrypted attestation binds
+the original dedicated ticket/session and an at-most-two-minute review interval;
+confirmation does not issue or renew a cookie. It states the operator has
+satisfied required retained-copy/archive responsibilities. Software does not
+verify possession or legal adequacy. It appends this fact externally before
+reservation and wakes only the already prepared queued job. Missing, stale,
+expired or unknown evidence refuses.
+
+After irreversible reservation, the page shows recorded deletion state rather
+than pretending missing SQL means an empty hold list or fresh deletion proof.
+Status access is audited and the recorded head is checked again. Historical
+receipts distinguish SQL removal, active-storage cleanup and unfinished cleanup;
+backups, soft-deleted bytes and independent copies are outside that statement.
+Existing hold commands and sensitive inventory exports are refused for a
+reserved deletion even when the deletion feature is later disabled.
 
 ## Disablement and existing records
 

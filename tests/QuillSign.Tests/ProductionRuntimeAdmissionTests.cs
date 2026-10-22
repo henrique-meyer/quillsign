@@ -315,9 +315,9 @@ public sealed class ProductionRuntimeAdmissionTests(SqlDatabaseFixture fixture) 
             options.Retry.MaxRetries = 0; var client = new BlobServiceClient(new Uri("https://storage.example.invalid"), new ProductionHoldArchiveReleaseTests.Credential(), options);
             Coordinator = new(fixture.Open, Keys, Time, Journal, new EmptySource(), new(client), new(client));
         }
-        internal static async Task<Run> Create(SqlDatabaseFixture fixture, bool demo = false)
+        internal static async Task<Run> Create(SqlDatabaseFixture fixture, bool demo = false,DateTimeOffset? initialTime=null)
         {
-            var run = new Run(fixture, demo);
+            var run = new Run(fixture, demo);if(initialTime is{} original)run.Time.Now=original;
             run.signals.BeforePublish = async workId =>
             {
                 await using var check = fixture.Open(); var id = await check.WorkItems.Where(x => x.Id == workId).Select(x => x.EnvelopeId).SingleAsync();

@@ -1,6 +1,7 @@
 name: PDF seal validation
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'tools/PdfSealSpike/**'
@@ -8,6 +9,14 @@ on:
       - 'docs/pdf-seal-feasibility.md'
       - 'src/QuillSign/Sealing/**'
       - 'src/QuillSign/Completion/**'
+      - 'src/QuillSign/Lifecycle/ProductionDeletion*.cs'
+      - 'src/QuillSign/Storage/*ProductionDeletion*.cs'
+      - 'src/QuillSign/Storage/ProductionPurgeSql.cs'
+      - 'tests/QuillSign.Tests/ProductionDeletion*.cs'
+      - 'tests/QuillSign.Tests/ProductionPurgeSql*.cs'
+      - 'tests/QuillSign.Tests/ProductionCompletionConnectedTests.cs'
+      - 'tests/QuillSign.Tests/ProductionCompletionDeletionTransport.cs'
+      - 'docs/production-deletion.md'
       - 'src/QuillSign/Legal/ProductionRetentionDisclosure.cs'
       - 'tests/QuillSign.Tests/ProductionRetentionAdmissionTests.cs'
       - 'tests/QuillSign.Tests/CompletionCertificateRendererTests.cs'
@@ -27,6 +36,14 @@ on:
       - 'docs/pdf-seal-feasibility.md'
       - 'src/QuillSign/Sealing/**'
       - 'src/QuillSign/Completion/**'
+      - 'src/QuillSign/Lifecycle/ProductionDeletion*.cs'
+      - 'src/QuillSign/Storage/*ProductionDeletion*.cs'
+      - 'src/QuillSign/Storage/ProductionPurgeSql.cs'
+      - 'tests/QuillSign.Tests/ProductionDeletion*.cs'
+      - 'tests/QuillSign.Tests/ProductionPurgeSql*.cs'
+      - 'tests/QuillSign.Tests/ProductionCompletionConnectedTests.cs'
+      - 'tests/QuillSign.Tests/ProductionCompletionDeletionTransport.cs'
+      - 'docs/production-deletion.md'
       - 'src/QuillSign/Legal/ProductionRetentionDisclosure.cs'
       - 'tests/QuillSign.Tests/ProductionRetentionAdmissionTests.cs'
       - 'tests/QuillSign.Tests/CompletionCertificateRendererTests.cs'
