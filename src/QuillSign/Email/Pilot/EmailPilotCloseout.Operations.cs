@@ -49,7 +49,7 @@ public sealed partial class EmailPilotCloseout
 
     // Recognition is independent of enable/expiry/secret availability. It never
     // authorizes an ordinary fallback or returns a token/recipient capability.
-    internal Task<bool> IsKnownWorkAsync(Guid workId, CancellationToken ct = default) => database().EmailPilotCloseoutOperations.AsNoTracking().AnyAsync(x => x.WorkId == workId, ct);
+    internal Task<bool> IsKnownWorkAsync(Guid workId, CancellationToken ct = default) => RecognizesWorkAsync(database(), workId, ct);
 
     internal async Task<EmailPilotCloseoutSnapshot> Current(QuillSignDbContext db, EmailPilotCloseoutSnapshot prior, CancellationToken ct)
     {

@@ -12,12 +12,21 @@ public sealed partial class EmailPilotCloseout
 {
     internal async Task<EmailPilotCloseoutWorkScope?> ReadWorkAsync(WorkLease lease, CancellationToken ct = default)
     {
-        if (!Available || lease.Kind != WorkKind.Email || lease.Attempt != 1 || lease.Until.Offset != TimeSpan.Zero || lease.Until <= Now) return null;
+        if (!Available || lease.Kind != WorkKind.Email || lease.Attempt != 1 || lease.Until.Offset != TimeSpan.Zero || lease.Until <= Now) {
+            if(await RecognizesWorkAsync(database(),lease.Id,ct))throw Invalid();
+            return null;
+        }
         var db=database();Clean(db);await using var tx=await db.Database.BeginTransactionAsync(ct);
-        var state=await ReadLockedAsync(db,ct);if(state is null)return null;
+        var state=await ReadLockedAsync(db,ct);if(state is null) {
+            if(await RecognizesWorkAsync(db,lease.Id,ct))throw Invalid();
+            return null;
+        }
         var known=state.Manifest.Queue.SingleOrDefault(x=>x.WorkId==lease.Id);
         var binding=(await Operations(db,state,ct)).SingleOrDefault(x=>x.Kind==0&&x.WorkId==lease.Id);
-        if(known is null&&binding is null)return null;
+        if(known is null&&binding is null) {
+            if(await RecognizesWorkAsync(db,lease.Id,ct))throw Invalid();
+            return null;
+        }
         var record=known?.RecordId??binding!.SubjectEnvelopeId;var step=known?.Step??binding!.Step;
         var item=await db.WorkItems.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==lease.Id,ct);
         var mail=await db.EmailOutbox.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==lease.Id,ct);
