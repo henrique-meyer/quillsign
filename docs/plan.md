@@ -2132,10 +2132,12 @@ Public closeout now reconciles current main additively, preserves all later appl
 
 ## QUILS-157: Shared QuillSign HTML email design
 
-Status: Implementation and local validation complete. Assigned to ChatGPT Codex. [PR #163](https://github.com/henrique-meyer/quillsign/pull/163) records CI and merge status.
+Status: In Progress for document subject identifiers; HTML design locally validated. Assigned to ChatGPT Codex. [PR #163](https://github.com/henrique-meyer/quillsign/pull/163) records CI and merge status.
 
 Use a shared responsive HTML email layout inspired by the owner's reference: subtle background, white card, existing QuillSign logo, clear header/title/body/footer, accessible action buttons and readable fallback links. Apply to every existing transactional HTML template while preserving plain text, encoded dynamic content, exact links/manual codes, disclosures, retention facts, attachments and sending safeguards. Reuse existing logo raster assets; any additional email raster export derives directly from the supplied logo and is included in this story.
 
 Validate actual rendered representative desktop/mobile emails and meaningful rendering/security regressions locally without live sends, hosted gate changes, cloud resources or new recurring costs. Complete secret scan, checked small PR, self-merge and native Jira Done.
 
 Validation: warning-free Release build and all 50 focused rendering/configuration/attachment cases pass, including all six templates, encoded untrusted content, exact action/manual-code preservation, unsafe/absent image origins and conditional completion facts. Real Chrome desktop and 375px phone previews show the existing logo and no horizontal overflow across verification, invitation/reminder, both completion modes, lookup, void and decline. Plain-text templates are unchanged. Full delivery integration remains a CI gate because the local Docker engine is stopped. No live sends or cloud/settings changes.
+
+Owner refinement: include a stable document identifier in every document-related email subject so separate documents cannot share an otherwise identical subject. Reuse the identifier across verification, invitations/reminders, completion and closure notices for that document. Generic lookup messages can span documents. Cover ordinary and prepared/pilot MIME paths, bounded safe header generation, deterministic repeat handling and distinct-document regressions. Keep existing hosted/public sending boundaries.
