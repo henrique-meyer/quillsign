@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using Azure.Identity;
 using Microsoft.Data.SqlClient;
 using QuillSign.Data;
 
@@ -54,6 +55,57 @@ public sealed class HostedCloseoutStateVerificationCommandTests
             (_,_)=>{cancel.Cancel();return Task.CompletedTask;},cancel.Token));Assert.Equal(1,calls);Assert.Equal(1,state.WorkerOpenAttempts);
     }
     [Theory]
+    [InlineData(-2)][InlineData(18456)][InlineData(0)][InlineData(int.MinValue)][InlineData(int.MaxValue)]
+    public async Task Actual_caught_SQL_open_error_exports_only_number_and_closed_kind_without_retry(int number)
+    {
+        var state=new HostedCloseoutVerificationOutput{Reason="worker-open"};var calls=0;var delays=0;
+        try {await HostedCloseoutStateVerificationCommand.OpenWorkerAsync(_=>{calls++;throw SqlError(number);},state,
+            (_,_)=>{delays++;return Task.CompletedTask;},default);throw new Exception("Expected SQL failure.");}
+        catch(SqlException failure){HostedCloseoutStateVerificationCommand.RecordFailure(state,failure);}
+        Assert.Equal(1,calls);Assert.Equal(0,delays);Assert.Equal(1,state.WorkerOpenAttempts);Assert.Null(state.FirstWorkerOpenSqlError);
+        Assert.False(state.QueriesStarted);Assert.Equal(0,state.RuntimeOpenAttempts);Assert.Equal("worker-open",state.Reason);
+        Assert.Equal(number,state.FailureSqlErrorNumber);Assert.Equal("sql",state.FailureKind);NoExceptionDetails(state);
+    }
+    [Fact]
+    public async Task Failed_second_open_reports_actual_final_number_and_preserves_original_40613_fact()
+    {
+        var state=new HostedCloseoutVerificationOutput{Reason="worker-open"};var calls=0;var delays=0;
+        try {await HostedCloseoutStateVerificationCommand.OpenWorkerAsync(_=>throw SqlError(++calls==1?40613:18456),state,
+            (duration,_)=>{Assert.Equal(TimeSpan.FromSeconds(120),duration);delays++;return Task.CompletedTask;},default);throw new Exception("Expected SQL failure.");}
+        catch(SqlException failure){HostedCloseoutStateVerificationCommand.RecordFailure(state,failure);}
+        Assert.Equal(2,calls);Assert.Equal(1,delays);Assert.Equal(2,state.WorkerOpenAttempts);Assert.Equal(40613,state.FirstWorkerOpenSqlError);
+        Assert.Equal(18456,state.FailureSqlErrorNumber);Assert.Equal("sql",state.FailureKind);Assert.False(state.QueriesStarted);NoExceptionDetails(state);
+    }
+    [Theory]
+    [InlineData("credential")][InlineData("cancelled")][InlineData("refused")][InlineData("other")]
+    public void Non_SQL_failures_have_only_closed_category_and_preserve_phase_except_existing_cancellation(string kind)
+    {
+        Exception failure=kind switch {
+            "credential"=>new AuthenticationFailedException("synthetic-private-message"),
+            "cancelled"=>new OperationCanceledException("synthetic-private-message"),
+            "refused"=>new InvalidDataException("synthetic-private-message"),
+            _=>new InvalidOperationException("synthetic-private-message")
+        };
+        var state=new HostedCloseoutVerificationOutput{Reason="worker-open"};
+        HostedCloseoutStateVerificationCommand.RecordFailure(state,failure);
+        Assert.Equal(kind,state.FailureKind);Assert.Null(state.FailureSqlErrorNumber);Assert.Equal(kind=="cancelled"?"cancelled":"worker-open",state.Reason);
+        Assert.Equal(0,state.WorkerOpenAttempts);Assert.Null(state.FirstWorkerOpenSqlError);Assert.False(state.QueriesStarted);NoExceptionDetails(state);
+    }
+    [Fact]
+    public void Success_has_no_failure_number_or_kind()
+    {
+        var state=new HostedCloseoutVerificationOutput{Status="passed",Complete=true,Reason="verified"};
+        using var json=JsonDocument.Parse(JsonSerializer.Serialize(state));
+        Assert.Equal(JsonValueKind.Null,json.RootElement.GetProperty("FailureKind").ValueKind);
+        Assert.Equal(JsonValueKind.Null,json.RootElement.GetProperty("FailureSqlErrorNumber").ValueKind);
+    }
+    private static void NoExceptionDetails(HostedCloseoutVerificationOutput state)
+    {
+        Assert.False(state.Complete);Assert.Equal("refused",state.Status);var json=JsonSerializer.Serialize(state);
+        foreach(var secret in new[]{"synthetic-private-message","synthetic-server","synthetic-procedure","synthetic-version","SqlException","AuthenticationFailedException","InvalidOperationException","StackTrace"})Assert.DoesNotContain(secret,json);
+        Assert.True(Encoding.UTF8.GetByteCount(json)<16384);
+    }
+    [Theory]
     [InlineData(false)][InlineData(true)]
     public async Task Actual_early_CLI_never_bootstraps_web_DP_providers_or_prints_poisoned_private_config(bool malformed)
     {
@@ -71,6 +123,7 @@ public sealed class HostedCloseoutStateVerificationCommandTests
         using var json=JsonDocument.Parse(line[HostedCloseoutStateVerificationCommand.Prefix.Length..]);Assert.False(json.RootElement.GetProperty("Complete").GetBoolean());
         Assert.Equal(0,json.RootElement.GetProperty("WorkerOpenAttempts").GetInt32());Assert.False(json.RootElement.GetProperty("QueriesStarted").GetBoolean());
         Assert.Equal("refused",json.RootElement.GetProperty("Status").GetString());Assert.True(Encoding.UTF8.GetByteCount(line)<16384);
+        Assert.Equal("refused",json.RootElement.GetProperty("FailureKind").GetString());Assert.Equal(JsonValueKind.Null,json.RootElement.GetProperty("FailureSqlErrorNumber").ValueKind);
     }
     private static string Packet(HostedCloseoutVerificationConfiguration cfg)=>Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(cfg));
     private static SqlException SqlError(int number)
