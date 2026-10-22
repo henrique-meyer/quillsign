@@ -61,8 +61,8 @@ public sealed class EmailPilotCloseoutOperator(EmailPilotCloseoutOperatorBrowser
                     var e=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={saved.DeclineRecord}").AsNoTracking().SingleOrDefaultAsync(ct);
                     if(e is null || !e.IsDemo || e.Status!=EnvelopeStatus.Draft || e.SenderVerifiedAt is not null || e.SenderEmail!=saved.Mailboxes.Sender ||
                         await db.Suppressions.AnyAsync(x=>x.Email==e.SenderEmail,ct))throw EmailPilotProtection.Invalid();
-                    var scope=new EmailPilotAdmissionScope(db,e.Id,e.SenderEmail,()=>{Demand(s);if(saved.Until<=time.GetUtcNow())throw EmailPilotProtection.Invalid();});
-                    work=await outbox().PreparePilotVerificationAsync(e.Id,e.SenderEmail,scope,ct);
+                    var scope=new EmailPilotAdmissionScope(db,e.Id,e.SenderEmail,()=>{Demand(s);if(!closeout().CanAdmit||saved.Until<=time.GetUtcNow())throw EmailPilotProtection.Invalid();});
+                    work=closeout().HostOptions.HostRole==EmailPilotCloseoutHostRole.Legacy?await outbox().PreparePilotVerificationAsync(e.Id,e.SenderEmail,scope,ct):await outbox().PrepareCloseoutVerificationAsync(e.Id,e.SenderEmail,scope,closeout().HostOptions,ct);
                     await closeout().BindNewWorkLockedAsync(db,saved,EmailPilotCloseoutStep.DeclineVerification,work,ct);
                 }
                 Demand(s);await tx.CommitAsync(ct);

@@ -54,6 +54,14 @@ public sealed class EmailOutboxWriter(QuillSignDbContext db, IWorkSignals signal
         scope.Demand(db,envelopeId,recipient);
         return await PrepareVerificationCoreAsync(envelopeId,recipient,cancellationToken);
     }
+    internal async Task<Guid> PrepareCloseoutVerificationAsync(Guid envelopeId,string recipient,
+        Email.Pilot.EmailPilotAdmissionScope scope,Email.Pilot.EmailPilotCloseoutOptions closeout,CancellationToken ct)
+    {
+        if(!closeout.Enabled||closeout.HostRole!=Email.Pilot.EmailPilotCloseoutHostRole.Web||!closeout.Host(emailOptions,workOptions,true))throw new EmailDisabledException();
+        if(time.GetUtcNow()>=closeout.StartsAt.AddMinutes(25)||time.GetUtcNow()>=closeout.Until)throw new EmailDisabledException();
+        scope.Demand(db,envelopeId,recipient);
+        return await PrepareVerificationCoreAsync(envelopeId,recipient,ct);
+    }
 
     private async Task<Guid> PrepareVerificationCoreAsync(Guid envelopeId, string recipient, CancellationToken cancellationToken)
     {
@@ -93,6 +101,7 @@ public sealed class EmailWorkHandler(QuillSignDbContext db, EmailOptions options
 
     public async Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken cancellationToken)
     {
+        if(pilot is null&&options.Enabled&&await Email.Pilot.EmailPilotCloseout.RecognizesWorkAsync(db,lease.Id,cancellationToken))return new(WorkOutcome.Ambiguous,"closeout-admission-unavailable");
         // Simulator work has no document parent. Recognize its reserved template
         // before the envelope-only pilot decision, and never ordinary-fallback.
         if(simulators is not null || pilot is not null || options.Enabled) {

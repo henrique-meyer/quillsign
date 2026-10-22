@@ -60,7 +60,7 @@ public sealed partial class EmailPilotCloseout
 
     internal async Task ReservePreparedAsync(EmailPilotCloseoutWorkScope scope,PreparedRawMime prepared,CancellationToken ct)
     {
-        if(prepared.ByteCount is <1 or >EmailPilotLimits.MessageBytes||prepared.Recipient!=scope.Recipient||
+        if(!CanSend||prepared.ByteCount is <1 or >EmailPilotLimits.MessageBytes||prepared.Recipient!=scope.Recipient||
             (scope.Step==EmailPilotCloseoutStep.Lookup?prepared.EnvelopeId is not null:prepared.EnvelopeId!=scope.RecordId))throw Invalid();
         await DemandWorkAsync(scope,ct);
         var db=database();Clean(db);await using var tx=await db.Database.BeginTransactionAsync(ct);await Lock(db,scope.AuthorizationId,ct);
@@ -69,6 +69,6 @@ public sealed partial class EmailPilotCloseout
             prior.Where(x=>x.Kind==1).Sum(x=>(long)x.EncodedBytes)+prepared.ByteCount>EmailPilotCloseoutLimits.EncodedBytes||scope.Until<=Now)throw Invalid();
         var receipt=new EmailPilotCloseoutReceipt(EmailPilotCloseoutLimits.Version,state.AuthorizationId,1,scope.Step,scope.RecordId,scope.Lease.Id,Now,prepared.ByteCount,
             Convert.ToHexStringLower(prepared.Sha256));db.EmailPilotCloseoutOperations.Add(Row(receipt));await db.SaveChangesAsync(ct);
-        if(!Available||scope.Until<=Now)throw Invalid();await tx.CommitAsync(ct);
+        if(!CanSend||scope.Until<=Now)throw Invalid();await tx.CommitAsync(ct);
     }
 }

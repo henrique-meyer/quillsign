@@ -3,6 +3,7 @@ using Amazon.SimpleEmailV2;
 using Microsoft.AspNetCore.DataProtection;
 using QuillSign.Completion;
 using QuillSign.Data;
+using QuillSign.Storage;
 using QuillSign.Work;
 
 namespace QuillSign.Email.Pilot;
@@ -23,24 +24,39 @@ public sealed class EmailPilotTransportFactory:IDisposable
 
 public static class EmailPilotRuntime
 {
+    // Only the explicit Handoff recovery host needs SQL/key-ring authentication.
+    // Register no email transport, work handler, or document workflow here.
+    internal static IServiceCollection AddCloseoutHandoffRecovery(this IServiceCollection services,IConfiguration config,IHostEnvironment environment)
+    {
+        var options=config.GetSection("EmailPilot:Closeout").Get<EmailPilotCloseoutOptions>()??new();options.Validate();
+        if(options.HostRole!=EmailPilotCloseoutHostRole.Handoff)return services;
+        services.AddQuillSignDatabase(config);services.AddQuillSignStorage(config,environment);services.AddEmailPilotFoundation(config);
+        services.AddSingleton(config.GetSection("Email").Get<EmailOptions>()??new());services.AddSingleton(options);
+        services.AddScoped<EmailPayloadProtection>();services.AddScoped<CompletionNotificationProtection>();services.AddScoped<SignerInvitationProtection>();services.AddScoped<LookupDeliveryProtection>();
+        services.AddScoped<EmailPilotCloseout>(sp=>new(options,sp.GetRequiredService<EmailOptions>(),sp.GetRequiredService<WorkOptions>(),()=>sp.GetRequiredService<QuillSignDbContext>(),()=>sp.GetRequiredService<EmailPilotLedger>(),()=>sp.GetRequiredService<EmailPilotProtection>(),sp.GetRequiredService<TimeProvider>()) {Payloads=()=>sp.GetRequiredService<EmailPayloadProtection>(),CompletionPayloads=()=>sp.GetRequiredService<CompletionNotificationProtection>(),InvitationPayloads=()=>sp.GetRequiredService<SignerInvitationProtection>(),LookupPayloads=()=>sp.GetRequiredService<LookupDeliveryProtection>()});
+        return services;
+    }
     // Install on normal web/worker hosts even when disabled. Persisted pilot
     // cohorts must keep their denial after disable/rotation. All callbacks use
     // this same scope; no singleton captures SQL, credentials or an operator.
-    public static IServiceCollection AddRestrictedEmailPilotRuntime(this IServiceCollection services,IConfiguration config)
+    public static IServiceCollection AddRestrictedEmailPilotRuntime(this IServiceCollection services,IConfiguration config,bool privatePass=false)
     {
         services.AddEmailPilotReadScopeFoundation(config);
         services.AddEmailPilotSimulatorFoundation(config);
         services.AddPilotTimestampBoundaryFoundation(config);
         services.AddEmailPilotSecretCleanup();
-        var closeout=config.GetSection("EmailPilot:Closeout").Get<EmailPilotCloseoutOptions>()??new();closeout.Validate();services.AddSingleton(closeout);
+        var closeout=config.GetSection("EmailPilot:Closeout").Get<EmailPilotCloseoutOptions>()??new();closeout.Validate();
+        if(closeout.HostRole==EmailPilotCloseoutHostRole.Pass&&!privatePass)throw new InvalidOperationException("Pass configuration requires the dedicated filtered command host.");
+        services.AddSingleton(closeout);
         services.AddScoped<EmailPilotCloseout>(sp=>new(closeout,sp.GetRequiredService<EmailOptions>(),sp.GetRequiredService<WorkOptions>(),
             ()=>sp.GetRequiredService<QuillSignDbContext>(),()=>sp.GetRequiredService<EmailPilotLedger>(),()=>sp.GetRequiredService<EmailPilotProtection>(),sp.GetRequiredService<TimeProvider>()) {
             ReceiptPilotOptions=sp.GetRequiredService<EmailPilotOptions>(),
             Lookup=()=>sp.GetRequiredService<EmailPilotCloseoutLookup>(),Payloads=()=>sp.GetRequiredService<EmailPayloadProtection>(),CompletionPayloads=()=>sp.GetRequiredService<CompletionNotificationProtection>(), VoidPayloads=()=>sp.GetRequiredService<VoidNotificationProtection>(),
-            CompletionJobs=()=>sp.GetRequiredService<CompletionNotificationJobs>(),VoidJobs=()=>sp.GetRequiredService<VoidNotificationJobs>() });
+            InvitationPayloads=()=>sp.GetRequiredService<SignerInvitationProtection>(),LookupPayloads=()=>sp.GetRequiredService<LookupDeliveryProtection>(),CompletionJobs=()=>sp.GetRequiredService<CompletionNotificationJobs>(),VoidJobs=()=>sp.GetRequiredService<VoidNotificationJobs>() });
         services.AddScoped<EmailPilotCloseoutSender>(sp=>new(sp.GetRequiredService<EmailOptions>(),()=>sp.GetRequiredService<EmailPilotCloseout>(),()=>sp.GetRequiredService<QuillSignDbContext>(),
             sp.GetRequiredService<Func<EmailPilotSesSettings,IPreparedEmailTransport>>(),sp.GetRequiredService<TimeProvider>()));
         services.AddEmailPilotCloseoutActions();
+        services.AddScoped<EmailPilotCloseoutPass>();
         services.AddScoped<EmailPilotTransportFactory>();
         services.AddScoped<Func<EmailPilotSesSettings,IPreparedEmailTransport>>(sp=>settings=>sp.GetRequiredService<EmailPilotTransportFactory>().Create(settings));
         services.AddScoped<EmailPilotSender>(sp=>new(sp.GetRequiredService<EmailPilotOptions>(),sp.GetRequiredService<EmailOptions>(),sp.GetRequiredService<WorkOptions>(),

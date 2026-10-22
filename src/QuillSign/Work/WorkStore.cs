@@ -4,7 +4,7 @@ using QuillSign.Data;
 namespace QuillSign.Work;
 
 public sealed record WorkLease(Guid Id, Guid Owner, WorkKind Kind, int Attempt, DateTimeOffset Until);
-public sealed record WorkClaim(WorkLease? Lease, DateTimeOffset? RetryAt, bool Terminal);
+public sealed record WorkClaim(WorkLease? Lease, DateTimeOffset? RetryAt, bool Terminal,bool PrivateHandoff=false,bool PrivateRefused=false);
 public enum WorkOutcome { Completed, Retry, Failed, Ambiguous }
 public sealed record WorkResult(WorkOutcome Outcome, string? Code = null);
 
@@ -28,7 +28,13 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
             .SingleOrDefaultAsync(cancellationToken);
         if (row is null || row.Status is WorkStatus.Completed or WorkStatus.Failed)
             return new(null, null, true);
-        if(closeout is not null)await closeout.DemandClaimLockedAsync(db,row,cancellationToken);
+        if(closeout is not null&&closeout.HandoffHost) {
+            try {
+                if(await Email.Pilot.EmailPilotCloseout.RecognizesWorkAsync(db,row.Id,cancellationToken))return await closeout.HandoffLockedAsync(db,row.Id,cancellationToken)?new(null,null,false,true):new(null,null,false,false,true);
+                await closeout.DemandClaimLockedAsync(db,row,cancellationToken);
+            }catch(Exception e)when(e is InvalidDataException or InvalidOperationException or System.Security.Cryptography.CryptographicException or System.Text.Json.JsonException or ArgumentException){return new(null,null,false,false,true);}
+        }
+        else if(closeout is not null)await closeout.DemandClaimLockedAsync(db,row,cancellationToken);
         else if(await Email.Pilot.EmailPilotCloseout.RecognizesWorkAsync(db,row.Id,cancellationToken))
             throw new InvalidDataException("Known closeout work requires its dedicated admission.");
         if (row.AvailableAt > now) return new(null, row.AvailableAt, false);
@@ -62,6 +68,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         row.Attempts=row.Kind==WorkKind.Purge && row.Attempts==int.MaxValue ? int.MaxValue : row.Attempts+1;
         row.LeaseOwner = Guid.NewGuid();
         row.LeaseExpiresAt = now.AddSeconds(options.LeaseSeconds);
+        if(closeout?.PassHost==true){if(!closeout.CanSend)throw new InvalidDataException("Private dispatch admission expired.");row.LeaseExpiresAt=new[]{row.LeaseExpiresAt.Value,closeout.HostOptions.Until}.Min();}
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(new(row.Id, row.LeaseOwner.Value, row.Kind, row.Attempts, row.LeaseExpiresAt.Value), null, false);
