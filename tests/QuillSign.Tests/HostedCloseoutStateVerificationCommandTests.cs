@@ -17,7 +17,7 @@ public sealed class HostedCloseoutStateVerificationCommandTests
         var parsed=HostedCloseoutStateVerificationCommand.Capture("true",packet,["false","false","false","false"],out var hash);
         Assert.Equal(cfg.RuntimeClientId,parsed.RuntimeClientId);Assert.Equal(cfg.RuntimeSqlSid,parsed.RuntimeSqlSid);Assert.Equal(64,hash.Length);
         var sql=new SqlConnectionStringBuilder(HostedCloseoutStateVerificationCommand.Connection(cfg).ConnectionString);
-        Assert.Equal(0,sql.ConnectRetryCount);Assert.False(sql.Pooling);Assert.False(sql.TrustServerCertificate);Assert.Equal(15,sql.ConnectTimeout);
+        Assert.Equal(0,sql.ConnectRetryCount);Assert.False(sql.Pooling);Assert.False(sql.TrustServerCertificate);Assert.Equal(60,sql.ConnectTimeout);
         Assert.Empty(sql.UserID);Assert.Empty(sql.Password);Assert.Equal(SqlAuthenticationMethod.NotSpecified,sql.Authentication);
         Assert.NotEqual(new Guid(Convert.FromBase64String(cfg.RuntimeSqlSid)),cfg.RuntimeClientId);
     }

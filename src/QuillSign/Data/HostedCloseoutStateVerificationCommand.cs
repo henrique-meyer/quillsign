@@ -131,7 +131,7 @@ internal static class HostedCloseoutStateVerificationCommand
     {await using var command=HostedCloseoutStateVerification.Command(connection,"SET LOCK_TIMEOUT 5000",transaction);await command.ExecuteNonQueryAsync(ct);}
     internal static SqlConnection Connection(HostedCloseoutVerificationConfiguration cfg)=>new(new SqlConnectionStringBuilder{
         DataSource="tcp:"+cfg.Server+",1433",InitialCatalog=cfg.Database,Encrypt=true,TrustServerCertificate=false,
-        ConnectTimeout=15,ConnectRetryCount=0,Pooling=false,MultipleActiveResultSets=false,ApplicationName="QuillSign.HostedCloseoutVerification"}.ConnectionString);
+        ConnectTimeout=60,ConnectRetryCount=0,Pooling=false,MultipleActiveResultSets=false,ApplicationName="QuillSign.HostedCloseoutVerification"}.ConnectionString);
     internal static string ApplicationHash()=>Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(typeof(DatabaseCommands).Assembly.Location)));
     internal static HostedCloseoutVerificationConfiguration Capture(string? enabled,string? packet,string?[] gates,out string hash)
     {
