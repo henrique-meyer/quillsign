@@ -18,10 +18,13 @@ public sealed class RetentionModel(ProductionOperatorBrowser browser,IProduction
     [BindProperty,StringLength(2048)] public string? Reason {get;set;}="";
     [BindProperty,StringLength(512)] public string? Reference {get;set;}="";
     [BindProperty,StringLength(16384)] public string? Confirmation {get;set;}="";
+    [BindProperty] public bool Attested {get;set;}
     [TempData] public string? Notice {get;set;}
     public bool SignedIn {get;private set;}
     public ProductionOperatorView? Current {get;private set;}
     public ProductionOperatorReview? Review {get;private set;}
+    public ProductionOperatorDeletionReview? DeletionReview {get;private set;}
+    public bool DeletionEnabled=>actions.DeletionEnabled;
     private void Private(){Response.Headers.CacheControl="no-store";Response.Headers["X-Robots-Tag"]="noindex, nofollow";Response.Headers["Referrer-Policy"]="no-referrer";}
     public async Task<IActionResult> OnGetAsync()
     {
@@ -50,6 +53,18 @@ public sealed class RetentionModel(ProductionOperatorBrowser browser,IProduction
     {
         Private();if(!browser.Enabled)return NotFound();try{DemandInput();Notice=await actions.ExecuteAsync(HttpContext,Confirmation??"",ct);return Redirect(ProductionOperatorAuthentication.Page);}
         catch(Exception e)when(Known(e)){Notice="The operation is unavailable or unresolved. Inspect its recorded state before taking further action.";return Redirect(ProductionOperatorAuthentication.Page);}
+    }
+    public async Task<IActionResult> OnPostReviewDeletionAsync(CancellationToken ct)
+    {
+        Private();if(!browser.Enabled||!actions.DeletionEnabled)return NotFound();
+        try{DemandInput();DeletionReview=await actions.ReviewDeletionAsync(HttpContext,Id(RecordId),Purpose??"",ct);SignedIn=true;return Page();}
+        catch(Exception e)when(Known(e)){return Unavailable();}
+    }
+    public async Task<IActionResult> OnPostConfirmDeletionAsync(CancellationToken ct)
+    {
+        Private();if(!browser.Enabled||!actions.DeletionEnabled)return NotFound();
+        try{DemandInput();if(!Attested)throw ProductionOperatorAuthority.Denied();Notice=await actions.ExecuteDeletionAsync(HttpContext,Confirmation??"",ct);return Redirect(ProductionOperatorAuthentication.Page);}
+        catch(Exception e)when(Known(e)){Notice="Deletion authorization is unavailable or unresolved. Inspect recorded status before taking further action.";return Redirect(ProductionOperatorAuthentication.Page);}
     }
     public async Task<IActionResult> OnPostExportAsync(CancellationToken ct)
     {

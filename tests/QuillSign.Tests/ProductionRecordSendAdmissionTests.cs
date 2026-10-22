@@ -143,9 +143,9 @@ public sealed class ProductionRecordSendAdmissionTests(SqlDatabaseFixture fixtur
         internal Envelope Original=null!;private DraftReviewSnapshot Review=null!;private DisclosureSnapshot Disclosure=null!;
         internal int[] ReminderDays {get;init;}=[];
         private readonly ElectronicRecordDisclosure disclosures=new(ProductionRetentionAdmissionContractTests.Policies());
-        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false,bool demo=false,bool withFields=false,bool twoSigners=false,bool withRecipient=false,int[]? reminderDays=null)
+        internal static async Task<Ready> Create(SqlDatabaseFixture fixture,bool requestedDeadline=false,bool demo=false,bool withFields=false,bool twoSigners=false,bool withRecipient=false,int[]? reminderDays=null,DateTimeOffset? initialTime=null)
         {
-            var test=new Ready(fixture,await ProductionRecordUploadAdmissionTests.Prepared.Create(fixture,demo)){ReminderDays=reminderDays?.ToArray()??[]};await using var db=fixture.Open();
+            var test=new Ready(fixture,await ProductionRecordUploadAdmissionTests.Prepared.Create(fixture,demo,initialTime)){ReminderDays=reminderDays?.ToArray()??[]};await using var db=fixture.Open();
             var p=test.Prepared;
             if(requestedDeadline)
             {

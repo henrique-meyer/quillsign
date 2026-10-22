@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace QuillSign.Lifecycle;
 
-internal enum HoldWitnessKind { OperationReserved, OperationSettled, CommandIntent, SqlAccepted, Preserved, Released, PreservationReserved, ReleaseReserved, PlanFrozen, Initialized, OperationOutcomePrepared, HandlerOutcomePrepared, UploadWritesPrepared, UploadWriteStarted, UploadWriteRecorded, SendWritePrepared, SendWriteStarted, SendWriteRecorded, DispatchStarted, PreviewWritesPrepared, PreviewWriteStarted, PreviewWriteRecorded, ReviewWritesPrepared, ReviewWriteStarted, ReviewWriteRecorded, CompletionTransition }
+internal enum HoldWitnessKind { OperationReserved, OperationSettled, CommandIntent, SqlAccepted, Preserved, Released, PreservationReserved, ReleaseReserved, PlanFrozen, Initialized, OperationOutcomePrepared, HandlerOutcomePrepared, UploadWritesPrepared, UploadWriteStarted, UploadWriteRecorded, SendWritePrepared, SendWriteStarted, SendWriteRecorded, DispatchStarted, PreviewWritesPrepared, PreviewWriteStarted, PreviewWriteRecorded, ReviewWritesPrepared, ReviewWriteStarted, ReviewWriteRecorded, CompletionTransition, DeletionTransition }
 internal sealed record HoldWitnessEvent(string Version, Guid RecordId, long Sequence, Guid EventId,
     HoldWitnessKind Kind, DateTimeOffset At, string? PreviousHash, ProductionHoldCommand? Command,
     string? Issuer, string? Subject, Guid? OperationId, long RequestRevision, string? RequestFenceHash,
@@ -38,7 +38,8 @@ internal sealed record HoldWitnessEvent(string Version, Guid RecordId, long Sequ
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteDescriptor? ReviewItem = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionRecordWriteReceipt? ReviewReceipt = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HoldWitnessCompletionTransition? Completion = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HoldWitnessCompletionMailBaseline? CompletionMailBaseline = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] HoldWitnessCompletionMailBaseline? CompletionMailBaseline = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProductionDeletionTransition? Deletion = null);
 internal sealed record HoldWitnessOutcome(string ContentSha256, string SqlStateSha256, long Sequence);
 internal sealed record HoldWitnessHold(ProductionHoldCommand Placement, ProductionHoldCommand? Release,
     bool Effective, bool Released, Guid? PlanId, string? PlanSha256, string? PreservationSha256, string? ReleaseSha256,
@@ -55,9 +56,10 @@ internal sealed record HoldWitnessState(long Sequence, string? HeadHash, long Re
     IReadOnlyDictionary<Guid, HoldWitnessPreviewWrites>? PreviewWrites = null,
     IReadOnlyDictionary<Guid, HoldWitnessReviewWrites>? ReviewWrites = null,
     IReadOnlyDictionary<Guid, HoldWitnessCompletionState>? Completions = null,
-    IReadOnlyDictionary<Guid, HoldWitnessCompletionMailBaseline>? CompletionMailBaselines = null)
+    IReadOnlyDictionary<Guid, HoldWitnessCompletionMailBaseline>? CompletionMailBaselines = null,
+    HoldWitnessDeletionState? Deletion = null)
 {
-    internal bool Frozen => Unacknowledged is not null || OutstandingOperation is not null || Holds.Values.Any(x => !x.Released);
+    internal bool Frozen => Deletion?.Reserved==true || Unacknowledged is not null || OutstandingOperation is not null || Holds.Values.Any(x => !x.Released);
 }
 
 // An external, encrypted, append-only admission journal. These methods remain
@@ -81,6 +83,30 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
 
     internal async Task<HoldWitnessState> ReadAsync(Guid recordId, CancellationToken ct = default)
         => (await Read(recordId, ct)).State;
+
+    internal async Task<HoldWitnessState> ChangeDeletionAsync(Guid recordId,ProductionDeletionTransition transition,Guid eventId,CancellationToken ct=default)
+    {
+        var bytes=JsonSerializer.SerializeToUtf8Bytes(transition,ProductionDeletionProtocol.Json);
+        if(bytes.Length>49152)throw Invalid();
+        transition=JsonSerializer.Deserialize<ProductionDeletionTransition>(bytes,ProductionDeletionProtocol.Json)??throw Invalid();
+        var prior=await Read(recordId,ct);var value=New(recordId,eventId,HoldWitnessKind.DeletionTransition) with{Deletion=transition};
+        var replay=prior.Events.SingleOrDefault(x=>x.EventId==eventId);
+        if(replay is not null){
+            value=value with{At=replay.At,Sequence=replay.Sequence,PreviousHash=replay.PreviousHash};
+            if(!JsonSerializer.SerializeToUtf8Bytes(value).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(replay)))throw Invalid();
+            return prior.State;
+        }
+        return await Append(prior,value,ct);
+    }
+
+    internal async Task DemandDeletionHeadroomAsync(Guid recordId,int objects,int chunks,CancellationToken ct=default)
+    {
+        var prior=await Read(recordId,ct);
+        // Refuse BEFORE a destructive request if the complete bounded operation
+        // cannot fit its original journal allowance. No additional budget.
+        if(objects is<0 or>4096||chunks is<0 or>384||prior.Events.Length+objects*4+chunks+12>MaximumEvents||
+            prior.Bytes+objects*8192L+chunks*49152L+12L*MaximumPayload>MaximumBytes)throw Invalid();
+    }
 
     // Authenticated durable clock floor, returned by the SAME bounded read as
     // state. No extra event, SQL connection or mutable timestamp authority.
@@ -413,7 +439,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         var read = await Read(value.RecordId, ct);
         if (read.Events.Length < value.Sequence) throw Invalid();
         var actual = read.Events[(int)value.Sequence - 1];
-        if (value.Kind == HoldWitnessKind.CompletionTransition)
+        if (value.Kind is HoldWitnessKind.CompletionTransition or HoldWitnessKind.DeletionTransition)
         {
             if (!JsonSerializer.SerializeToUtf8Bytes(actual).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(value))) throw Invalid();
         }
@@ -478,6 +504,7 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
         var reviews = new Dictionary<Guid, HoldWitnessReviewWrites>();
         var completions = new Dictionary<Guid, HoldWitnessCompletionState>();
         var completionMail = new Dictionary<Guid, HoldWitnessCompletionMailBaseline>();
+        HoldWitnessDeletionState? deletion=null;
         Guid? operation = null; ProductionHoldCommand? pending = null; long revision = 0; string? fence = null; string? business = null;
         DateTimeOffset? lastAt = null;
         foreach (var e in events)
@@ -485,11 +512,19 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
             if (e.Version != Version || e.RecordId != id || e.EventId == Guid.Empty || !eventIds.Add(e.EventId) || !Enum.IsDefined(e.Kind) ||
                 e.At.Offset != TimeSpan.Zero || e.At > time.GetUtcNow() || e.At < lastAt || e.Sequence != eventIds.Count) throw Invalid();
             lastAt = e.At;
+            if(deletion?.Reserved==true&&e.Kind!=HoldWitnessKind.DeletionTransition)throw Invalid();
             // Only the fields defined for the exact event are permitted. This
             // closes future-field/shape ambiguity even for protected plaintext.
             var canonical = New(id, e.EventId, e.Kind) with { At = e.At, Sequence = e.Sequence, PreviousHash = e.PreviousHash };
             switch (e.Kind)
             {
+                case HoldWitnessKind.DeletionTransition:
+                    if(e.Deletion?.Header is{} deletionHeader&&deletionHeader.RecordId!=id||
+                        e.Deletion?.Disposition is{} disposition&&disposition.RecordId!=id)throw Invalid();
+                    var predecessor=new HoldWitnessState(e.Sequence-1,e.PreviousHash,revision,fence,pending,operation,holds,business,settled,
+                        initialized,sqlState,typed,outcomes,handlerOutcomes,uploads,sends,dispatches,previews,reviews,completions,completionMail,deletion);
+                    deletion=ProductionDeletionProtocol.Apply(deletion,e.Deletion??throw Invalid(),e.Sequence,e.At,predecessor);
+                    canonical=canonical with{Deletion=e.Deletion};break;
                 case HoldWitnessKind.Initialized:
                     if (e.Sequence != 1 || initialized || holds.Count != 0 || operation is not null || pending is not null ||
                         !Hash(e.BusinessStateSha256) || !Hash(e.SqlStateSha256)) throw Invalid();
@@ -793,9 +828,9 @@ internal sealed class ProductionHoldWitnessJournal(IProductionHoldWitnessStore s
                     operation = null; maintenance = false;
                     canonical = canonical with { Command = e.Command, ReceiptSha256 = e.ReceiptSha256, Control = e.Control, OperationId = e.OperationId }; break;
             }
-            if (e.Kind == HoldWitnessKind.CompletionTransition ? !JsonSerializer.SerializeToUtf8Bytes(canonical).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(e)) : canonical != e) throw Invalid();
+            if (e.Kind is HoldWitnessKind.CompletionTransition or HoldWitnessKind.DeletionTransition ? !JsonSerializer.SerializeToUtf8Bytes(canonical).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(e)) : canonical != e) throw Invalid();
         }
-        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed, outcomes, handlerOutcomes, uploads, sends, dispatches, previews, reviews, completions,completionMail);
+        return new(events.LongLength, null, revision, fence, pending, operation, holds, business, settled, initialized, sqlState, typed, outcomes, handlerOutcomes, uploads, sends, dispatches, previews, reviews, completions,completionMail,deletion);
     }
 
     private static bool Prefix(ProductionHoldControlPrefix? value) => value is { Sequence: > 0 } && Hash(value.Hash);

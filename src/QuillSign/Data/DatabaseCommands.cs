@@ -8,9 +8,9 @@ public static class DatabaseCommands
     public static async Task<int> RunAsync(string[] args)
     {
         IConfiguration? configuration = null;
-        if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "grant-demo-purge" or "grant-lookup-retention" or "grant-email-pilot-retention" or "verify-runtime"))
+        if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "grant-demo-purge" or "grant-production-purge" or "grant-production-holds" or "grant-lookup-retention" or "grant-email-pilot-retention" or "verify-runtime"))
         {
-            Console.Error.WriteLine("Usage: database provision-identities|provision-worker|migrate|grant-runtime|grant-demo-purge|grant-lookup-retention|grant-email-pilot-retention|verify-runtime");
+            Console.Error.WriteLine("Usage: database provision-identities|provision-worker|migrate|grant-runtime|grant-demo-purge|grant-production-purge|grant-production-holds|grant-lookup-retention|grant-email-pilot-retention|verify-runtime");
             return 2;
         }
         try
@@ -26,6 +26,14 @@ public static class DatabaseCommands
             else if (args[0] == "verify-runtime") await VerifyRuntimeAsync(db);
             else
             {
+                byte[]? holdRuntimeSid=null,holdWorkerSid=null;string? holdPrincipalMode=null;
+                if(args[0]=="grant-production-holds")
+                {
+                    holdPrincipalMode=builder.Configuration["Database:ProductionHoldPrincipalMode"]??"External";
+                    holdRuntimeSid=DatabasePermissions.ReadProductionPrincipalSid(builder.Configuration["Database:RuntimePrincipalSid"]);
+                    holdWorkerSid=DatabasePermissions.ReadProductionPrincipalSid(builder.Configuration["Database:WorkerPrincipalSid"]);
+                    _=DatabasePermissions.ValidateProductionHoldPrincipals(holdPrincipalMode,holdRuntimeSid,holdWorkerSid);
+                }
                 await db.Database.OpenConnectionAsync();
                 var connection = (SqlConnection)db.Database.GetDbConnection();
                 if (args[0] == "provision-identities")
@@ -34,6 +42,8 @@ public static class DatabaseCommands
                         Guid.Parse(builder.Configuration["Database:MigrationClientId"] ?? ""));
                 else if (args[0] == "provision-worker")
                     await DatabasePermissions.ProvisionWorkerAsync(connection, Guid.Parse(builder.Configuration["Database:WorkerClientId"] ?? ""));
+                else if(args[0]=="grant-production-holds")await DatabasePermissions.GrantProductionHoldsAsync(connection,holdPrincipalMode!,holdRuntimeSid!,holdWorkerSid!);
+                else if(args[0]=="grant-production-purge")await DatabasePermissions.GrantProductionPurgeAsync(connection);
                 else if(args[0]=="grant-demo-purge")await DatabasePermissions.GrantDemoPurgeAsync(connection);
                 else if(args[0]=="grant-lookup-retention")await DatabasePermissions.GrantLookupRetentionAsync(connection);
                 else if(args[0]=="grant-email-pilot-retention")await DatabasePermissions.GrantEmailPilotRetentionAsync(connection);

@@ -176,6 +176,7 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
     }
     internal sealed class Blobs:IProductionRecordUploadStore,IProductionRecordSendStore,IProductionSignaturePreviewStore,IProductionSignerReviewStore,IProductionReviewInputSource,IBlobStore,IProductionHoldObjectSource
     {
+        internal TimeProvider? SignerReadTime;
         internal readonly Dictionary<DocumentBlob,byte[]> Objects=[];internal int Deletes,UnwitnessedWrites,Copies;
         internal bool LoseFirstAcknowledgement;internal Func<int,Task>? AfterWrite;internal Func<Task>? BeforeWrite;internal Func<Task>? AfterCopy;
         internal int MarkWrites,LoseMarkAcknowledgementAt;internal Func<int,Task>? AfterMarkWrite;internal Func<Task>? BeforeMarkWrite;
@@ -236,7 +237,16 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
         public async Task WriteAsync(ClaimsPrincipal sender,DocumentBlob blob,Stream source,long length,CancellationToken cancellationToken=default)
         {UnwitnessedWrites++;EnvelopeStorageAuthorization.Demand(sender,blob);using var copy=new MemoryStream();await source.CopyToAsync(copy,cancellationToken);Assert.Equal(length,copy.Length);Objects.Add(blob,copy.ToArray());}
         public async Task<long> CopyToAsync(ClaimsPrincipal sender,DocumentBlob blob,Stream destination,CancellationToken cancellationToken=default)
-        {EnvelopeStorageAuthorization.DemandRead(sender,blob);Copies++;await destination.WriteAsync(Objects[blob],cancellationToken);if(AfterCopy is not null)await AfterCopy();return Objects[blob].Length;}
+        {
+            if(SignerReadTime is{} clock&&sender.GetType()==typeof(ClaimsPrincipal)&&sender.Identities.Any(i=>i.IsAuthenticated&&i.AuthenticationType==SignerAccessConfiguration.Scheme))
+            {
+                var signer=SignerAccessConfiguration.ReadIdentity(sender,clock.GetUtcNow());
+                if(signer is null||blob.Kind!=DocumentBlobKind.Normalized||blob.EnvelopeId!=signer.EnvelopeId||blob.ObjectId!=signer.DocumentId)
+                    throw new UnauthorizedAccessException("A current signer session for this frozen document is required.");
+            }
+            else EnvelopeStorageAuthorization.DemandRead(sender,blob);
+            Copies++;await destination.WriteAsync(Objects[blob],cancellationToken);if(AfterCopy is not null)await AfterCopy();return Objects[blob].Length;
+        }
         public Task DeleteAsync(ClaimsPrincipal sender,DocumentBlob blob,CancellationToken cancellationToken=default)
         {Deletes++;throw new InvalidOperationException("Production upload must retain historical and uncertain bytes.");}
         internal HoldObjectAddress Address(DocumentBlob blob)=>new(blob.Kind==DocumentBlobKind.Original?"originals":"normalized",
@@ -262,9 +272,11 @@ public sealed class ProductionRecordUploadAdmissionTests(SqlDatabaseFixture fixt
             {HoldUploads=new(Run.Admission,Blobs),HoldAdmission=new(Run.Admission)};
         internal async Task<bool> Upload(QuillSignDbContext db,Envelope before)
         {var bytes=PdfFixtures.Create();using var input=new MemoryStream(bytes,false);return await Workflow(db).UploadAsync(Sender,before.PublicId,before.RowVersion,"synthetic.pdf",input,bytes.Length,null,null,default);}
-        internal static async Task<Prepared> Create(SqlDatabaseFixture fixture,bool demo=false)
+        internal static async Task<Prepared> Create(SqlDatabaseFixture fixture,bool demo=false,DateTimeOffset? initialTime=null)
         {
-            var run=await ProductionRuntimeAdmissionTests.Run.Create(fixture,demo);var test=new Prepared(run);await run.DeliverAndFinish(await run.Claim());
+            var run=await ProductionRuntimeAdmissionTests.Run.Create(fixture,demo,initialTime);var test=new Prepared(run);
+            if(initialTime is not null)test.Blobs.SignerReadTime=run.Time;
+            await run.DeliverAndFinish(await run.Claim());
             await using var db=fixture.Open();var verified=await run.Sender(db).VerifyAsync(run.Token.Token,null,null);Assert.NotNull(verified);
             test.Sender=QuillSign.Sender.SenderConfiguration.Principal(verified);return test;
         }

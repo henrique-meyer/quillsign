@@ -11,8 +11,8 @@ using QuillSign.Work;
 
 namespace QuillSign.Lifecycle;
 
-// Connected private backend, deliberately unregistered until trusted operator
-// middleware supplies its configuration/authority. Raw provider DTOs never
+// Connected private backend, registered only by explicit complete runtime
+// configuration. Trusted operator middleware supplies authority. Raw provider DTOs never
 // establish complete preservation or authorize release/deletion.
 internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext> open, IDataProtectionProvider keys,
     TimeProvider time, ProductionHoldWitnessJournal witness, IProductionHoldObjectSource objects,
@@ -224,7 +224,8 @@ internal sealed partial class ProductionHoldCoordinator(Func<QuillSignDbContext>
         // Per-schema readers run during capture/replay; this final closed graph
         // also binds the runtime plans, exact worker outcomes and owned tails.
         // Unknown or partial history remains pending.
-        using var sql = ProductionHoldSqlInventory.OpenVerified(snapshot.Sql, keys);
+        using var originalSql = ProductionHoldSqlInventory.OpenVerified(snapshot.Sql, keys);
+        using var sql = ProductionDeletionPreparationReferences.ProjectVerified(originalSql.RootElement,state);
         ProductionHoldAdmissionAuditReferences.Demand(sql.RootElement);
         var tables = sql.RootElement.GetProperty("Tables").EnumerateArray().ToDictionary(x => x.GetProperty("Table").GetString()!, x => x.GetProperty("Rows"));
         var status = tables["Envelopes"].EnumerateArray().Single().GetProperty("Status").GetString();

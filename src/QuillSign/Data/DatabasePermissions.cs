@@ -70,6 +70,79 @@ public static class DatabasePermissions
         await command.ExecuteNonQueryAsync();
     }
 
+    // Explicit worker-only opt-in; never part of migration or ordinary startup.
+    public static async Task GrantProductionPurgeAsync(SqlConnection connection)
+    {
+        await using var command=connection.CreateCommand();
+        command.CommandText="""
+            IF DATABASE_PRINCIPAL_ID(N'app_worker') IS NULL OR OBJECT_ID(N'dbo.RemoveExpiredProductionPrivateRecords',N'P') IS NULL
+                THROW 50001,'Provision the worker and production cleanup migration first.',1;
+            IF DATABASE_PRINCIPAL_ID(N'app_production_purge_role') IS NULL CREATE ROLE [app_production_purge_role] AUTHORIZATION [dbo];
+            IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name=N'app_production_purge_role' AND type='R' AND owning_principal_id=DATABASE_PRINCIPAL_ID(N'dbo'))
+                THROW 50001,'Production cleanup role ownership or type differs.',1;
+            IF EXISTS(SELECT 1 FROM sys.database_role_members WHERE role_principal_id=DATABASE_PRINCIPAL_ID(N'app_production_purge_role') AND member_principal_id<>DATABASE_PRINCIPAL_ID(N'app_worker'))
+                THROW 50001,'Only the worker may belong to the production cleanup role.',1;
+            GRANT EXECUTE ON OBJECT::[dbo].[RemoveExpiredProductionPrivateRecords] TO [app_production_purge_role];
+            ALTER ROLE [app_production_purge_role] ADD MEMBER [app_worker];
+            """;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    // Explicit administrator opt-in only. Mode and SIDs are private expected
+    // identity facts; never infer a different principal kind from the engine.
+    public static async Task GrantProductionHoldsAsync(SqlConnection connection,string principalMode,byte[] runtimeSid,byte[] workerSid)
+    {
+        ArgumentNullException.ThrowIfNull(connection);ArgumentNullException.ThrowIfNull(runtimeSid);ArgumentNullException.ThrowIfNull(workerSid);
+        var runtime=runtimeSid.ToArray();var worker=workerSid.ToArray();
+        var type=ValidateProductionHoldPrincipals(principalMode,runtime,worker);
+        await using var command=connection.CreateCommand();
+        command.CommandText="""
+            IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name COLLATE Latin1_General_100_BIN2=N'app_runtime'
+                AND type=@ExpectedType AND sid=@RuntimeSid AND DATALENGTH(sid)=DATALENGTH(@RuntimeSid))
+                OR NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE name COLLATE Latin1_General_100_BIN2=N'app_worker'
+                AND type=@ExpectedType AND sid=@WorkerSid AND DATALENGTH(sid)=DATALENGTH(@WorkerSid))
+                THROW 50001,'Configured production hold principals differ from the existing exact identities.',1;
+            IF OBJECT_ID(N'dbo.ProductionHoldRequests',N'U') IS NULL OR OBJECT_ID(N'dbo.ProductionHoldControls',N'U') IS NULL
+                THROW 50001,'Apply the production hold migrations before granting access.',1;
+            IF DATABASE_PRINCIPAL_ID(N'app_production_hold_role') IS NULL CREATE ROLE [app_production_hold_role] AUTHORIZATION [dbo];
+            DECLARE @Role int=DATABASE_PRINCIPAL_ID(N'app_production_hold_role');
+            IF NOT EXISTS(SELECT 1 FROM sys.database_principals WHERE principal_id=@Role AND name COLLATE Latin1_General_100_BIN2=N'app_production_hold_role' AND type='R' AND owning_principal_id=DATABASE_PRINCIPAL_ID(N'dbo'))
+                THROW 50001,'Production hold role type or owner differs.',1;
+            IF EXISTS(SELECT 1 FROM sys.database_role_members WHERE role_principal_id=@Role
+                AND member_principal_id NOT IN(DATABASE_PRINCIPAL_ID(N'app_runtime'),DATABASE_PRINCIPAL_ID(N'app_worker')))
+                OR EXISTS(SELECT 1 FROM sys.database_role_members WHERE member_principal_id=@Role)
+                THROW 50001,'The production hold role has an unexpected member or inherited role.',1;
+            IF EXISTS(SELECT 1 FROM sys.database_permissions WHERE grantee_principal_id=@Role AND NOT
+                (class=1 AND minor_id=0 AND major_id IN(OBJECT_ID(N'dbo.ProductionHoldRequests'),OBJECT_ID(N'dbo.ProductionHoldControls'))
+                AND ((permission_name IN('SELECT','INSERT') AND state='G') OR (permission_name IN('UPDATE','DELETE') AND state='D'))))
+                THROW 50001,'The production hold role has unexpected permissions.',1;
+            GRANT SELECT,INSERT ON OBJECT::[dbo].[ProductionHoldRequests] TO [app_production_hold_role];
+            GRANT SELECT,INSERT ON OBJECT::[dbo].[ProductionHoldControls] TO [app_production_hold_role];
+            DENY UPDATE,DELETE ON OBJECT::[dbo].[ProductionHoldRequests] TO [app_production_hold_role];
+            DENY UPDATE,DELETE ON OBJECT::[dbo].[ProductionHoldControls] TO [app_production_hold_role];
+            ALTER ROLE [app_production_hold_role] ADD MEMBER [app_runtime];
+            ALTER ROLE [app_production_hold_role] ADD MEMBER [app_worker];
+            """;
+        command.Parameters.Add(new("@ExpectedType",System.Data.SqlDbType.Char,1){Value=type});
+        command.Parameters.Add(new("@RuntimeSid",System.Data.SqlDbType.VarBinary,85){Value=runtime});
+        command.Parameters.Add(new("@WorkerSid",System.Data.SqlDbType.VarBinary,85){Value=worker});
+        await command.ExecuteNonQueryAsync();
+    }
+    internal static string ValidateProductionHoldPrincipals(string principalMode,ReadOnlySpan<byte> runtime,ReadOnlySpan<byte> worker)
+    {
+        var type=principalMode switch{"External"=>"E","Sql"=>"S",_=>throw new ArgumentException("Select External or Sql principal mode explicitly.")};
+        if(runtime.Length is <1 or >85||worker.Length is <1 or >85||principalMode=="External"&&(runtime.Length!=16||worker.Length!=16)||
+            runtime.IndexOfAnyExcept((byte)0)<0||worker.IndexOfAnyExcept((byte)0)<0||runtime.SequenceEqual(worker))
+            throw new ArgumentException("Configure two distinct exact expected principal SIDs.");
+        return type;
+    }
+    internal static byte[] ReadProductionPrincipalSid(string? selector)
+    {
+        if(selector is {Length:>=4 and <=172}&&selector.StartsWith("0x",StringComparison.Ordinal)&&selector.Length%2==0&&
+            !selector.AsSpan(2).ContainsAnyExcept("0123456789abcdefABCDEF"))return Convert.FromHexString(selector.AsSpan(2));
+        throw new ArgumentException("Configure the exact expected principal SID as 0x-prefixed hexadecimal.");
+    }
+
     // A separate administrator provisions these contained users. Client IDs are used
     // for service principals/managed identities; no Graph directory grants are needed.
     public static async Task ProvisionIdentitiesAsync(SqlConnection connection, Guid runtimeClientId, Guid migrationClientId)

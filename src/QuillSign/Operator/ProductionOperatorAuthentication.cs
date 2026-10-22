@@ -30,7 +30,7 @@ internal static class ProductionOperatorAuthentication
         services.AddProductionHoldRuntime(configuration);
         services.AddScoped<IProductionOperatorActions>(sp=>settings.Enabled?new ProductionOperatorActions(settings,sp.GetRequiredService<ProductionOperatorBrowser>(),sp.GetRequiredService<ProductionHoldCoordinator>(),
             ()=>new QuillSign.Data.QuillSignDbContext(sp.GetRequiredService<Microsoft.EntityFrameworkCore.DbContextOptions<QuillSign.Data.QuillSignDbContext>>()),sp.GetRequiredService<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>(),
-            sp.GetRequiredService<TimeProvider>(),sp.GetRequiredService<QuillSign.Storage.IProductionHoldArchiveInspectionStore>()):new UnavailableOperatorActions());
+            sp.GetRequiredService<TimeProvider>(),sp.GetRequiredService<QuillSign.Storage.IProductionHoldArchiveInspectionStore>(),configuration.GetValue<bool>("ProductionDeletion:Enabled")?()=>sp.GetRequiredService<ProductionDeletionCoordinator>():null,sp.GetRequiredService<ProductionDeletionOptions>()):new UnavailableOperatorActions());
         services.AddRateLimiter(o=>o.AddFixedWindowLimiter("production-operator",w=>{w.PermitLimit=32;w.Window=TimeSpan.FromMinutes(1);w.QueueLimit=0;}));
         if(!settings.Enabled)return services;
         services.AddAuthentication().AddCookie(ProductionOperatorAuthority.CookieScheme,c=> {
