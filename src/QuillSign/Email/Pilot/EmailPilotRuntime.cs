@@ -39,7 +39,7 @@ public static class EmailPilotRuntime
     // Install on normal web/worker hosts even when disabled. Persisted pilot
     // cohorts must keep their denial after disable/rotation. All callbacks use
     // this same scope; no singleton captures SQL, credentials or an operator.
-    public static IServiceCollection AddRestrictedEmailPilotRuntime(this IServiceCollection services,IConfiguration config,bool privatePass=false)
+    public static IServiceCollection AddRestrictedEmailPilotRuntime(this IServiceCollection services,IConfiguration config,bool privatePass=false,bool privateWeb=false)
     {
         services.AddEmailPilotReadScopeFoundation(config);
         services.AddEmailPilotSimulatorFoundation(config);
@@ -47,6 +47,7 @@ public static class EmailPilotRuntime
         services.AddEmailPilotSecretCleanup();
         var closeout=config.GetSection("EmailPilot:Closeout").Get<EmailPilotCloseoutOptions>()??new();closeout.Validate();
         if(closeout.HostRole==EmailPilotCloseoutHostRole.Pass&&!privatePass)throw new InvalidOperationException("Pass configuration requires the dedicated filtered command host.");
+        if((closeout.HostRole==EmailPilotCloseoutHostRole.Web)!=privateWeb)throw new InvalidOperationException("Web configuration requires the closed private Web host.");
         services.AddSingleton(closeout);
         services.AddScoped<EmailPilotCloseout>(sp=>new(closeout,sp.GetRequiredService<EmailOptions>(),sp.GetRequiredService<WorkOptions>(),
             ()=>sp.GetRequiredService<QuillSignDbContext>(),()=>sp.GetRequiredService<EmailPilotLedger>(),()=>sp.GetRequiredService<EmailPilotProtection>(),sp.GetRequiredService<TimeProvider>()) {

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using MimeKit;
@@ -71,7 +72,7 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         var boxes=t.Options.Mailboxes;
         var voidOptions=new EmailPilotOptions{Enabled=true,RunId=Guid.NewGuid().ToString("N"),Mailboxes=boxes};
         await using var terminal=await Shared.Create(fixture,browser:true,configure:services=>{services.AddSingleton<IDataProtectionProvider>(keys);services.AddSingleton<TimeProvider>(clock);});
-        ClaimsPrincipal? cleanupSender=null;Guid? cleanupRecordId=null;
+        ClaimsPrincipal? cleanupSender=null;Guid? cleanupRecordId=null;byte[]? existingInput=null;
         try
         {
         terminal.Clock.Advance(clock.GetUtcNow()-terminal.Clock.GetUtcNow());
@@ -94,7 +95,7 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
             var sp=services.ServiceProvider;var verified=await sp.GetRequiredService<SenderWorkflow>().VerifyAsync(new EmailPayloadProtection(keys).Unprotect(verification.PayloadJson).Token,null,null);Assert.NotNull(verified);
             sender=SenderConfiguration.Principal(verified!);draft=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==draft.Id);
             cleanupSender=sender;cleanupRecordId=draft.Id;
-            var source=PdfFixtures.Create(text:"SYNTHETIC CLOSEOUT VOID - NO AGREEMENT");var documents=sp.GetRequiredService<DocumentWorkflow>();
+            var source=PdfFixtures.Create(text:"SYNTHETIC CLOSEOUT VOID - NO AGREEMENT");existingInput=source;var documents=sp.GetRequiredService<DocumentWorkflow>();
             Assert.True(await documents.UploadAsync(sender,draft.PublicId,draft.RowVersion,"Synthetic.pdf",new MemoryStream(source),source.Length,null,null,default));
             draft=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==draft.Id);
             Assert.True(await documents.ConfirmAsync(sender,draft.PublicId,draft.RowVersion,draft.PdfBlob!,true,null,null,default));
@@ -150,7 +151,9 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         var settings=new EmailPilotCloseoutOptions{Enabled=true,AuthorizationId=Guid.NewGuid().ToString("N"),CapabilitySha256=HashOptions().CapabilitySha256,StartsAt=clock.GetUtcNow(),Until=clock.GetUtcNow().AddMinutes(30),AccountingParentRunIds=parentIds.ToArray(),
             CompletionParentRunId=t.Options.RunId,VoidParentRunId=voidOptions.RunId,CompletionRecordId=t.Id.ToString("N"),VoidRecordId=draft.Id.ToString("N"),DeclineRecordId=decline.SubjectEnvelopeId.ToString("N"),
             CompletionWorkIds=originalComplete.Select(x=>x.Id.ToString("N")).ToArray(),VoidWorkIds=originalVoid.Select(x=>x.Id.ToString("N")).ToArray()};
-        if(coexistence){settings.HostRole=EmailPilotCloseoutHostRole.Web;settings.PrivateConfigurationSet="synthetic-private-set";email.Enabled=true;email.Ses.ConfigurationSet="synthetic";}
+        if(coexistence){settings.HostRole=EmailPilotCloseoutHostRole.Web;settings.PrivateConfigurationSet="synthetic-private-set";
+            settings.WebInput=new(){Sha256=Convert.ToHexStringLower(SHA256.HashData(existingInput!)),Bytes=existingInput!.Length,Filename="Synthetic.pdf"};
+            email.Enabled=true;email.Ses.ConfigurationSet="synthetic";}
         t.Options.Enabled=false; // The new closeout does not reactivate an old pilot.
         var core=new EmailPilotCloseout(settings,email,work,()=>db,()=>t.LedgerFor(db),()=>new(keys),clock){ReceiptPilotOptions=t.Options,Payloads=()=>t.Payload,CompletionPayloads=()=>completionProtection,CompletionJobs=()=>completionJobs,VoidPayloads=()=>voidProtection,VoidJobs=()=>voidJobs};
         var created=await core.CreateAsync(Capability);Assert.Equal(6,created.Manifest.Queue.Length);
@@ -195,6 +198,37 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
                 await core.BindNewWorkLockedAsync(db,selected,EmailPilotCloseoutStep.DeclineVerification,verificationWork);await prepare.CommitAsync();
             }
             settings.HostRole=EmailPilotCloseoutHostRole.Pass;Assert.Equal(new EmailPilotCloseoutPassResult(6,1,0,0),await pass.RunAsync());Assert.Equal(new EmailPilotCloseoutPassResult(7,0,0,0),await pass.RunAsync());
+            // The SAME unconditional connected case now exercises the changed
+            // readonly Web preflight on its actual delivered verification token,
+            // authenticated header/Kind0/Kind1 and original SQL rows. No second
+            // completion/signing setup or seeded verification/session is used.
+            settings.HostRole=EmailPilotCloseoutHostRole.Web;
+            var delivered=await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==verificationWork);
+            var deliveredToken=t.Payload.Unprotect(delivered.PayloadJson).Token;
+            var webServices=new ServiceCollection().AddSingleton(t.Payload).BuildServiceProvider();
+            var browser=new EmailPilotCloseoutOperatorBrowser(settings,email,work,clock,terminal.App.Environment,()=>keys,t.Options);
+            var webAccess=new EmailPilotCloseoutWebAccess(core,db,browser,clock,webServices);
+            async Task<string> WebRows()=>JsonSerializer.Serialize(new {
+                Tokens=await db.AuthTokens.AsNoTracking().OrderBy(x=>x.Id).ToArrayAsync(),
+                Rows=await OriginalRows(db,created.CompletionWork.Concat(created.VoidWork).Append(verificationWork)),
+                Operations=await db.EmailPilotCloseoutOperations.AsNoTracking().OrderBy(x=>x.Id).ToArrayAsync(),
+                Draft=await db.Envelopes.AsNoTracking().SingleAsync(x=>x.Id==created.DeclineRecord)});
+            var beforeWeb=await WebRows();var actual=new DefaultHttpContext();actual.Request.Method="GET";actual.Request.Path="/sender/verify";
+            actual.Request.QueryString=new("?token="+deliveredToken);
+            Assert.True(await webAccess.AllowsAsync(actual,new(CloseoutWebArea.Verify),default));
+            Assert.Equal(beforeWeb,await WebRows());
+            actual.Request.QueryString=new("?token="+Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(new byte[32]));
+            Assert.False(await webAccess.AllowsAsync(actual,new(CloseoutWebArea.Verify),default));
+            Assert.False(await webAccess.AllowsAsync(actual,new(CloseoutWebArea.Draft,PublicId:draft.PublicId),default));
+            var selectedInput=settings.Capture().Coexistence!.WebInput!;
+            var file=new FormFile(new MemoryStream(existingInput!),0,existingInput!.Length,"Upload","Synthetic.pdf");
+            Assert.True(await EmailPilotCloseoutWeb.InputAsync(file,selectedInput,default));
+            // The real FormFile remains readable for the original backend after
+            // the preflight's separate full-EOF hash stream has been disposed.
+            await using(var backendRead=file.OpenReadStream())Assert.Equal(SHA256.HashData(existingInput!),await SHA256.HashDataAsync(backendRead));
+            var wrongFile=new FormFile(new MemoryStream(existingInput!),0,existingInput.Length,"Upload","other.pdf");
+            Assert.False(await EmailPilotCloseoutWeb.InputAsync(wrongFile,selectedInput,default));
+            Assert.Equal(beforeWeb,await WebRows());webServices.Dispose();settings.HostRole=EmailPilotCloseoutHostRole.Pass;
             var dynamicMail=await db.EmailOutbox.SingleAsync(x=>x.Id==verificationWork);await db.Entry(dynamicMail).ReloadAsync();var dynamicPayload=dynamicMail.PayloadJson;dynamicMail.PayloadJson="{}";await db.SaveChangesAsync();db.ChangeTracker.Clear();
             Assert.Equal(1,(await pass.RunAsync()).Refused);Assert.Equal(7,capture.Messages.Count);
             dynamicMail=await db.EmailOutbox.SingleAsync(x=>x.Id==verificationWork);dynamicMail.PayloadJson=dynamicPayload;await db.SaveChangesAsync();db.ChangeTracker.Clear();

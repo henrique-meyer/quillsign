@@ -10,6 +10,7 @@ public sealed class EmailPilotCloseoutOptions
     public bool Enabled { get; set; }
     public EmailPilotCloseoutHostRole HostRole { get; set; }
     public string PrivateConfigurationSet { get; set; } = "";
+    public EmailPilotCloseoutWebInputOptions? WebInput { get; set; }
     public string AuthorizationId { get; set; } = "";
     public string CapabilitySha256 { get; set; } = "";
     public DateTimeOffset StartsAt { get; set; }
@@ -27,7 +28,8 @@ public sealed class EmailPilotCloseoutOptions
     {
         if (!Enum.IsDefined(HostRole) || HostRole==EmailPilotCloseoutHostRole.Handoff && Enabled) throw Invalid();
         if (HostRole!=EmailPilotCloseoutHostRole.Legacy && !PrivateSet(PrivateConfigurationSet)) throw Invalid();
-        if (HostRole==EmailPilotCloseoutHostRole.Legacy && PrivateConfigurationSet.Length!=0) throw Invalid();
+        if (HostRole==EmailPilotCloseoutHostRole.Legacy && (PrivateConfigurationSet.Length!=0 || WebInput is not null)) throw Invalid();
+        if (WebInput is not null) _=WebInput.Capture();
         if (Enabled) _ = Capture();
     }
     internal static bool PrivateSet(string value)=>value is {Length:>=1 and <=64} && value.All(c=>char.IsAsciiLetterOrDigit(c)||c is '-' or '_');
@@ -63,16 +65,34 @@ public sealed class EmailPilotCloseoutOptions
             completeWork.Concat(terminalWork).Distinct().Count() != 6) throw Invalid();
         ValidateRole();
         return new(id, CapabilitySha256, StartsAt, Until, parents, completeParent, voidParent, complete, terminal, decline, completeWork, terminalWork,
-            HostRole==EmailPilotCloseoutHostRole.Legacy?null:new("filtered-closeout-coexistence-v1",PrivateConfigurationSet));
+            HostRole==EmailPilotCloseoutHostRole.Legacy?null:new(WebInput is null?"filtered-closeout-coexistence-v1":"filtered-closeout-web-v1",PrivateConfigurationSet,WebInput?.Capture()));
     }
     private void ValidateRole()
-    {if(!Enum.IsDefined(HostRole)||HostRole==EmailPilotCloseoutHostRole.Legacy&&PrivateConfigurationSet.Length!=0||HostRole!=EmailPilotCloseoutHostRole.Legacy&&!PrivateSet(PrivateConfigurationSet))throw Invalid();}
+    {if(!Enum.IsDefined(HostRole)||HostRole==EmailPilotCloseoutHostRole.Legacy&&(PrivateConfigurationSet.Length!=0||WebInput is not null)||HostRole!=EmailPilotCloseoutHostRole.Legacy&&!PrivateSet(PrivateConfigurationSet))throw Invalid();}
 
     private static Guid Id(string raw) => Guid.TryParseExact(raw, "N", out var id) && id != Guid.Empty ? id : throw Invalid();
     private static InvalidOperationException Invalid() => new("Configure one exact, bounded private closeout purpose and its existing records.");
 }
 public enum EmailPilotCloseoutHostRole { Legacy, Web, Pass, Handoff }
-internal sealed record EmailPilotCloseoutCoexistence(string Version,string PrivateConfigurationSet);
+internal sealed record EmailPilotCloseoutCoexistence(string Version,string PrivateConfigurationSet,
+    [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] EmailPilotCloseoutWebInput? WebInput=null);
+
+// A configured input digest is part of the shared protected purpose, never an
+// upload capability. Browser/header/party/version and backend checks still apply.
+public sealed class EmailPilotCloseoutWebInputOptions
+{
+    public string Sha256 {get;set;}="";
+    public long Bytes {get;set;}
+    public string Filename {get;set;}="";
+    internal EmailPilotCloseoutWebInput Capture()
+    {
+        if(!EmailPilotCanonical.Hash(Sha256)||Bytes is <16 or >1048576||Filename is not {Length:>=5 and <=124}||
+            !Filename.EndsWith(".pdf",StringComparison.Ordinal)||Filename.Any(c=>!char.IsAsciiLetterOrDigit(c)&&c is not('-' or '_' or '.'))||
+            Filename.Contains("..",StringComparison.Ordinal))throw new InvalidOperationException("Configure the exact retained private PDF input.");
+        return new(Sha256,Bytes,Filename);
+    }
+}
+internal sealed record EmailPilotCloseoutWebInput(string Sha256,long Bytes,string Filename);
 
 internal sealed record EmailPilotCloseoutConfiguration(Guid AuthorizationId, string CapabilitySha256, DateTimeOffset StartsAt,
     DateTimeOffset Until, ImmutableArray<Guid> AccountingParents, Guid CompletionParent, Guid VoidParent, Guid CompletionRecord,

@@ -10,6 +10,9 @@ using QuillSign.Sealing;
 using QuillSign.Completion;
 using QuillSign.Verification;
 
+// Use the same effective web/command configuration before ANY early dispatch.
+var (builder,privateWeb)=EmailPilotCloseoutWebStartup.Prepare(args);
+
 if (args.Length > 0 && args[0] == "staging")
 {
     Environment.ExitCode = await QuillSign.Operations.StagingCommands.RunAsync(args[1..]);
@@ -27,7 +30,7 @@ if (args.Length > 0 && args[0] == "work")
     return;
 }
 
-var builder = WebApplication.CreateBuilder(args);
+EmailPilotCloseoutWebStartup.Demand(builder.Configuration,privateWeb);
 // Linked brand assets are copied to the build output; include them during dotnet run.
 var outputWebRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 if (builder.Environment.IsDevelopment() && Directory.Exists(outputWebRoot))
@@ -65,9 +68,11 @@ builder.Services.AddDocumentLookup(builder.Configuration);
 builder.Services.AddCompletionReaderBrowser(builder.Environment);
 builder.Services.AddDocumentLookupBrowser(builder.Environment);
 builder.Services.AddPdfVerificationBrowser(builder.Configuration);
-builder.Services.AddRestrictedEmailPilotRuntime(builder.Configuration);
+builder.Services.AddRestrictedEmailPilotRuntime(builder.Configuration,privateWeb:privateWeb);
+if(privateWeb)builder.Services.AddScoped<EmailPilotCloseoutWebAccess>();
 var app = builder.Build();
 app.UseForwardedHeaders();
+if(privateWeb)app.UseCloseoutWebRoutes();
 
 app.Use(async (context, next) =>
 {
@@ -92,6 +97,7 @@ app.UseDocumentLookupBrowser();
 app.UseRateLimiter();
 app.UseMiddleware<VerificationUploadBoundary>();
 app.UseAuthentication();
+if(privateWeb)app.UseCloseoutWebAccess();
 app.UseAuthorization();
 app.MapRazorPages().RequireRateLimiting(SenderConfiguration.RatePolicy);
 app.MapSesFeedback();
