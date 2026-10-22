@@ -195,7 +195,7 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
                 await core.BindNewWorkLockedAsync(db,selected,EmailPilotCloseoutStep.DeclineVerification,verificationWork);await prepare.CommitAsync();
             }
             settings.HostRole=EmailPilotCloseoutHostRole.Pass;Assert.Equal(new EmailPilotCloseoutPassResult(6,1,0,0),await pass.RunAsync());Assert.Equal(new EmailPilotCloseoutPassResult(7,0,0,0),await pass.RunAsync());
-            var dynamicMail=await db.EmailOutbox.SingleAsync(x=>x.Id==verificationWork);var dynamicPayload=dynamicMail.PayloadJson;dynamicMail.PayloadJson="{}";await db.SaveChangesAsync();db.ChangeTracker.Clear();
+            var dynamicMail=await db.EmailOutbox.SingleAsync(x=>x.Id==verificationWork);await db.Entry(dynamicMail).ReloadAsync();var dynamicPayload=dynamicMail.PayloadJson;dynamicMail.PayloadJson="{}";await db.SaveChangesAsync();db.ChangeTracker.Clear();
             Assert.Equal(1,(await pass.RunAsync()).Refused);Assert.Equal(7,capture.Messages.Count);
             dynamicMail=await db.EmailOutbox.SingleAsync(x=>x.Id==verificationWork);dynamicMail.PayloadJson=dynamicPayload;await db.SaveChangesAsync();db.ChangeTracker.Clear();
             var changed=await db.EmailOutbox.SingleAsync(x=>x.Id==created.CompletionWork.First());var recipient=changed.To;changed.To=boxes.FirstSigner;await db.SaveChangesAsync();db.ChangeTracker.Clear();
