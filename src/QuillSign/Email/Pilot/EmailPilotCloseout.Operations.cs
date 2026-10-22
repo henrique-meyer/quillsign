@@ -16,6 +16,7 @@ public sealed partial class EmailPilotCloseout
 
     internal async Task BindNewWorkLockedAsync(QuillSignDbContext db, EmailPilotCloseoutSnapshot snapshot, EmailPilotCloseoutStep step, Guid workId, CancellationToken ct = default)
     {
+        if(!CanAdmit)throw Invalid();
         var current = await Current(db, snapshot, ct);
         if (step < EmailPilotCloseoutStep.DeclineVerification || !Enum.IsDefined(step) || workId == Guid.Empty ||
             (await Operations(db, current, ct)).Any(x => x.Step == step)) throw Invalid();
@@ -36,9 +37,10 @@ public sealed partial class EmailPilotCloseout
             await db.Suppressions.AnyAsync(x => x.Email == mail.To, ct)) throw Invalid();
         var lookup = step == EmailPilotCloseoutStep.Lookup ? await (Lookup?.Invoke() ?? throw Invalid()).CaptureBindingLockedAsync(db,current,workId,ct) : null;
         if (lookup is not null && (lookup.RequestId!=workId || lookup.Deadline>current.Until || lookup.RequestedAt<current.Manifest.CreatedAt || lookup.RequestedAt>Now)) throw Invalid();
-        var receipt = new EmailPilotCloseoutReceipt(EmailPilotCloseoutLimits.Version, current.AuthorizationId, 0, step, record, workId, Now, 0, Hash(new { Mail=Raw(mail), Work=Raw(item) }),lookup);
+        var receipt = new EmailPilotCloseoutReceipt(EmailPilotCloseoutLimits.Version, current.AuthorizationId, 0, step, record, workId, Now, 0, Hash(new { Mail=Raw(mail), Work=Raw(item) }),lookup,options.HostRole==EmailPilotCloseoutHostRole.Legacy?null:new(step,record,workId,Raw(mail),Raw(item)));
+        if(System.Text.Encoding.UTF8.GetByteCount(Raw(receipt))>8192)throw Invalid();
         db.EmailPilotCloseoutOperations.Add(Row(receipt)); await db.SaveChangesAsync(ct);
-        if (!Available) throw Invalid();
+        if (!CanAdmit) throw Invalid();
     }
 
     internal async Task<EmailPilotCloseoutLookupBinding?> ReadLookupBindingLockedAsync(QuillSignDbContext db,EmailPilotCloseoutSnapshot snapshot,CancellationToken ct=default)
@@ -65,7 +67,7 @@ public sealed partial class EmailPilotCloseout
         {
             var value = protection().Read<EmailPilotCloseoutReceipt>(row.CloseoutId, ReceiptPurpose, row.ProtectedReceipt, 8192);
             if (value != new EmailPilotCloseoutReceipt(EmailPilotCloseoutLimits.Version, row.CloseoutId, row.Kind, (EmailPilotCloseoutStep)row.Step,
-                    row.SubjectEnvelopeId, row.WorkId, row.At, row.EncodedBytes, Convert.ToHexStringLower(row.RequestSha256),value.LookupBinding) ||
+                    row.SubjectEnvelopeId, row.WorkId, row.At, row.EncodedBytes, Convert.ToHexStringLower(row.RequestSha256),value.LookupBinding,value.Queued) ||
                 value.At.Offset != TimeSpan.Zero || value.At < current.Manifest.CreatedAt || value.At >= current.Until || value.At > Now ||
                 !Enum.IsDefined(value.Step) || value.Kind is not (0 or 1) || value.WorkId == Guid.Empty || value.RequestSha256.Length != 64 ||
                 value.SubjectEnvelopeId != (value.Step is EmailPilotCloseoutStep.Lookup or <= EmailPilotCloseoutStep.CompletionRecipient ? current.CompletionRecord :
@@ -73,6 +75,7 @@ public sealed partial class EmailPilotCloseout
             if (value.Kind == 0 ? value.Step < EmailPilotCloseoutStep.DeclineVerification || value.EncodedBytes != 0 : value.EncodedBytes is < 1 or > EmailPilotLimits.MessageBytes) throw Invalid();
             if ((value.Kind==0 && value.Step==EmailPilotCloseoutStep.Lookup) != (value.LookupBinding is not null) ||
                 value.LookupBinding is {} lookup && (lookup.RequestId!=value.WorkId || lookup.Deadline>current.Until || lookup.RequestedAt<current.Manifest.CreatedAt || lookup.RequestedAt>value.At)) throw Invalid();
+            DemandBoundQueue(value,current.Configuration.Coexistence is not null);
             result.Add(value);
         }
         if (result.GroupBy(x => (x.Kind, x.Step)).Any(x => x.Count() != 1) || result.Count(x => x.Kind == 0) > 4 || result.Count(x => x.Kind == 1) > 10 ||
@@ -80,6 +83,11 @@ public sealed partial class EmailPilotCloseout
         return result.ToArray();
     }
 
+    internal static void DemandBoundQueue(EmailPilotCloseoutReceipt value,bool coexistence)
+    {
+        if(System.Text.Encoding.UTF8.GetByteCount(Raw(value))>8192||(value.Kind==0&&coexistence)!=(value.Queued is not null))throw Invalid();
+        if(value.Queued is {} queued&&(queued.Step!=value.Step||queued.RecordId!=value.SubjectEnvelopeId||queued.WorkId!=value.WorkId||queued.OriginalId!=Guid.Empty||queued.OriginalMailJson is not null||queued.OriginalWorkJson is not null||Hash(new{Mail=queued.MailJson,Work=queued.WorkJson})!=value.RequestSha256))throw Invalid();
+    }
     private EmailPilotCloseoutOperationRecord Row(EmailPilotCloseoutReceipt value) => new() { Id=Identity(value.AuthorizationId,value.Kind,value.Step),
         CloseoutId=value.AuthorizationId,Kind=value.Kind,Step=(int)value.Step,SubjectEnvelopeId=value.SubjectEnvelopeId,WorkId=value.WorkId,At=value.At,
         EncodedBytes=value.EncodedBytes,RequestSha256=Convert.FromHexString(value.RequestSha256),ProtectedReceipt=protection().Protect(value.AuthorizationId,ReceiptPurpose,value) };

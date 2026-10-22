@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,8 +14,37 @@ namespace QuillSign.Tests;
 public sealed class ProductionCloseoutWorkRoutingTests
 {
     [Theory]
+    [InlineData("demo")][InlineData("production")][InlineData("downgraded")]
+    public async Task Canonical_private_lookup_record_still_requires_existing_demo_origin_and_no_production_state(string kind)
+    {
+        await using var fixture=new SqlDatabaseFixture();await fixture.InitializeAsync();
+        var demo=kind=="demo";await using var run=await ProductionRuntimeAdmissionTests.Run.Create(fixture,demo:demo);
+        if(!demo)await run.Hold();
+        if(kind=="downgraded"){await using var seed=fixture.Open();await seed.Envelopes.Where(x=>x.Id==run.Id).ExecuteUpdateAsync(x=>x.SetProperty(e=>e.IsDemo,true));}
+        await using var db=fixture.Open();await using var tx=await db.Database.BeginTransactionAsync();
+        var kernel=new ProductionWorkAdmission(fixture.Open,run.Admission);
+        if(demo)await kernel.DemandCloseoutDemoLockedAsync(db,run.Id,default);
+        else await Assert.ThrowsAsync<ProductionWorkBlockedException>(()=>kernel.DemandCloseoutDemoLockedAsync(db,run.Id,default));
+        await tx.RollbackAsync();Assert.Equal(0,run.Captured.Calls);
+    }
+    [Fact]
+    public void Direct_and_ordinary_handler_resolve_same_production_decorated_scoped_instance()
+    {
+        var services=new ServiceCollection();services.AddLogging();services.AddSingleton<TimeProvider>(TimeProvider.System);
+        services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
+        services.AddScoped<EmailWorkHandler>(_=>new(null!,new(),null!,null!,null!,TimeProvider.System));
+        services.AddScoped<IWorkHandler>(sp=>sp.GetRequiredService<EmailWorkHandler>());
+        services.AddProductionHoldRuntime(new ConfigurationBuilder().Build());
+        using var provider=services.BuildServiceProvider();using var scope=provider.CreateScope();
+        var concrete=scope.ServiceProvider.GetRequiredService<EmailWorkHandler>();
+        Assert.Same(concrete,scope.ServiceProvider.GetRequiredService<IWorkHandler>());
+        Assert.NotNull(concrete.HoldAdmission);Assert.Same(scope.ServiceProvider.GetRequiredService<IProductionWorkAdmission>(),concrete.HoldAdmission);
+    }
+
+    [Theory]
     [InlineData("known-disabled-alias")][InlineData("ordinary-demo")][InlineData("production-purge")][InlineData("held-production")][InlineData("missing-alias-service")]
     [InlineData("initial-missing-alias-service")][InlineData("initial-cleared-alias-config")]
+    [InlineData("unbound-null")][InlineData("known-null")]
     public async Task Decorated_worker_preserves_closeout_refusal_demo_origin_and_typed_deletion_routing(string kind)
     {
         // A closeout authority is a one-header-ever installation. Independent
@@ -50,6 +80,14 @@ public sealed class ProductionCloseoutWorkRoutingTests
                 seed.Add(new EmailPilotCloseoutOperationRecord{Id=Guid.NewGuid(),CloseoutId=header.Id,Kind=0,Step=6,SubjectEnvelopeId=run.Id,WorkId=run.WorkId,
                     At=run.Time.Now,RequestSha256=new byte[32],ProtectedReceipt="synthetic-disabled-closeout-operation"});
             }
+            if(kind is "unbound-null" or "known-null") {
+                (await seed.WorkItems.SingleAsync(x=>x.Id==workId)).EnvelopeId=null;
+                (await seed.EmailOutbox.SingleAsync(x=>x.Id==workId)).EnvelopeId=null;
+                if(kind=="known-null") {
+                    var header=new EmailPilotCloseoutHeaderRecord{Id=Guid.NewGuid(),CreatedAt=run.Time.Now,Until=run.Time.Now.AddMinutes(30),DeleteAfter=run.Time.Now.AddDays(1),CapabilitySha256=new byte[32],ManifestSha256=new byte[32],ProtectedManifest="not-authenticated"};
+                    seed.Add(header);await seed.SaveChangesAsync();seed.Add(new EmailPilotCloseoutOperationRecord{Id=Guid.NewGuid(),CloseoutId=header.Id,Kind=0,Step=9,SubjectEnvelopeId=run.Id,WorkId=workId,At=run.Time.Now,RequestSha256=new byte[32],ProtectedReceipt="not-a-private-fact"});
+                }
+            }
             if(kind=="production-purge") (await seed.WorkItems.SingleAsync(x=>x.Id==run.WorkId)).Kind=WorkKind.ProductionPurge;
             await seed.SaveChangesAsync();
         }
@@ -65,10 +103,10 @@ public sealed class ProductionCloseoutWorkRoutingTests
         var db=scope.ServiceProvider.GetRequiredService<QuillSignDbContext>();var store=scope.ServiceProvider.GetRequiredService<WorkStore>();
         var before=JsonSerializer.Serialize(await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==workId));
         if(kind=="ordinary-demo")Assert.NotNull((await store.ClaimAsync(workId,default)).Lease);
-        else if(kind=="held-production")
+        else if(kind is "held-production" or "unbound-null")
         {
             var blocked=await store.ClaimAsync(workId,default);Assert.Null(blocked.Lease);Assert.NotNull(blocked.RetryAt);
-            Assert.True((await run.Journal.ReadAsync(run.Id)).Frozen);
+            if(kind=="held-production")Assert.True((await run.Journal.ReadAsync(run.Id)).Frozen);
             Assert.Equal(before,JsonSerializer.Serialize(await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==workId)));
         }
         else

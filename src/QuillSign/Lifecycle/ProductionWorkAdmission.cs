@@ -14,6 +14,7 @@ namespace QuillSign.Lifecycle;
 internal interface IProductionWorkAdmission
 {
     Task ReserveAsync(Guid workId, Guid? recordId, WorkKind kind, Guid owner, int attempt, CancellationToken ct);
+    Task DemandCloseoutDemoLockedAsync(QuillSignDbContext db,Guid recordId,CancellationToken ct) => throw new ProductionWorkBlockedException();
     Task<DateTimeOffset?> ReserveCompletionMailAsync(Guid workId,Guid? recordId,WorkKind kind,Guid owner,int attempt,DateTimeOffset claimUntil,CancellationToken ct)
         =>Task.FromResult<DateTimeOffset?>(null);
     Task DemandAsync(Guid workId, Guid? recordId, WorkKind kind, Guid owner, int attempt, CancellationToken ct);
@@ -80,6 +81,9 @@ internal sealed class ProductionWorkAdmission(Func<QuillSignDbContext> open, Pro
             var scope=await admission.ResumeHandlerLockedAsync(db,id,lease.Owner,Kind(lease.Kind),Reference(lease.Id,lease.Attempt),ct);
             await admission.PrepareCompletionWorkFinishLockedAsync(db,scope,expectedCompleted,ct);
         });
+
+    public Task DemandCloseoutDemoLockedAsync(QuillSignDbContext db,Guid recordId,CancellationToken ct)
+        =>Guard(async()=>{if(db.Database.CurrentTransaction is null||!await Demo(db,recordId,ct))throw new ProductionWorkBlockedException();});
 
     public Task ReserveAsync(Guid workId, Guid? recordId, WorkKind kind, Guid owner, int attempt, CancellationToken ct)
         => Guard(async () =>

@@ -30,7 +30,7 @@ public static class WorkConfiguration
             if (!Name(options.QueueName) || !Name(options.HintContainer)) throw new InvalidOperationException("Configure valid work queue and hint container names.");
             var local = config["Storage:Provider"] == "Azurite";
             if (local && !environment.IsDevelopment()) throw new InvalidOperationException("Work emulators are Development-only.");
-            services.AddSingleton<IWorkSignals>(_ =>
+            services.AddSingleton<IWorkSignals>(sp =>
             {
                 QueueClient queue;
                 BlobContainerClient hints;
@@ -50,10 +50,24 @@ public static class WorkConfiguration
                     queue = new QueueServiceClient(Endpoint(options.QueueServiceUri), credential).GetQueueClient(options.QueueName);
                     hints = new BlobServiceClient(Endpoint(config["Storage:BlobServiceUri"] ?? ""), credential).GetBlobContainerClient(options.HintContainer);
                 }
-                return new AzureWorkSignals(queue, hints, options, local);
+                var role=config.GetSection("EmailPilot:Closeout").Get<QuillSign.Email.Pilot.EmailPilotCloseoutOptions>()?.HostRole;
+                Func<IReadOnlyList<Guid>,CancellationToken,Task<IReadOnlySet<Guid>>>? exclusion=null;
+                if(role==QuillSign.Email.Pilot.EmailPilotCloseoutHostRole.Handoff)exclusion=async(ids,ct)=>{
+                    if(ids.Count>256)throw new InvalidDataException("Recovery page is too large.");
+                    using var scope=sp.CreateScope();var db=scope.ServiceProvider.GetRequiredService<QuillSign.Data.QuillSignDbContext>();
+                    var closeout=scope.ServiceProvider.GetRequiredService<QuillSign.Email.Pilot.EmailPilotCloseout>();var excluded=new HashSet<Guid>();
+                    await using var tx=await db.Database.BeginTransactionAsync(ct);
+                    foreach(var id in ids) {
+                        try{if(await QuillSign.Email.Pilot.EmailPilotCloseout.RecognizesWorkAsync(db,id,ct)&&await closeout.HandoffLockedAsync(db,id,ct))excluded.Add(id);}
+                        catch(Exception e)when(e is InvalidDataException or InvalidOperationException or System.Security.Cryptography.CryptographicException or System.Text.Json.JsonException or ArgumentException){} // Denial is not permission to discard a hint.
+                    }
+                    await tx.RollbackAsync(ct);
+                    return excluded;
+                };
+                return new AzureWorkSignals(queue, hints, options, local,exclusion);
             });
         }
-        else services.AddSingleton<IWorkSignals>(_ => throw new InvalidOperationException("Durable work is disabled."));
+        else services.AddSingleton<IWorkSignals>(sp => throw new InvalidOperationException("Durable work is disabled."));
         if (registerHandlers)
         {
             services.AddLookupDeliveryWork(config);
@@ -82,7 +96,8 @@ public static class WorkConfiguration
             services.AddScoped<IWorkHandler,DemoPurgeHandler>();
             services.AddScoped<EmailPayloadProtection>();
             services.AddScoped<EmailOutboxWriter>();
-            services.AddScoped<IWorkHandler, EmailWorkHandler>();
+            services.AddScoped<EmailWorkHandler>();
+            services.AddScoped<IWorkHandler>(sp=>sp.GetRequiredService<EmailWorkHandler>());
             services.AddScoped<SignerCheckpointJobs>(); services.AddScoped<SignerCheckpointState>(); services.AddScoped<SignerCheckpointBlobs>();
             services.AddScoped<SigningExpiry>();
             services.AddScoped<SigningExpiryJobs>();services.AddScoped<IWorkHandler,SigningExpiryHandler>();

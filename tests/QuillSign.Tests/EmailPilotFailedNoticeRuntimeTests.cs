@@ -4,10 +4,12 @@ using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using MimeKit;
 using QuillSign.Completion;
 using QuillSign.Data;
 using QuillSign.Documents;
+using QuillSign.Lifecycle;
 using QuillSign.Email;
 using QuillSign.Email.Pilot;
 using QuillSign.Sender;
@@ -55,7 +57,9 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
     // Required disposable-stack CI proof. Reuses existing genuine source/loopback
     // seal helpers ONCE; this case is not run against a stopped local emulator.
     [Fact]
-    public async Task Genuine_alias_completion_pair_and_void_use_counted_transport_and_preserve_six_failed_originals()
+    public Task Genuine_alias_completion_pair_and_void_use_counted_transport_and_preserve_six_failed_originals()=>GenuineAlias(false);
+
+    internal async Task GenuineAlias(bool coexistence)
     {
         await using var completed=await EmailPilotLookupTests.Harness.Create(fixture);
         var t=completed.T;var keys=t.Keys;var clock=t.Run.Signing.H.Clock;var email=t.Email;var work=t.Work;
@@ -70,6 +74,7 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         var voidOptions=new EmailPilotOptions{Enabled=true,RunId=Guid.NewGuid().ToString("N"),Mailboxes=boxes};
         await using var terminal=await Shared.Create(fixture,browser:true,configure:services=>{services.AddSingleton<IDataProtectionProvider>(keys);services.AddSingleton<TimeProvider>(clock);});
         ClaimsPrincipal? cleanupSender=null;Guid? cleanupRecordId=null;
+        ServiceProvider? mainProvider=null;IServiceScope? mainScope=null;
         try
         {
         terminal.Clock.Advance(clock.GetUtcNow()-terminal.Clock.GetUtcNow());
@@ -148,8 +153,10 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         var settings=new EmailPilotCloseoutOptions{Enabled=true,AuthorizationId=Guid.NewGuid().ToString("N"),CapabilitySha256=HashOptions().CapabilitySha256,StartsAt=clock.GetUtcNow(),Until=clock.GetUtcNow().AddMinutes(30),AccountingParentRunIds=parentIds.ToArray(),
             CompletionParentRunId=t.Options.RunId,VoidParentRunId=voidOptions.RunId,CompletionRecordId=t.Id.ToString("N"),VoidRecordId=draft.Id.ToString("N"),DeclineRecordId=decline.SubjectEnvelopeId.ToString("N"),
             CompletionWorkIds=originalComplete.Select(x=>x.Id.ToString("N")).ToArray(),VoidWorkIds=originalVoid.Select(x=>x.Id.ToString("N")).ToArray()};
+        if(coexistence){settings.HostRole=EmailPilotCloseoutHostRole.Web;settings.PrivateConfigurationSet="synthetic-private-set";email.Enabled=true;email.Ses.ConfigurationSet="synthetic";}
         t.Options.Enabled=false; // The new closeout does not reactivate an old pilot.
-        var core=new EmailPilotCloseout(settings,email,work,()=>db,()=>t.LedgerFor(db),()=>new(keys),clock){ReceiptPilotOptions=t.Options,Payloads=()=>t.Payload,CompletionPayloads=()=>completionProtection,CompletionJobs=()=>completionJobs,VoidPayloads=()=>voidProtection,VoidJobs=()=>voidJobs};
+        EmailPilotCloseoutLookup? mainLookup=null;var lookupProfile=completed.For(db);
+        var core=new EmailPilotCloseout(settings,email,work,()=>db,()=>t.LedgerFor(db),()=>new(keys),clock){ReceiptPilotOptions=t.Options,Payloads=()=>t.Payload,CompletionPayloads=()=>completionProtection,CompletionJobs=()=>completionJobs,VoidPayloads=()=>voidProtection,VoidJobs=()=>voidJobs,Lookup=()=>mainLookup??throw new InvalidOperationException(),LookupPayloads=()=>lookupProfile.Payload};
         var created=await core.CreateAsync(Capability);Assert.Equal(6,created.Manifest.Queue.Length);
         EmailPilotCloseoutCommittedReceipt initialReceipt;
         await using(var receiptTx=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable)) {
@@ -158,12 +165,82 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
             await receiptTx.RollbackAsync();
         }
         Assert.Equal(originals,await OriginalRows(db,originalComplete.Concat(originalVoid).Select(x=>x.Id)));
-        var capture=new Capture();var closeoutSender=new EmailPilotCloseoutSender(email,()=>core,()=>db,_=>capture,clock);
+        var capture=new Capture();var capturedSets=new List<string>();var closeoutSender=new EmailPilotCloseoutSender(email,()=>core,()=>db,value=>{capturedSets.Add(value.ConfigurationSet);return capture;},clock);
         var authority=new EmailPilotWorkAuthority(t.Options,email,work,t.Admission,()=>t.LedgerFor(db),()=>db,()=>t.Payload,clock){Closeout=()=>core};
-        var pilot=new EmailPilotDispatch(db,email,()=>authority,closeoutSender.SendAsync,ordinary);var store=new WorkStore(db,work,clock,core);
+        var store=new WorkStore(db,work,clock,core);var beforeReserveChecked=false;
+        var pilot=new EmailPilotDispatch(db,email,()=>authority,async(lease,message,ct)=>{
+            if(coexistence&&!beforeReserveChecked){beforeReserveChecked=true;Assert.Equal(0,await db.EmailPilotCloseoutOperations.CountAsync(x=>x.CloseoutId==created.AuthorizationId&&x.Kind==1));var beforeReserve=await OriginalRows(db,[lease.Id]);settings.HostRole=EmailPilotCloseoutHostRole.Handoff;settings.Enabled=false;Assert.True((await store.ClaimAsync(lease.Id,ct)).PrivateHandoff);Assert.Equal(beforeReserve,await OriginalRows(db,[lease.Id]));settings.Enabled=true;settings.HostRole=EmailPilotCloseoutHostRole.Pass;}
+            return await closeoutSender.SendAsync(lease,message,ct);
+        },ordinary);
         using var views=t.Run.Signing.H.App.Services.CreateScope();var razor=views.ServiceProvider.GetRequiredService<RazorEmailViews>();
         var access=new CompletionAccess(db,completionState,new(keys,clock),new(),new(db,clock),clock,()=>completed.For(db).Publication);
-        foreach(var chosen in new[]{created.CompletionWork.First(),created.VoidWork.First()})
+        if(coexistence) {
+            settings.HostRole=EmailPilotCloseoutHostRole.Handoff;settings.Enabled=false;
+            Assert.True((await store.ClaimAsync(created.CompletionWork.First(),default)).PrivateHandoff);
+            settings.PrivateConfigurationSet="rotated-private";
+            Assert.True((await store.ClaimAsync(created.CompletionWork.First(),default)).PrivateRefused);
+            settings.PrivateConfigurationSet="synthetic-private-set";settings.Enabled=true;
+            settings.HostRole=EmailPilotCloseoutHostRole.Pass;
+            var handler=new EmailWorkHandler(db,email,t.Payload,new(email,razor),ordinary,clock,
+                completions:()=>new(db,completionState,access,completionJobs,completionProtection,()=>new(email,razor),ordinary,email,new(db,clock),clock,pilot),
+                voids:()=>new(db,voidJobs,voidProtection,()=>new(razor),ordinary,email,new(db,clock),clock,pilot),pilot:pilot);
+            var firstLease=(await store.ClaimAsync(created.CompletionWork.First(),default)).Lease!;Assert.NotNull(firstLease);
+            var leasedBefore=await OriginalRows(db,[firstLease.Id]);settings.HostRole=EmailPilotCloseoutHostRole.Handoff;settings.Enabled=false;
+            Assert.True((await store.ClaimAsync(firstLease.Id,default)).PrivateHandoff);Assert.Equal(leasedBefore,await OriginalRows(db,[firstLease.Id]));settings.Enabled=true;settings.HostRole=EmailPilotCloseoutHostRole.Pass;
+            capture.BeforeReceipt=async()=>{capture.BeforeReceipt=null;var intentBefore=await OriginalRows(db,[firstLease.Id]);settings.HostRole=EmailPilotCloseoutHostRole.Handoff;settings.Enabled=false;Assert.True((await store.ClaimAsync(firstLease.Id,default)).PrivateHandoff);Assert.Equal(intentBefore,await OriginalRows(db,[firstLease.Id]));settings.Enabled=true;settings.HostRole=EmailPilotCloseoutHostRole.Pass;};
+            var firstResult=await handler.ExecuteAsync(firstLease,default);Assert.Equal(WorkOutcome.Completed,firstResult.Outcome);await store.FinishAsync(firstLease,firstResult,default);
+            var pass=new EmailPilotCloseoutPass(core,store,handler);Assert.Equal(new EmailPilotCloseoutPassResult(1,5,0,0),await pass.RunAsync());
+            Assert.Equal(new EmailPilotCloseoutPassResult(6,0,0,0),await pass.RunAsync());Assert.Equal(6,capture.Messages.Count);
+            settings.HostRole=EmailPilotCloseoutHostRole.Web;Guid verificationWork;
+            await using(var prepare=await db.Database.BeginTransactionAsync()) {
+                var selected=(await core.ReadLockedAsync(db))!;var outbox=new EmailOutboxWriter(db,t.Run.Signing.H.Signals,t.Payload,work,email,clock);
+                var originalScope=new EmailPilotAdmissionScope(db,selected.DeclineRecord,boxes.Sender,()=>{if(!core.CanAdmit)throw new EmailDisabledException();});
+                verificationWork=await outbox.PrepareCloseoutVerificationAsync(selected.DeclineRecord,boxes.Sender,originalScope,settings,default);
+                await core.BindNewWorkLockedAsync(db,selected,EmailPilotCloseoutStep.DeclineVerification,verificationWork);await prepare.CommitAsync();
+            }
+            settings.HostRole=EmailPilotCloseoutHostRole.Pass;Assert.Equal(new EmailPilotCloseoutPassResult(6,1,0,0),await pass.RunAsync());Assert.Equal(new EmailPilotCloseoutPassResult(7,0,0,0),await pass.RunAsync());
+            var dynamicMail=await db.EmailOutbox.SingleAsync(x=>x.Id==verificationWork);var dynamicPayload=dynamicMail.PayloadJson;dynamicMail.PayloadJson="{}";await db.SaveChangesAsync();db.ChangeTracker.Clear();
+            Assert.Equal(1,(await pass.RunAsync()).Refused);Assert.Equal(7,capture.Messages.Count);
+            dynamicMail=await db.EmailOutbox.SingleAsync(x=>x.Id==verificationWork);dynamicMail.PayloadJson=dynamicPayload;await db.SaveChangesAsync();db.ChangeTracker.Clear();
+            var changed=await db.EmailOutbox.SingleAsync(x=>x.Id==created.CompletionWork.First());var recipient=changed.To;changed.To=boxes.FirstSigner;await db.SaveChangesAsync();db.ChangeTracker.Clear();
+            Assert.Equal(1,(await pass.RunAsync()).Refused);Assert.Equal(7,capture.Messages.Count);
+            changed=await db.EmailOutbox.SingleAsync(x=>x.Id==created.CompletionWork.First());changed.To=recipient;await db.SaveChangesAsync();db.ChangeTracker.Clear();
+            // MAIN-only connected proof: the SAME completed fixture supplies the
+            // real null-parent lookup, with no second signing/sealing setup.
+            settings.HostRole=EmailPilotCloseoutHostRole.Web;
+            var links=new DocumentLookupProtection(keys,clock);var lookupOptions=new DocumentLookupOptions();
+            var lookupTemplate=new LookupEmailTemplate(email,razor,links,t.Run.Signing.H.App.Environment);
+            mainLookup=new(db,()=>core,completionState,lookupProfile.Payload,lookupProfile.Retention,lookupProfile.Limits,lookupOptions,links,()=>lookupTemplate,()=>closeoutSender,()=>t.Run.Signing.H.Signals,clock);
+            Assert.True(await mainLookup.RequestAsync(created.AuthorizationId,null));
+            var lookupId=EmailPilotCloseoutLookup.RequestId(created.AuthorizationId);settings.HostRole=EmailPilotCloseoutHostRole.Pass;
+            var external=new ProductionHoldWitnessJournalTests.Store();
+            var journal=new ProductionHoldWitnessJournal(external,keys,clock,new string('7',64));
+            var kernel=new ProductionWorkAdmission(fixture.Open,new ProductionRecordOperationAdmission(fixture.Open,keys,clock,journal));
+            var mainServices=new ServiceCollection();mainServices.AddLogging();mainServices.AddSingleton<TimeProvider>(clock);mainServices.AddSingleton<IDataProtectionProvider>(keys);mainServices.AddSingleton(work);
+            mainServices.AddScoped<QuillSignDbContext>(_=>db);mainServices.AddScoped<EmailPilotCloseout>(_=>core);mainServices.AddScoped<WorkStore>();
+            mainServices.AddScoped<EmailWorkHandler>(_=>new(db,email,t.Payload,null!,ordinary,clock,
+                lookups:()=>new LookupLinkDelivery(db,lookupProfile.Limits,lookupProfile.Payload,links,()=>lookupProfile.Lookup,()=>lookupTemplate,ordinary,email,work,clock,lookupProfile.Retention,closeout:mainLookup),pilot:pilot));
+            mainServices.AddScoped<IWorkHandler>(sp=>sp.GetRequiredService<EmailWorkHandler>());
+            mainServices.AddProductionHoldRuntime(new ConfigurationBuilder().Build());mainServices.AddScoped<IProductionWorkAdmission>(_=>kernel);
+            mainProvider=mainServices.BuildServiceProvider();mainScope=mainProvider.CreateScope();
+            var mainStore=mainScope.ServiceProvider.GetRequiredService<WorkStore>();
+            var route=await core.ReadNullLookupAsync(lookupId,null,default);Assert.NotNull(route);
+            await using(var foreign=await db.Database.BeginTransactionAsync()) {Assert.Throws<InvalidDataException>(()=>route.DemandLocked(db));await foreign.RollbackAsync();}
+            var lookupLease=(await mainStore.ClaimAsync(lookupId,default)).Lease!;Assert.NotNull(lookupLease);
+            await using(var wrongLease=await db.Database.BeginTransactionAsync()) {
+                await Assert.ThrowsAsync<InvalidDataException>(()=>core.ReadNullLookupLockedAsync(db,lookupId,lookupLease with{Owner=Guid.NewGuid()},default));
+                await Assert.ThrowsAsync<InvalidDataException>(()=>core.ReadNullLookupLockedAsync(db,lookupId,lookupLease with{Until=lookupLease.Until.ToOffset(TimeSpan.FromHours(1))},default));await wrongLease.RollbackAsync();
+            }
+            var composed=mainScope.ServiceProvider.GetRequiredService<EmailWorkHandler>();
+            Assert.Same(composed,mainScope.ServiceProvider.GetRequiredService<IWorkHandler>());Assert.Same(kernel,composed.HoldAdmission);
+            var lookupResult=await composed.ExecuteAsync(lookupLease,default);Assert.Equal(WorkOutcome.Completed,lookupResult.Outcome);
+            await mainStore.FinishAsync(lookupLease,lookupResult,default);
+            Assert.Equal(WorkStatus.Completed,(await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==lookupId)).Status);
+            Assert.Null((await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==lookupId)).EnvelopeId);
+            Assert.Equal(new EmailPilotCloseoutPassResult(8,0,0,0),await pass.RunAsync());Assert.Equal(8,capture.Messages.Count);
+            Assert.All(capturedSets,x=>Assert.Equal("synthetic-private-set",x));Assert.True(email.Enabled);Assert.Equal("synthetic",email.Ses.ConfigurationSet);
+        }
+        else foreach(var chosen in new[]{created.CompletionWork.First(),created.VoidWork.First()})
         {
             var lease=(await store.ClaimAsync(chosen,default)).Lease!;Assert.NotNull(lease);
             var aliasMail=await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==chosen);
@@ -184,15 +261,17 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
                 :await new VoidNotificationDelivery(db,voidJobs,voidProtection,()=>new(razor),ordinary,email,new(db,clock),clock,pilot).ExecuteAsync(lease,default);
             Assert.Equal(WorkOutcome.Completed,result.Outcome);await store.FinishAsync(lease,result,default);
         }
-        Assert.Equal(2,capture.Messages.Count);using var completedMail=MimeMessage.Load(new MemoryStream(capture.Messages[0]));var attachments=completedMail.Attachments.Cast<MimePart>().ToArray();Assert.Equal(2,attachments.Length);
+        var submitted=coexistence?8:2;
+        Assert.Equal(submitted,capture.Messages.Count);using var completedMail=MimeMessage.Load(new MemoryStream(capture.Messages[0]));var attachments=completedMail.Attachments.Cast<MimePart>().ToArray();Assert.Equal(2,attachments.Length);
         foreach(var (part,bytes) in attachments.Zip(new[]{expected.ExecutedBytes,expected.CertificateBytes})){using var target=new MemoryStream();await part.Content!.DecodeToAsync(target);Assert.Equal(bytes,target.ToArray());}
-        using var voidMail=MimeMessage.Load(new MemoryStream(capture.Messages[1]));Assert.Empty(voidMail.Attachments);
-        Assert.Equal(2,await db.EmailPilotCloseoutOperations.CountAsync(x=>x.CloseoutId==created.AuthorizationId&&x.Kind==1));
+        using var voidMail=MimeMessage.Load(new MemoryStream(capture.Messages[coexistence?4:1]));Assert.Empty(voidMail.Attachments);
+        Assert.Equal(submitted,await db.EmailPilotCloseoutOperations.CountAsync(x=>x.CloseoutId==created.AuthorizationId&&x.Kind==1));
         Assert.Equal(originals,await OriginalRows(db,originalComplete.Concat(originalVoid).Select(x=>x.Id)));Assert.Equal(failedPairRequests,t.Run.Seal.Requests);
-        settings.Enabled=false;await Assert.ThrowsAsync<InvalidDataException>(()=>store.ClaimAsync(created.CompletionWork.Last(),default));Assert.Equal(2,capture.Messages.Count);
+        if(coexistence){clock.Advance(settings.StartsAt.AddMinutes(25)-clock.GetUtcNow());Assert.False(core.CanAdmit);Assert.True(core.Available);await Assert.ThrowsAsync<InvalidDataException>(()=>core.CreateAsync(Capability));settings.HostRole=EmailPilotCloseoutHostRole.Web;}
+        settings.Enabled=false;if(!coexistence)await Assert.ThrowsAsync<InvalidDataException>(()=>store.ClaimAsync(created.CompletionWork.Last(),default));Assert.Equal(submitted,capture.Messages.Count);
         await using(var receiptTx=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable)) {
             var finalReceipt=await core.ReadCommittedReceiptLockedAsync(db,created.AuthorizationId,default);
-            Assert.Equal(2,finalReceipt.NewApplication);Assert.Equal(initialReceipt.HeaderFactsSha256,finalReceipt.HeaderFactsSha256);
+            Assert.Equal(submitted,finalReceipt.NewApplication);Assert.Equal(initialReceipt.HeaderFactsSha256,finalReceipt.HeaderFactsSha256);
             Assert.Equal(initialReceipt.OriginalMailSha256,finalReceipt.OriginalMailSha256);Assert.Equal(initialReceipt.OriginalWorkSha256,finalReceipt.OriginalWorkSha256);
             await receiptTx.RollbackAsync();
         }
@@ -200,6 +279,7 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
         }
         finally
         {
+            mainScope?.Dispose();if(mainProvider is not null)await mainProvider.DisposeAsync();
             if(cleanupSender is {} owner&&cleanupRecordId is Guid record)
                 foreach(var blob in terminal.Blobs.Created.Where(x=>x.EnvelopeId==record).Distinct().ToArray())
                 {
@@ -212,7 +292,7 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
     private static async Task<string> OriginalRows(QuillSignDbContext db,IEnumerable<Guid> ids)
     {var selected=ids.ToArray();return JsonSerializer.Serialize(new{Mail=await db.EmailOutbox.AsNoTracking().Where(x=>selected.Contains(x.Id)).OrderBy(x=>x.Id).ToArrayAsync(),Work=await db.WorkItems.AsNoTracking().Where(x=>selected.Contains(x.Id)).OrderBy(x=>x.Id).ToArrayAsync()});}
     private sealed class Capture:IPreparedEmailTransport
-    {internal readonly List<byte[]> Messages=[];public async Task<EmailDelivery> SendAsync(PreparedRawMime value,CancellationToken ct){using var input=value.OpenRead();using var target=new MemoryStream();await input.CopyToAsync(target,ct);Messages.Add(target.ToArray());return new("Ses","synthetic-alias-"+Messages.Count);}}
+    {internal readonly List<byte[]> Messages=[];internal Func<Task>? BeforeReceipt;public async Task<EmailDelivery> SendAsync(PreparedRawMime value,CancellationToken ct){using var input=value.OpenRead();using var target=new MemoryStream();await input.CopyToAsync(target,ct);Messages.Add(target.ToArray());if(BeforeReceipt is {} callback)await callback();return new("Ses","synthetic-alias-"+Messages.Count);}}
     private sealed class NoOrdinary:IEmailSender
     {public Task<EmailDelivery> SendAsync(OutgoingEmail value,CancellationToken ct)=>throw new InvalidOperationException("Ordinary transport must not handle an alias.");}
 }

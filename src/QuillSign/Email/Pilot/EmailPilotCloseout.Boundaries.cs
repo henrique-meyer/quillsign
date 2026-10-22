@@ -40,7 +40,8 @@ public sealed partial class EmailPilotCloseout
         if(!ReferenceEquals(db,database()) || db.Database.CurrentTransaction is null || db.ChangeTracker.HasChanges())throw Invalid();
         var bound=await RecognizesWorkAsync(db,item.Id,ct);
         var selected=ConfiguredNotice(item.Id);
-        if(!bound && !selected)return;
+        if(!bound && !selected){if(options.HostRole==EmailPilotCloseoutHostRole.Pass)throw Invalid();return;}
+        if(!CanSend)throw Invalid();
         var state=await ReadLockedAsync(db,ct)??throw Invalid();
         var known=state.Manifest.Queue.SingleOrDefault(x=>x.WorkId==item.Id);
         var binding=(await Operations(db,state,ct)).SingleOrDefault(x=>x.Kind==0&&x.WorkId==item.Id);
@@ -52,7 +53,7 @@ public sealed partial class EmailPilotCloseout
         if(known is not null) {
             DemandQueuedPair(known,mail,item);
         } else if(binding!.RequestSha256!=Hash(new{Mail=Raw(mail),Work=Raw(item)}))throw Invalid();
-        if(!Available)throw Invalid();
+        if(!CanSend)throw Invalid();
     }
 
     internal static void DemandQueuedPair(EmailPilotCloseoutQueue known,EmailOutbox mail,WorkItem item)

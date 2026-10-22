@@ -17,7 +17,8 @@ internal sealed record EmailPilotCloseoutManifest(string Version, Guid Authoriza
     DateTimeOffset DeleteAfter, string ConfigurationSha256, EmailPilotCloseoutParent[] Parents, EmailPilotCloseoutQueue[] Queue, string PublicationSha256);
 internal sealed record EmailPilotCloseoutReceipt(string Version, Guid AuthorizationId, int Kind, EmailPilotCloseoutStep Step,
     Guid SubjectEnvelopeId, Guid WorkId, DateTimeOffset At, int EncodedBytes, string RequestSha256,
-    [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] EmailPilotCloseoutLookupBinding? LookupBinding=null);
+    [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] EmailPilotCloseoutLookupBinding? LookupBinding=null,
+    [property: JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)] EmailPilotCloseoutQueue? Queued=null);
 
 internal sealed class EmailPilotCloseoutSnapshot
 {
@@ -51,8 +52,14 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
     internal EmailPilotOptions? ReceiptPilotOptions { get; init; }
     private static readonly JsonSerializerOptions Json = new() { Converters = { new JsonStringEnumConverter() } };
     private const string Purpose = "bounded-failed-notice-closeout-manifest-v1", ReceiptPurpose = "bounded-failed-notice-closeout-operation-v1";
-    internal bool Available => options.Enabled && !email.Enabled && work.Enabled && time.GetUtcNow().Offset == TimeSpan.Zero &&
+    internal bool Available => options.Enabled && options.Host(email,work) && time.GetUtcNow().Offset == TimeSpan.Zero &&
         options.StartsAt <= time.GetUtcNow() && options.Until > time.GetUtcNow();
+    internal EmailPilotCloseoutOptions HostOptions=>options;
+    internal bool PassHost=>options.HostRole==EmailPilotCloseoutHostRole.Pass && Available;
+    internal bool CanAdmit=>Available && options.HostRole is EmailPilotCloseoutHostRole.Legacy or EmailPilotCloseoutHostRole.Web && SendCutoff>Now;
+    internal bool CanSend=>Available && options.HostRole is EmailPilotCloseoutHostRole.Legacy or EmailPilotCloseoutHostRole.Pass && SendCutoff>Now;
+    internal DateTimeOffset SendCutoff=>options.HostRole==EmailPilotCloseoutHostRole.Legacy?options.Until:new[]{options.StartsAt.AddMinutes(25),options.Until}.Min();
+    internal string TransportConfigurationSet=>options.HostRole==EmailPilotCloseoutHostRole.Legacy?email.Ses.ConfigurationSet:options.PrivateConfigurationSet;
     internal DateTimeOffset Now => time.GetUtcNow();
     private static string Hash<T>(T value) => Convert.ToHexStringLower(EmailPilotCanonical.Hash(value));
     private static string Raw<T>(T value) => JsonSerializer.Serialize(value, Json);
@@ -73,7 +80,7 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
 
     private async Task<EmailPilotCloseoutSnapshot> CreateCoreAsync(string capability, CancellationToken ct)
     {
-        if (!MatchesCapability(capability)) throw Invalid();
+        if (!CanAdmit || !MatchesCapability(capability)) throw Invalid();
         var cfg = options.Capture(); var db = database(); Clean(db);
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct); await Lock(db, Guid.Empty, ct); await Lock(db, cfg.AuthorizationId, ct);
@@ -131,7 +138,7 @@ public sealed partial class EmailPilotCloseout(EmailPilotCloseoutOptions options
             var originalWork=JsonSerializer.Deserialize<WorkItem>(pair.OriginalWorkJson!,Json)??throw Invalid();
             await DemandCanonicalOriginalLockedAsync(db,originalMail,originalWork,ct);
         }
-        if (!Available) throw Invalid(); await tx.CommitAsync(ct); await tx.DisposeAsync();
+        if (!CanAdmit) throw Invalid(); await tx.CommitAsync(ct); await tx.DisposeAsync();
         return await ReadAsync(ct) ?? throw Invalid();
     }
 

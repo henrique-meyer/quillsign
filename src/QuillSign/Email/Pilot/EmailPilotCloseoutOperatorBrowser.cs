@@ -30,7 +30,7 @@ public sealed class EmailPilotCloseoutOperatorBrowser(EmailPilotCloseoutOptions 
     private CookieOptions Cookies(DateTimeOffset? until=null)=>new(){HttpOnly=true,Secure=!environment.IsDevelopment(),SameSite=SameSiteMode.Strict,Path="/",IsEssential=true,Expires=until};
     private EmailPilotCloseoutConfiguration? Configuration()
     {
-        if(email.Enabled || !work.Enabled)return null;
+        if(!options.Host(email,work,true))return null;
         try {var c=options.Capture();return c.StartsAt<=time.GetUtcNow() && c.Until>time.GetUtcNow()?c:null;}
         catch(InvalidOperationException){return null;}
     }
@@ -61,7 +61,7 @@ public sealed class EmailPilotCloseoutOperatorBrowser(EmailPilotCloseoutOptions 
     }
     private EmailPilotCloseoutConfiguration? ReceiptConfiguration()
     {
-        if(email.Enabled||!work.Enabled||pilot is not {Enabled:false}||time.GetUtcNow().Offset!=TimeSpan.Zero)return null;
+        if(!options.Host(email,work,true)||pilot is not {Enabled:false}||time.GetUtcNow().Offset!=TimeSpan.Zero)return null;
         try {var c=options.CaptureReceiptConfiguration();return c.StartsAt<=time.GetUtcNow()&&c.Until>time.GetUtcNow()?c:null;}
         catch(InvalidOperationException){return null;}
     }

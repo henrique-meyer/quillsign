@@ -21,7 +21,7 @@ public sealed partial class EmailPilotCloseout
     internal const string CommittedReceiptVersion="closeout-committed-accounting-receipt-v1";
     private EmailPilotCloseoutConfiguration ReceiptConfiguration()
     {
-        if(email.Enabled||!work.Enabled||ReceiptPilotOptions is not {Enabled:false}||Now.Offset!=TimeSpan.Zero)throw Invalid();
+        if(!options.Host(email,work,true)||ReceiptPilotOptions is not {Enabled:false}||Now.Offset!=TimeSpan.Zero)throw Invalid();
         var c=options.CaptureReceiptConfiguration();if(c.StartsAt>Now||c.Until<=Now)throw Invalid();return c;
     }
     internal async Task<EmailPilotCloseoutCommittedReceipt> ReadCommittedReceiptLockedAsync(QuillSignDbContext db,Guid authorization,CancellationToken ct)

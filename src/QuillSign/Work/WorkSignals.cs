@@ -32,7 +32,8 @@ public interface IWorkSignals
     Task VerifyAsync(CancellationToken cancellationToken);
 }
 
-public sealed class AzureWorkSignals(QueueClient queue, BlobContainerClient hints, WorkOptions options, bool local) : IWorkSignals
+public sealed class AzureWorkSignals(QueueClient queue, BlobContainerClient hints, WorkOptions options, bool local,
+    Func<IReadOnlyList<Guid>,CancellationToken,Task<IReadOnlySet<Guid>>>? privateExclusion=null) : IWorkSignals
 {
     private async Task EnsureLocalAsync(CancellationToken cancellationToken)
     {
@@ -105,12 +106,16 @@ public sealed class AzureWorkSignals(QueueClient queue, BlobContainerClient hint
         var pages = hints.GetBlobsAsync(new GetBlobsOptions { Traits = BlobTraits.Metadata }, cancellationToken).AsPages(string.IsNullOrEmpty(cursor) ? null : cursor, 256);
         await foreach (var page in pages.WithCancellation(cancellationToken))
         {
+            var readyIds=new List<Guid>();
             foreach (var hint in page.Values)
             {
                 if (!Guid.TryParseExact(hint.Name, "N", out var id)) continue;
                 if (!hint.Metadata.TryGetValue("due", out var due) || ParseDue(due) is not { } at || at <= now)
-                { await PublishAsync(id, TimeSpan.Zero, cancellationToken); count++; }
+                { readyIds.Add(id); }
             }
+            var excluded=privateExclusion is not null&&readyIds.Count>0?await privateExclusion(readyIds,cancellationToken):new HashSet<Guid>();
+            if(excluded.Any(x=>!readyIds.Contains(x)))throw new InvalidDataException("Recovery exclusion must be a subset of the current bounded page.");
+            foreach(var id in readyIds){if(excluded.Contains(id))continue;await PublishAsync(id,TimeSpan.Zero,cancellationToken);count++;}
             await cursorBlob.UploadAsync(BinaryData.FromString(page.ContinuationToken ?? ""), overwrite: true, cancellationToken);
             break;
         }
