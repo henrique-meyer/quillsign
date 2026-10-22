@@ -25,7 +25,7 @@ public sealed class PreparedRawMimeTests
         var prepared = await PreparedRawMime.PrepareAsync(message, "Sender@EXAMPLE.INVALID", "Équipe 日本語 🔏");
         using var input = prepared.OpenRead();
         using var parsed = await MimeMessage.LoadAsync(input);
-        Assert.Equal(message.Subject, parsed.Subject);
+        Assert.Equal(message.Subject + $" [QS-{envelope:N}]", parsed.Subject);
         Assert.Equal("Équipe 日本語 🔏", Assert.Single(parsed.From.Mailboxes).Name);
         Assert.Equal(Sender, Assert.Single(parsed.From.Mailboxes).Address);
         Assert.Equal(Recipient, Assert.Single(parsed.To.Mailboxes).Address);

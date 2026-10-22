@@ -33,7 +33,7 @@ public sealed class CompletionNotificationTests(SqlDatabaseFixture fixture) : IC
         using(var scope=f.App.Services.CreateScope())Assert.Equal(0,await scope.ServiceProvider.GetRequiredService<CompletionNotificationJobs>().ResumeAsync(f.Id));
         Assert.Equal(0,await Drain(f));
         foreach(var recipient in recipients) {
-            using var message=await Captured(recipient);Assert.Equal("Your completed QuillSign records",message.Subject);Assert.Single(message.To.Mailboxes);
+            using var message=await Captured(recipient);Assert.Equal($"Your completed QuillSign records [QS-{f.Id:N}]",message.Subject);Assert.Single(message.To.Mailboxes);
             Assert.Contains("Demo instance",message.TextBody);Assert.DoesNotContain("Attachment-size warning",message.TextBody);
             var parts=message.Attachments.Cast<MimePart>().ToArray();Assert.Equal(2,parts.Length);
             foreach(var (bytes,part) in new[]{f.Published.ExecutedBytes,f.Published.CertificateBytes}.Zip(parts)) {

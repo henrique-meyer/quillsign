@@ -26,6 +26,7 @@ public sealed class PdfEmailAttachmentIntegrationTests(SqlDatabaseFixture fixtur
         Assert.NotNull(id);var raw=await http.GetByteArrayAsync("/api/v1/message/"+id+"/raw");using var captured=await MimeMessage.LoadAsync(new MemoryStream(raw));
         Assert.Equal(recipient,Assert.Single(captured.To.Mailboxes).Address);Assert.Equal(message.Text,captured.TextBody?.TrimEnd());Assert.Equal(message.Html,captured.HtmlBody?.TrimEnd());
         Assert.Equal(envelope.ToString("N"),captured.Headers["X-QuillSign-Envelope"]);var parts=captured.Attachments.Cast<MimePart>().ToArray();Assert.Equal(attach ? 2 : 0,parts.Length);
+        Assert.Equal($"Synthetic PDF transport [QS-{envelope:N}]",captured.Subject);
         if(attach) {
             Assert.Equal(message.Attachments!.Select(x=>x.FileName),parts.Select(x=>x.FileName));
             foreach(var (expected,part) in new[]{a,b}.Zip(parts)) {

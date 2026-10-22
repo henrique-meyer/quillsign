@@ -1,0 +1,58 @@
+@{
+    Layout = null;
+    // A static, first-party asset: never include recipient identifiers or link tokens.
+    // Standalone worker renderers may pass template options directly rather than
+    // register email services. Branding must not become a delivery dependency.
+    var emailOptions = Context.RequestServices.GetService(typeof(QuillSign.Email.EmailOptions)) as QuillSign.Email.EmailOptions;
+    Uri? logo = null;
+    if (Uri.TryCreate((emailOptions?.BaseUrl ?? "").TrimEnd('/') + "/", UriKind.Absolute, out var root) &&
+        (root.Scheme == "https" || root.Scheme == "http" && root.IsLoopback) &&
+        root.UserInfo.Length == 0 && root.Query.Length == 0 && root.Fragment.Length == 0)
+        logo = new Uri(root, "logo.png");
+}
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>@ViewData["Title"]</title>
+    <style>
+        body, table, td { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+        table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+        a { color: #164c7e; }
+        @@media only screen and (max-width: 640px) {
+            .email-outer { padding: 16px 8px !important; }
+            .email-padding { padding-left: 24px !important; padding-right: 24px !important; }
+            .email-title { font-size: 26px !important; }
+        }
+    </style>
+</head>
+<body style="margin:0;padding:0;background-color:#f3f5f8;color:#23364b;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased">
+    <div style="display:none;max-height:0;max-width:0;overflow:hidden;opacity:0;mso-hide:all">@ViewData["Preheader"]</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f3f5f8">
+        <tr><td class="email-outer" align="center" style="padding:40px 16px">
+            <!--[if mso]><table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;max-width:600px;background-color:#ffffff;border:1px solid #dce2ea;border-top:4px solid #f26b5e;border-radius:16px;border-spacing:0;box-shadow:0 8px 28px rgba(12,35,64,0.04)">
+                <tr><td class="email-padding" style="padding:32px 40px 24px;border-bottom:1px solid #edf0f4">
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                        @if (logo is not null) {
+                            <td width="56" style="width:56px;vertical-align:middle"><img src="@logo.AbsoluteUri" alt="" width="44" height="44" style="display:block;width:44px;height:44px;border:0;border-radius:10px"></td>
+                        }
+                        <td style="vertical-align:middle;color:#0c2340;font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:700;letter-spacing:-0.6px">QuillSign</td>
+                    </tr></table>
+                </td></tr>
+                <tr><td class="email-padding" style="padding:32px 40px 24px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.65;overflow-wrap:anywhere;word-break:break-word">
+                    <h1 class="email-title" style="margin:0 0 24px;color:#0c2340;font-size:30px;font-weight:700;line-height:1.2;letter-spacing:-0.6px">@ViewData["Title"]</h1>
+                    @RenderBody()
+                </td></tr>
+                <tr><td class="email-padding" bgcolor="#f8fafc" style="padding:24px 40px;background-color:#f8fafc;border-top:1px solid #e8edf3;border-radius:0 0 16px 16px;color:#566579;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6">
+                    <p style="margin:0;font-weight:700;color:#3c4e64">Sent with QuillSign</p>
+                    <p style="margin:4px 0 0">Electronic document signing.</p>
+                </td></tr>
+            </table>
+            <!--[if mso]></td></tr></table><![endif]-->
+        </td></tr>
+    </table>
+</body>
+</html>
