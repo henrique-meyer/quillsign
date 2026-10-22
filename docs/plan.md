@@ -2132,7 +2132,7 @@ Public closeout now reconciles current main additively, preserves all later appl
 
 ## QUILS-157: Shared QuillSign HTML email design
 
-Status: Implementation and local validation complete; checked PR/merge pending. Assigned to ChatGPT Codex.
+Status: Implementation and local validation complete. Assigned to ChatGPT Codex. [PR #163](https://github.com/henrique-meyer/quillsign/pull/163) records CI and merge status.
 
 Use a shared responsive HTML email layout inspired by the owner's reference: subtle background, white card, existing QuillSign logo, clear header/title/body/footer, accessible action buttons and readable fallback links. Apply to every existing transactional HTML template while preserving plain text, encoded dynamic content, exact links/manual codes, disclosures, retention facts, attachments and sending safeguards. Reuse existing logo raster assets; any additional email raster export derives directly from the supplied logo and is included in this story.
 
