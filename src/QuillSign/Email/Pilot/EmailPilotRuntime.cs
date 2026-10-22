@@ -47,6 +47,7 @@ public static class EmailPilotRuntime
         services.AddEmailPilotSecretCleanup();
         var closeout=config.GetSection("EmailPilot:Closeout").Get<EmailPilotCloseoutOptions>()??new();closeout.Validate();
         if(closeout.HostRole==EmailPilotCloseoutHostRole.Pass&&!privatePass)throw new InvalidOperationException("Pass configuration requires the dedicated filtered command host.");
+        if(closeout.HostRole==EmailPilotCloseoutHostRole.Web)throw new InvalidOperationException("This host supports only negative closeout handoff, not private Web execution.");
         services.AddSingleton(closeout);
         services.AddScoped<EmailPilotCloseout>(sp=>new(closeout,sp.GetRequiredService<EmailOptions>(),sp.GetRequiredService<WorkOptions>(),
             ()=>sp.GetRequiredService<QuillSignDbContext>(),()=>sp.GetRequiredService<EmailPilotLedger>(),()=>sp.GetRequiredService<EmailPilotProtection>(),sp.GetRequiredService<TimeProvider>()) {
