@@ -24,7 +24,15 @@ public sealed class EmailPilotCloseoutOptions
 
     internal EmailPilotCloseoutConfiguration Capture()
     {
-        if (!Enabled || !EmailPilotCanonical.Hash(CapabilitySha256) || StartsAt.Offset != TimeSpan.Zero || Until.Offset != TimeSpan.Zero ||
+        if (!Enabled) throw Invalid();
+        return CaptureReceiptConfiguration();
+    }
+
+    // Structural facts only. Callers must independently authenticate an already
+    // issued live receipt session; this never enables a mutating action.
+    internal EmailPilotCloseoutConfiguration CaptureReceiptConfiguration()
+    {
+        if (!EmailPilotCanonical.Hash(CapabilitySha256) || StartsAt.Offset != TimeSpan.Zero || Until.Offset != TimeSpan.Zero ||
             StartsAt == default || Until <= StartsAt || Until > StartsAt.AddMinutes(30) ||
             AccountingParentRunIds is not { Length: >= 2 and <= 8 } || CompletionWorkIds is not { Length: 4 } || VoidWorkIds is not { Length: 2 }) throw Invalid();
         var id = Id(AuthorizationId); var completeParent = Id(CompletionParentRunId); var voidParent = Id(VoidParentRunId);

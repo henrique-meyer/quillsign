@@ -107,6 +107,8 @@ public sealed class EmailPilotCloseoutPageTests
             var cookies=page.Headers.GetValues("Set-Cookie").Select(x=>x.Split(';')[0]);client.DefaultRequestHeaders.Add("Cookie",string.Join("; ",cookies));
             using var inert=await client.PostAsync(path+"?handler=Verification",new FormUrlEncodedContent(new Dictionary<string,string>{{"__RequestVerificationToken",csrf}}));Assert.Equal(System.Net.HttpStatusCode.Forbidden,inert.StatusCode);
             using var noCsrf=await client.PostAsync(path+"?handler=Unlock",new FormUrlEncodedContent(new Dictionary<string,string>{{"Capability","1234567890123456789012345678901234567890123"}}));Assert.Equal(System.Net.HttpStatusCode.BadRequest,noCsrf.StatusCode);
+            using var noReceiptCsrf=await client.PostAsync(path+"?handler=Receipt",new FormUrlEncodedContent(new Dictionary<string,string>()));Assert.Equal(System.Net.HttpStatusCode.BadRequest,noReceiptCsrf.StatusCode);
+            using var unauthenticatedReceipt=await client.PostAsync(path+"?handler=Receipt",new FormUrlEncodedContent(new Dictionary<string,string>{{"__RequestVerificationToken",csrf}}));Assert.Equal(System.Net.HttpStatusCode.Forbidden,unauthenticatedReceipt.StatusCode);
             using var unlock=await client.PostAsync(path+"?handler=Unlock",new FormUrlEncodedContent(new Dictionary<string,string>{{"__RequestVerificationToken",csrf},{"Capability","1234567890123456789012345678901234567890123"}}));
             Assert.Equal(System.Net.HttpStatusCode.Redirect,unlock.StatusCode);Assert.Equal(path,unlock.Headers.Location?.OriginalString);
         }

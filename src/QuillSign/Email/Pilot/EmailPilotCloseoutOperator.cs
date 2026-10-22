@@ -11,6 +11,20 @@ public sealed class EmailPilotCloseoutOperator(EmailPilotCloseoutOperatorBrowser
 {
     private void Demand(EmailPilotCloseoutOperatorSession s)
     {if(!browser.Live(s))throw new EmailDisabledException();}
+    public async Task<EmailPilotCloseoutCommittedReceipt> ReadCommittedReceiptAsync(EmailPilotCloseoutOperatorSession s,CancellationToken ct=default)
+    {
+        void Check(){if(!browser.LiveReceipt(s))throw new EmailDisabledException();}
+        Check();var db=database();if(db.Database.CurrentTransaction is not null||db.ChangeTracker.HasChanges())throw EmailPilotProtection.Invalid();
+        using var stop=CancellationTokenSource.CreateLinkedTokenSource(ct);stop.CancelAfter(TimeSpan.FromSeconds(15));
+        await db.Database.OpenConnectionAsync(stop.Token);Check();
+        await using var tx=await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable,stop.Token);
+        EmailPilotCloseoutCommittedReceipt result;
+        try {
+            await db.Database.ExecuteSqlRawAsync("SET LOCK_TIMEOUT 5000",stop.Token);Check();
+            result=await closeout().ReadCommittedReceiptLockedAsync(db,s.AuthorizationId,stop.Token);Check();
+        } finally {await tx.RollbackAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));}
+        Check();return result;
+    }
     public async Task<EmailPilotOperatorNotice> StartAsync(EmailPilotCloseoutOperatorSession s,CancellationToken ct=default)
     {
         Demand(s);var saved=await closeout().CreateAsync(s.Capability,ct);Demand(s);if(saved.AuthorizationId!=s.AuthorizationId)throw EmailPilotProtection.Invalid();

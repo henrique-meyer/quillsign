@@ -35,6 +35,7 @@ public static class EmailPilotRuntime
         var closeout=config.GetSection("EmailPilot:Closeout").Get<EmailPilotCloseoutOptions>()??new();closeout.Validate();services.AddSingleton(closeout);
         services.AddScoped<EmailPilotCloseout>(sp=>new(closeout,sp.GetRequiredService<EmailOptions>(),sp.GetRequiredService<WorkOptions>(),
             ()=>sp.GetRequiredService<QuillSignDbContext>(),()=>sp.GetRequiredService<EmailPilotLedger>(),()=>sp.GetRequiredService<EmailPilotProtection>(),sp.GetRequiredService<TimeProvider>()) {
+            ReceiptPilotOptions=sp.GetRequiredService<EmailPilotOptions>(),
             Lookup=()=>sp.GetRequiredService<EmailPilotCloseoutLookup>(),Payloads=()=>sp.GetRequiredService<EmailPayloadProtection>(),CompletionPayloads=()=>sp.GetRequiredService<CompletionNotificationProtection>(), VoidPayloads=()=>sp.GetRequiredService<VoidNotificationProtection>(),
             CompletionJobs=()=>sp.GetRequiredService<CompletionNotificationJobs>(),VoidJobs=()=>sp.GetRequiredService<VoidNotificationJobs>() });
         services.AddScoped<EmailPilotCloseoutSender>(sp=>new(sp.GetRequiredService<EmailOptions>(),()=>sp.GetRequiredService<EmailPilotCloseout>(),()=>sp.GetRequiredService<QuillSignDbContext>(),
