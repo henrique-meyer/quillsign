@@ -44,7 +44,7 @@ public sealed class EmailPilotSenderTests(SqlDatabaseFixture fixture) : IClassFi
         Assert.Equal(message.To, Assert.Single(request.Destination.ToAddresses)); Assert.Empty(request.Destination.CcAddresses ?? []); Assert.Empty(request.Destination.BccAddresses ?? []);
         Assert.Equal(h.Email.FromEmail, request.FromEmailAddress); Assert.Equal(h.Email.Ses.ConfigurationSet, request.ConfigurationSetName);
         using var raw = new MemoryStream(client.Bytes); using var mime = await MimeMessage.LoadAsync(raw);
-        Assert.Single(mime.To); Assert.Empty(mime.Cc); Assert.Empty(mime.Bcc); Assert.Equal(message.Subject, mime.Subject);
+        Assert.Single(mime.To); Assert.Empty(mime.Cc); Assert.Empty(mime.Bcc); Assert.Equal(message.Subject + $" [QS-{id:N}]", mime.Subject);
         Assert.Single(mime.Attachments); Assert.False(request.Content.Raw.Data.CanRead);
         // Newly generated Date/Message-ID on replay never grants a second call.
         await Assert.ThrowsAsync<EmailPilotTransportRefusedException>(() => sender.SendAsync(lease, message));

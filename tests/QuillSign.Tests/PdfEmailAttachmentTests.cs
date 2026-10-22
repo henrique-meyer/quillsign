@@ -48,6 +48,7 @@ public sealed class PdfEmailAttachmentTests
         var id=Guid.NewGuid();var message=new OutgoingEmail("recipient@example.invalid","Synthetic","Plain text","<p>HTML</p>",id,attachments ? files : null);
         Assert.Equal(new EmailDelivery("Ses","synthetic-provider-id"),await new SesEmailTransport(client,options).SendAsync(message,default));
         var request=client.Request!;Assert.Null(request.Content.Raw);Assert.Equal(message.Text,request.Content.Simple.Body.Text.Data);Assert.Equal(message.Html,request.Content.Simple.Body.Html.Data);
+        Assert.Equal($"Synthetic [QS-{id:N}]",request.Content.Simple.Subject.Data);
         Assert.Equal(id.ToString("N"),Assert.Single(request.Content.Simple.Headers).Value);Assert.Equal("recipient@example.invalid",Assert.Single(request.Destination.ToAddresses));
         Assert.Equal(attachments ? 2 : 0,client.Bytes.Count);
         if(attachments)foreach(var (file,part) in files.Zip(request.Content.Simple.Attachments)) {

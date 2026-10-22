@@ -43,6 +43,19 @@ internal static class PdfEmailAttachments
         var recipient=EmailAddress.Normalize(message.To);
         if(string.IsNullOrWhiteSpace(message.Subject) || message.Subject.Length>998 || message.Subject.Any(char.IsControl) || message.Text is null || message.Html is null)
             throw new ArgumentException("Invalid email content.");
+        // Normalize once at the common boundary used by SMTP, SES and prepared
+        // raw MIME. Use the full non-capability envelope reference, never a token
+        // or shortened ID that could group unrelated documents together.
+        var subject=message.Subject;
+        if(message.EnvelopeId is { } document) {
+            if(document==Guid.Empty)throw new ArgumentException("A document reference is required.");
+            var reference=$" [QS-{document:N}]";
+            if(!subject.EndsWith(reference,StringComparison.Ordinal)) {
+                var length=Math.Min(subject.Length,998-reference.Length);
+                if(char.IsHighSurrogate(subject[length-1]))length--;
+                subject=subject[..length]+reference;
+            }
+        }
         var input=message.Attachments??Array.Empty<PdfEmailAttachment>();
         if(input.Count>2)throw new EmailAttachmentLimitException();
         var files=new PdfEmailAttachment[input.Count];var names=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -57,6 +70,6 @@ internal static class PdfEmailAttachments
             encoded+=base64+2*((base64+75)/76)+4096L+8L*Encoding.UTF8.GetByteCount(file.FileName);
         }
         if(decoded>limits.MaximumDecodedBytes || encoded>limits.MaximumMessageBytes)throw new EmailAttachmentLimitException();
-        return message with {To=recipient,Attachments=Array.AsReadOnly(files)};
+        return message with {To=recipient,Subject=subject,Attachments=Array.AsReadOnly(files)};
     }
 }

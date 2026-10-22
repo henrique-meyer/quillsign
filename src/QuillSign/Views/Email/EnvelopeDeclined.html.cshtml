@@ -1,9 +1,9 @@
 @model QuillSign.Work.DeclinePayload
-@{ Layout = null; }
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Signing request declined</title></head>
-<body><p>QuillSign</p><h1>Signing request declined</h1>
-<p>The signing request for @Model.Title was declined by @Model.SignerName (@Model.SignerEmail).</p>
-<p>Reason: @(Model.Reason ?? "No reason provided.")</p>
-<p>This envelope is closed. Contact the signer to discuss another arrangement.</p>
-</body></html>
+@{
+    Layout = "/Views/Email/_Layout.cshtml";
+    ViewData["Title"] = "Signing request declined";
+    ViewData["Preheader"] = "A signer declined your QuillSign request.";
+}
+<p style="margin:0 0 16px">The signing request for <strong>@Model.Title</strong> was declined by @Model.SignerName (@Model.SignerEmail).</p>
+<p style="margin:0 0 20px;padding:20px;background-color:#f8fafc;border-left:3px solid #dce2ea;border-radius:4px;white-space:pre-wrap"><strong>Reason:</strong> @(Model.Reason ?? "No reason provided.")</p>
+<p style="margin:0 0 8px">This envelope is closed. Contact the signer to discuss another arrangement.</p>
