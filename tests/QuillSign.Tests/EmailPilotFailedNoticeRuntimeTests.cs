@@ -211,7 +211,7 @@ public sealed class EmailPilotFailedNoticeRuntimeTests(SqlDatabaseFixture fixtur
             var links=new DocumentLookupProtection(keys,clock);var lookupOptions=new DocumentLookupOptions();
             var lookupTemplate=new LookupEmailTemplate(email,razor,links,t.Run.Signing.H.App.Environment);
             mainLookup=new(db,()=>core,completionState,lookupProfile.Payload,lookupProfile.Retention,lookupProfile.Limits,lookupOptions,links,()=>lookupTemplate,()=>closeoutSender,()=>t.Run.Signing.H.Signals,clock);
-            Assert.True(await mainLookup.RequestAsync(created.AuthorizationId,null));
+            Assert.True(await mainLookup.RequestAsync(created.AuthorizationId,"127.0.0.1"));
             var lookupId=EmailPilotCloseoutLookup.RequestId(created.AuthorizationId);settings.HostRole=EmailPilotCloseoutHostRole.Pass;
             var external=new ProductionHoldWitnessJournalTests.Store();
             var journal=new ProductionHoldWitnessJournal(external,keys,clock,new string('7',64));
