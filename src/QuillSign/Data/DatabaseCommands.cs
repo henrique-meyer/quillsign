@@ -7,10 +7,12 @@ public static class DatabaseCommands
 {
     public static async Task<int> RunAsync(string[] args)
     {
+        if(args.Length>0 && args[0]=="verify-hosted-closeout-state")
+            return await HostedCloseoutStateVerificationCommand.RunAsync(args);
         IConfiguration? configuration = null;
-        if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "grant-demo-purge" or "grant-production-purge" or "grant-production-holds" or "grant-lookup-retention" or "grant-email-pilot-retention" or "verify-runtime"))
+        if (args.Length != 1 || args[0] is not ("provision-identities" or "provision-worker" or "migrate" or "grant-runtime" or "grant-demo-purge" or "grant-production-purge" or "grant-production-holds" or "grant-lookup-retention" or "grant-email-pilot-retention" or "remove-expired-closeout-secret" or "verify-runtime"))
         {
-            Console.Error.WriteLine("Usage: database provision-identities|provision-worker|migrate|grant-runtime|grant-demo-purge|grant-production-purge|grant-production-holds|grant-lookup-retention|grant-email-pilot-retention|verify-runtime");
+            Console.Error.WriteLine("Usage: database provision-identities|provision-worker|migrate|grant-runtime|grant-demo-purge|grant-production-purge|grant-production-holds|grant-lookup-retention|grant-email-pilot-retention|remove-expired-closeout-secret|verify-runtime");
             return 2;
         }
         try
@@ -23,6 +25,16 @@ public static class DatabaseCommands
             await using var scope = provider.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<QuillSignDbContext>();
             if (args[0] == "migrate") await SqlResume.RunAsync(() => db.Database.MigrateAsync());
+            else if(args[0]=="remove-expired-closeout-secret") {
+                if(configuration["EmailPilot:Closeout:EmitCleanupReceipt"]=="true") {
+                    var receipt=await HostedCloseoutCleanupReceipt.RunAsync(db,configuration);
+                    Console.WriteLine(HostedCloseoutCleanupReceipt.Prefix+System.Text.Json.JsonSerializer.Serialize(receipt));return 0;
+                }
+                if(configuration["EmailPilot:Closeout:CleanupProofBase64"] is not null)throw new InvalidOperationException("Select the explicit closeout cleanup receipt path.");
+                var id=Guid.TryParseExact(configuration["EmailPilot:Closeout:AuthorizationId"],"N",out var selected)&&selected!=Guid.Empty?selected:throw new InvalidOperationException("Configure one exact closeout purpose.");
+                await db.Database.ExecuteSqlInterpolatedAsync($"EXEC dbo.RemoveExpiredEmailPilotCloseoutSecret @Id={id}");
+                if(await db.EmailPilotCloseouts.AnyAsync(x=>x.Id==id && x.ProtectedManifest!=null))throw new InvalidOperationException("The closeout secret is not yet due in database UTC.");
+            }
             else if (args[0] == "verify-runtime") await VerifyRuntimeAsync(db);
             else
             {

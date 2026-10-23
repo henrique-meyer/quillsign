@@ -35,7 +35,7 @@ public static class EmailPilotConfiguration
         services.AddScoped<EmailPilotWorkAuthority>(sp=>new(sp.GetRequiredService<EmailPilotOptions>(),sp.GetService<EmailOptions>()??new(),sp.GetService<Work.WorkOptions>()??new(),
             sp.GetRequiredService<EmailPilotAdmissionOptions>(),
             ()=>sp.GetRequiredService<EmailPilotLedger>(),()=>sp.GetRequiredService<QuillSignDbContext>(),
-            ()=>sp.GetRequiredService<Work.EmailPayloadProtection>(),sp.GetRequiredService<TimeProvider>()));
+            ()=>sp.GetRequiredService<Work.EmailPayloadProtection>(),sp.GetRequiredService<TimeProvider>()){Closeout=sp.GetService<EmailPilotCloseout>() is null?null:()=>sp.GetRequiredService<EmailPilotCloseout>()});
         return services;
     }
 
@@ -50,7 +50,7 @@ public static class EmailPilotConfiguration
             ()=>sp.GetRequiredService<Sender.SenderAvailability>(),()=>sp.GetRequiredService<EmailPilotLedger>(),
             ()=>sp.GetRequiredService<Work.EmailOutboxWriter>(),()=>sp.GetRequiredService<Work.EmailPayloadProtection>(),sp.GetRequiredService<TimeProvider>()));
         services.AddScoped<EmailPilotEnvelopeAccess>(sp=>new(()=>sp.GetRequiredService<QuillSignDbContext>(),()=>sp.GetRequiredService<EmailPilotLedger>(),
-            ()=>sp.GetRequiredService<Work.EmailPayloadProtection>(),admission,sp.GetService<Work.WorkOptions>()??new()));
+            ()=>sp.GetRequiredService<Work.EmailPayloadProtection>(),admission,sp.GetService<Work.WorkOptions>()??new()){Closeout=sp.GetService<EmailPilotCloseout>() is null?null:()=>sp.GetRequiredService<EmailPilotCloseout>()});
         return services;
     }
 

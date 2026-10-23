@@ -28,7 +28,12 @@ internal sealed class EmailPilotLookupWorkScope(EmailPilotLookupRequestBinding r
 }
 
 internal sealed record EmailPilotLookupTokenScope(bool IsPilot, bool Allowed,
-    EmailPilotLookupRequestBinding? Request = null, EmailPilotManifest? Manifest = null);
+    EmailPilotLookupRequestBinding? Request = null, EmailPilotManifest? Manifest = null,
+    Guid? CloseoutRecord = null, Guid? CloseoutRequest = null, DateTimeOffset? CloseoutUntil = null,DateTimeOffset? CloseoutIssuedAt=null)
+{
+    internal Guid? SelectedRecord=>CloseoutRecord??Request?.SubjectEnvelopeId;
+    internal DateTimeOffset? Deadline=>CloseoutUntil??Request?.ExpiresAt;
+}
 
 internal static class EmailPilotLookupRules
 {

@@ -26,7 +26,8 @@ public sealed class LookupDeliveryOptions
 internal sealed record LookupIssuedToken(Guid Id, string Revision, string Sha256, DateTimeOffset ExpiresAt);
 internal sealed record LookupMailPayload(string Version, Guid Id, string Email, string IpHash, DateTimeOffset RequestedAt,
     DateTimeOffset Deadline, LookupIssuedToken? Issued,
-    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PilotRunId = null);
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PilotRunId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? CloseoutId = null);
 
 public sealed class LookupDeliveryProtection(IDataProtectionProvider provider)
 {
@@ -39,11 +40,14 @@ public sealed class LookupDeliveryProtection(IDataProtectionProvider provider)
         LookupMailPayload p;
         try {
             var wrapper = JsonSerializer.Deserialize<ProtectedWorkPayload>(row.PayloadJson);
-            p = JsonSerializer.Deserialize<LookupMailPayload>(protector.Unprotect(wrapper?.Protected ?? throw Invalid())) ?? throw Invalid();
+            var clear=protector.Unprotect(wrapper?.Protected ?? throw Invalid());
+            p = JsonSerializer.Deserialize<LookupMailPayload>(clear) ?? throw Invalid();
+            if(p.CloseoutId is not null && (row.PayloadJson!=JsonSerializer.Serialize(wrapper) || clear!=JsonSerializer.Serialize(p)))throw Invalid();
         } catch (JsonException) { throw Invalid(); }
         if (p.Version != "lookup-mail-v1" || p.Id == Guid.Empty || p.Id != row.Id || p.Email != row.To || !Hash(p.IpHash) ||
             p.RequestedAt.Offset != TimeSpan.Zero || p.RequestedAt != row.AvailableAt || p.Deadline.Offset != TimeSpan.Zero ||
-            p.Deadline <= p.RequestedAt || p.Deadline > p.RequestedAt.AddHours(24) || p.PilotRunId == Guid.Empty) throw Invalid();
+            p.Deadline <= p.RequestedAt || p.Deadline > p.RequestedAt.AddHours(24) || p.PilotRunId == Guid.Empty || p.CloseoutId == Guid.Empty ||
+            p.PilotRunId is not null && p.CloseoutId is not null) throw Invalid();
         try { if (EmailAddress.Normalize(p.Email) != p.Email) throw Invalid(); } catch (ArgumentException) { throw Invalid(); }
         if (p.Issued is { } issued) {
             if (issued.Id == Guid.Empty || !Hash(issued.Sha256) || issued.Revision is not { Length: 12 } ||

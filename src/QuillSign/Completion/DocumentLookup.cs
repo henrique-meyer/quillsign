@@ -16,12 +16,24 @@ public sealed record DocumentLookupPage(IReadOnlyList<DocumentLookupEntry> Entri
 // Internal backend only. A future delivery flow must keep issuance transport private and
 // authenticate explicit POST redemption; knowing an address is never listing authority.
 public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState state, DocumentLookupProtection protection,
-    DocumentLookupOptions options, TimeProvider time, Email.Pilot.EmailPilotLookupAccess? pilot = null)
+    DocumentLookupOptions options, TimeProvider time, Email.Pilot.EmailPilotLookupAccess? pilot = null,
+    Email.Pilot.EmailPilotCloseoutLookup? closeout = null)
 {
     internal ProductionCompletionReadAdmission? HoldAdmission {get;init;}
-    internal bool RequiresCohortExclusion => pilot is not null;
-    internal Task<Email.Pilot.EmailPilotLookupTokenScope> RestrictionAsync(DocumentLookupIdentity identity, CancellationToken ct) => pilot is null
-        ? Task.FromResult(new Email.Pilot.EmailPilotLookupTokenScope(false, true)) : pilot.TokenAsync(identity.TokenId, identity.Email, ct);
+    internal bool RequiresCohortExclusion => pilot is not null || closeout is not null;
+    internal Task<Email.Pilot.EmailPilotLookupTokenScope> RestrictionAsync(DocumentLookupIdentity identity, CancellationToken ct) =>
+        RestrictionCoreAsync(identity.TokenId,identity.Email,ct);
+    private async Task<Email.Pilot.EmailPilotLookupTokenScope> RestrictionCoreAsync(Guid token,string email,CancellationToken ct)
+    {
+        if(closeout is not null && await closeout.TokenAsync(token,email,ct) is {Known:true} c)
+            return new(true,c.Allowed,CloseoutRecord:c.RecordId,CloseoutRequest:c.RequestId,CloseoutUntil:c.Until,CloseoutIssuedAt:c.IssuedAt);
+        return pilot is null?new(false,true):await pilot.TokenAsync(token,email,ct);
+    }
+    private bool RestrictionLive(Email.Pilot.EmailPilotLookupTokenScope? r)=>r is null || !r.IsPilot ||
+        (r.CloseoutUntil is {} until? r.Allowed && until>time.GetUtcNow():r.Manifest is {} m && pilot?.Live(m)==true);
+    private static bool TokenShape(AuthToken? token,Email.Pilot.EmailPilotLookupTokenScope? r)=>Shape(token) ||
+        r is {Allowed:true,CloseoutRequest:{} request,CloseoutRecord:not null} && Shape(token,request) &&
+        token!.EmailPilotLookupRequestId is null && token.SignerContactRevisionId is null;
 
     internal async Task<DocumentLookupLink> IssuePilotAsync(Email.Pilot.EmailPilotLookupWorkScope scope, CancellationToken ct)
     {
@@ -75,24 +87,30 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
         {
             await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
             await using var tx = await db.Database.BeginTransactionAsync(ct);
-            var restriction = pilot is null ? null : await pilot.TokenLockedAsync(link.TokenId, link.Email, ct);
+            var restriction = await RestrictionCoreAsync(link.TokenId,link.Email,ct);
             if (restriction is { IsPilot: true, Allowed: false }) return null;
             var token = await db.AuthTokens.FromSqlInterpolated($"SELECT * FROM [AuthTokens] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={link.TokenId}")
                 .AsNoTracking().SingleOrDefaultAsync(ct);
             var hash = Signing.SignerInvitationFactory.TokenHash(link.RawToken)!;
-            if (!Shape(token) || token!.EmailPilotLookupRequestId is not null && restriction?.IsPilot != true || token!.UsedAt is not null || token.ExpiresAt != link.ExpiresAt || Convert.ToBase64String(token.RowVersion) != link.TokenRevision ||
+            if (!TokenShape(token,restriction) || restriction.CloseoutIssuedAt is {} issuedAt && link.IssuedAt!=issuedAt ||
+                token!.EmailPilotLookupRequestId is not null && restriction?.IsPilot != true || token!.UsedAt is not null || token.ExpiresAt != link.ExpiresAt || Convert.ToBase64String(token.RowVersion) != link.TokenRevision ||
                 !CryptographicOperations.FixedTimeEquals(token.TokenSha256, hash) || link.ExpiresAt <= time.GetUtcNow()) return null;
             var now = time.GetUtcNow();
             if (await db.AuthTokens.Where(x => x.Id == token.Id && x.UsedAt == null).ExecuteUpdateAsync(s => s.SetProperty(x => x.UsedAt, now), ct) != 1) return null;
             var revision = await db.AuthTokens.AsNoTracking().Where(x => x.Id == token.Id).Select(x => x.RowVersion).SingleAsync(ct);
-            var until = new[] { now.AddMinutes(options.SessionMinutes), restriction?.Request?.ExpiresAt ?? DateTimeOffset.MaxValue,
+            var until = new[] { now.AddMinutes(options.SessionMinutes), restriction?.Deadline ?? DateTimeOffset.MaxValue,
                 restriction?.Manifest?.ExpiresAt ?? DateTimeOffset.MaxValue }.Min();
             var identity = new DocumentLookupIdentity(token.Id, Convert.ToBase64String(revision), Convert.ToHexStringLower(hash), link.Email,
                 Guid.NewGuid(), link.IssuedAt, link.ExpiresAt, now, until);
             var receipt = protection.Session(identity);
             // Unknown acknowledgement returns no session. Never silently replay a consumed link.
             await tx.CommitAsync(ct);
-            if (restriction?.Manifest is { } manifest && !pilot!.Live(manifest)) return null;
+            if(restriction is {CloseoutRecord:not null}) {
+                await tx.DisposeAsync();
+                var fresh=await RestrictionCoreAsync(token.Id,link.Email,ct);
+                if(fresh!=restriction || !fresh.Allowed)return null;
+            }
+            if (!RestrictionLive(restriction)) return null;
             return identity.ExpiresAt > time.GetUtcNow() ? new(identity, receipt) : null;
         }
         catch { db.ChangeTracker.Clear(); throw; }
@@ -112,16 +130,16 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
         var i = protection.Session(receipt);
         if (i is null || !DocumentLookupProtection.Matches(principal, i)) return null;
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(ct), ct);
-        var restriction = pilot is null ? null : await pilot.TokenAsync(i.TokenId, i.Email, ct);
+        var restriction = await RestrictionCoreAsync(i.TokenId,i.Email,ct);
         if (restriction is { IsPilot: true, Allowed: false }) return null;
         var query = locked
             ? db.AuthTokens.FromSqlInterpolated($"SELECT * FROM [AuthTokens] WITH (UPDLOCK,HOLDLOCK) WHERE [Id]={i.TokenId}")
             : db.AuthTokens.Where(x => x.Id == i.TokenId);
         var token = await query.AsNoTracking().SingleOrDefaultAsync(ct);
-        return Shape(token) && (token!.EmailPilotLookupRequestId is null || restriction?.IsPilot == true) && token!.UsedAt == i.RedeemedAt && token.ExpiresAt == i.LinkExpiresAt &&
+        return TokenShape(token,restriction) && (restriction.CloseoutIssuedAt is null || restriction.CloseoutIssuedAt==i.IssuedAt) &&
+            (token!.EmailPilotLookupRequestId is null || restriction?.IsPilot == true) && token!.UsedAt == i.RedeemedAt && token.ExpiresAt == i.LinkExpiresAt &&
             Convert.ToBase64String(token.RowVersion) == i.TokenRevision && Convert.ToHexStringLower(token.TokenSha256) == i.TokenSha256 &&
-            i.ExpiresAt > time.GetUtcNow() && (restriction?.Request is null || i.ExpiresAt <= restriction.Request.ExpiresAt) &&
-            (restriction?.Manifest is null || pilot!.Live(restriction.Manifest)) ? i : null;
+            i.ExpiresAt > time.GetUtcNow() && (restriction?.Deadline is null || i.ExpiresAt <= restriction.Deadline) && RestrictionLive(restriction) ? i : null;
     }
 
     public async Task<DocumentLookupPage?> ListAsync(ClaimsPrincipal principal, string? receipt, string? cursor = null, CancellationToken ct = default)
@@ -135,7 +153,7 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
         var query = db.Envelopes.AsNoTracking().Where(x => x.Status == EnvelopeStatus.Completed && x.CompletedAt <= i.RedeemedAt &&
             (x.PurgeAfter == null || x.PurgeAfter > now) && (x.SenderEmail == i.Email ||
             db.Signers.Any(s => s.EnvelopeId == x.Id && s.Email == i.Email) || db.Recipients.Any(r => r.EnvelopeId == x.Id && r.Email == i.Email)));
-        if (restriction.IsPilot) query = query.Where(x => x.Id == restriction.Request!.SubjectEnvelopeId);
+        if (restriction.IsPilot) query = query.Where(x => x.Id == restriction.SelectedRecord);
         else if (RequiresCohortExclusion) query = query.Where(x => !db.EmailPilotEnrollments.Any(p => p.SubjectEnvelopeId == x.Id));
         if (after is not null) query = query.Where(x => x.CompletedAt > after.CompletedAt || x.CompletedAt == after.CompletedAt && x.PublicId.CompareTo(after.PublicId) > 0);
         var candidates = await query.OrderBy(x => x.CompletedAt).ThenBy(x => x.PublicId).Select(x => new { x.Id, x.PublicId, x.CompletedAt })
@@ -171,8 +189,9 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
             if (await AuthenticateAsync(principal, receipt, ct) is null) return null;
             await tx.CommitAsync(ct);
         }
+        if(restriction.CloseoutRecord is not null && await RestrictionAsync(i,ct)!=restriction)return null;
         if (i.ExpiresAt <= time.GetUtcNow() || restriction.IsPilot &&
-            (restriction.Request!.ExpiresAt <= time.GetUtcNow() || !pilot!.Live(restriction.Manifest!))) return null;
+            (restriction.Deadline <= time.GetUtcNow() || !RestrictionLive(restriction))) return null;
         if(HoldAdmission is not null)foreach(var item in saved)await HoldAdmission.DemandAsync(item.Publication.EnvelopeId,i.ExpiresAt,ct);
         var entries = saved.Select(x => new DocumentLookupEntry(x.Publication.PublicId, x.Publication.Title, x.Publication.CompletedAt,
             Min(x.Publication.PurgeAfter, x.Deadline))).ToArray();
@@ -193,8 +212,8 @@ public sealed class DocumentLookup(QuillSignDbContext db, CompletionAccessState 
         return recipient is not null && (await state.PartyLockedAsync(saved, PartyType.Recipient, recipient, ct))?.Email == email;
     }
     private static DateTimeOffset? Min(DateTimeOffset? a, DateTimeOffset? b) => a is null ? b : b is null || a < b ? a : b;
-    private static bool Shape(AuthToken? t) => t is not null && t.Id != Guid.Empty && t.Purpose == TokenPurpose.Lookup &&
-        t.PartyType == PartyType.System && t.PartyId is null && t.EnvelopeId is null && t.Email == "" && t.Ip is null &&
+    private static bool Shape(AuthToken? t,Guid? closeoutRequest=null) => t is not null && t.Id != Guid.Empty && t.Purpose == TokenPurpose.Lookup &&
+        t.PartyType == PartyType.System && t.PartyId == closeoutRequest && t.EnvelopeId is null && t.Email == "" && t.Ip is null &&
         t.TokenSha256 is { Length: 32 } && t.RowVersion is { Length: 8 } && t.DocumentId is null && t.DocumentSha256 is null &&
         t.DisclosureSha256 is null && t.CompletionPublicationId is null && t.CompletionPartySha256 is null && t.CompletionRecipeSha256 is null;
     private void OwnUnitOfWork()

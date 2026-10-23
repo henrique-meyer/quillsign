@@ -338,7 +338,7 @@ public sealed class EmailPilotLedgerTests(SqlDatabaseFixture fixture) : IClassFi
         await run.Db.Database.ExecuteSqlInterpolatedAsync($"EXEC dbo.RemoveExpiredEmailPilotSecrets @RunId={run.Id}");
         Assert.Equal(1,await run.Db.EmailPilotSecrets.CountAsync(x=>x.RunId==run.Id));
         // Age only this private fixture run; the procedure uses database UTC, not a caller deadline.
-        await run.Db.Database.ExecuteSqlInterpolatedAsync($"UPDATE EmailPilotRuns SET CreatedAt=DATEADD(day,-8,SYSUTCDATETIME()),ExpiresAt=DATEADD(minute,60,DATEADD(day,-8,SYSUTCDATETIME())) WHERE Id={run.Id}");
+        await run.Db.Database.ExecuteSqlInterpolatedAsync($"DECLARE @created datetimeoffset=DATEADD(day,-8,SYSUTCDATETIME()); UPDATE EmailPilotRuns SET CreatedAt=@created,ExpiresAt=DATEADD(minute,60,@created) WHERE Id={run.Id}");
         await run.Db.Database.ExecuteSqlInterpolatedAsync($"UPDATE s SET DeleteAfter=DATEADD(day,7,r.CreatedAt) FROM EmailPilotSecrets s JOIN EmailPilotRuns r ON r.Id=s.RunId WHERE s.RunId={run.Id}");
         await using var command=connection.CreateCommand();command.CommandText="EXECUTE AS USER = 'app_worker'";await command.ExecuteNonQueryAsync();
         try { await run.Db.Database.ExecuteSqlInterpolatedAsync($"EXEC dbo.RemoveExpiredEmailPilotSecrets @RunId={run.Id}"); }

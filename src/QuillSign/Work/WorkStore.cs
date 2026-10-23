@@ -6,7 +6,7 @@ using QuillSign.Lifecycle;
 namespace QuillSign.Work;
 
 public sealed record WorkLease(Guid Id, Guid Owner, WorkKind Kind, int Attempt, DateTimeOffset Until);
-public sealed record WorkClaim(WorkLease? Lease, DateTimeOffset? RetryAt, bool Terminal);
+public sealed record WorkClaim(WorkLease? Lease, DateTimeOffset? RetryAt, bool Terminal,bool PrivateHandoff=false,bool PrivateRefused=false);
 public enum WorkOutcome { Completed, Retry, Failed, Ambiguous }
 public sealed record WorkResult(WorkOutcome Outcome, string? Code = null);
 
@@ -16,12 +16,12 @@ public interface IWorkHandler
     Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken cancellationToken);
 }
 
-public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimeProvider time)
+public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimeProvider time, Email.Pilot.EmailPilotCloseout? closeout=null)
 {
     internal IProductionDeletionWorkAdmission? DeletionAdmission {get;init;}
     private readonly IProductionWorkAdmission? admission;
-    internal WorkStore(QuillSignDbContext db, WorkOptions options, TimeProvider time, IProductionWorkAdmission admission)
-        : this(db, options, time) => this.admission = admission;
+    internal WorkStore(QuillSignDbContext db, WorkOptions options, TimeProvider time, IProductionWorkAdmission admission, Email.Pilot.EmailPilotCloseout? closeout=null)
+        : this(db, options, time, closeout) => this.admission = admission;
 
     public async Task<WorkClaim> ClaimAsync(Guid id, CancellationToken cancellationToken)
     {
@@ -29,10 +29,15 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         await SqlResume.RunAsync(() => db.Database.OpenConnectionAsync(cancellationToken), cancellationToken);
         var selectedKind=await db.WorkItems.AsNoTracking().Where(x=>x.Id==id).Select(x=>(WorkKind?)x.Kind).SingleOrDefaultAsync(cancellationToken);
         if(selectedKind==WorkKind.ProductionPurge)return await Deletion().ClaimAsync(db,id,cancellationToken);
+        if(closeout?.HandoffHost==true&&await ReadPrivateHandoffAsync(id,cancellationToken) is {} handoff)return handoff;
+        Email.Pilot.EmailPilotCloseout.NullLookupFact? nullLookup=null;
+        if(admission is not null&&closeout is not null&&selectedKind==WorkKind.Email&&(await db.WorkItems.AsNoTracking().AnyAsync(x=>x.Id==id&&x.EnvelopeId==null,cancellationToken)||await db.EmailPilotCloseoutOperations.AsNoTracking().AnyAsync(x=>x.WorkId==id&&x.Kind==0&&x.Step==(int)Email.Pilot.EmailPilotCloseoutStep.Lookup,cancellationToken)))
+            nullLookup=await closeout.ReadNullLookupAsync(id,null,cancellationToken);
+        var effectiveAdmission=nullLookup is null?admission:null;
         var now = time.GetUtcNow();
         Guid? expectedRecord = null; WorkKind? expectedKind = null; string? expectedRow = null; var expectedAttempt = 0; var owner = Guid.NewGuid();
         DateTimeOffset? originalCompletionMailUntil=null;
-        if (admission is not null)
+        if (effectiveAdmission is not null)
         {
             // Read-only preflight before taking the worker row lock. Holding that
             // lock while draining another operation could deadlock preservation.
@@ -55,22 +60,22 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
             expectedRow = JsonSerializer.Serialize(candidate);
             expectedAttempt = candidate.Attempts == int.MaxValue ? int.MaxValue : candidate.Attempts + 1;
             try {
-                originalCompletionMailUntil=await admission.ReserveCompletionMailAsync(id,expectedRecord,candidate.Kind,owner,expectedAttempt,
+                originalCompletionMailUntil=await effectiveAdmission.ReserveCompletionMailAsync(id,expectedRecord,candidate.Kind,owner,expectedAttempt,
                     time.GetUtcNow().AddSeconds(options.LeaseSeconds),cancellationToken);
                 if(originalCompletionMailUntil is null)
-                    await admission.ReserveAsync(id, expectedRecord, candidate.Kind, owner, expectedAttempt, cancellationToken);
+                    await effectiveAdmission.ReserveAsync(id, expectedRecord, candidate.Kind, owner, expectedAttempt, cancellationToken);
             }
             catch (ProductionWorkBlockedException) { return new(null, time.GetUtcNow().AddMinutes(15), false); }
             now = time.GetUtcNow();
         }
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        if (admission is not null)
+        if (effectiveAdmission is not null)
         {
             // Match inventory/hold lock ordering: parent, then work. Demand uses
             // this same transaction rather than waiting on its own parent lock.
             _ = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {expectedRecord}")
                 .AsNoTracking().SingleOrDefaultAsync(cancellationToken) ?? throw new ProductionWorkBlockedException();
-            await admission.DemandLockedAsync(db, id, expectedRecord, expectedKind!.Value, owner, expectedAttempt, true, cancellationToken);
+            await effectiveAdmission.DemandLockedAsync(db, id, expectedRecord, expectedKind!.Value, owner, expectedAttempt, true, cancellationToken);
             now = time.GetUtcNow();
         }
         // UPDLOCK/HOLDLOCK also disables snapshot reads for this key. An insert which
@@ -80,7 +85,7 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         // A kind change after the read-only routing probe cannot enter ordinary
         // retry/lease mutation while this unrelated parent transaction is held.
         if(row?.Kind==WorkKind.ProductionPurge)throw new InvalidOperationException("Production deletion requires its dedicated work admission.");
-        if (admission is not null)
+        if (effectiveAdmission is not null)
         {
             // A changed/missing candidate is not proof that our reservation had
             // no effect. Keep it pending for explicit reconciliation.
@@ -90,6 +95,20 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         }
         if (row is null || row.Status is WorkStatus.Completed or WorkStatus.Failed)
             return new(null, null, true);
+        if(nullLookup is not null) {
+            var current=await closeout!.ReadNullLookupLockedAsync(db,id,null,cancellationToken)??throw new ProductionWorkBlockedException();
+            if(current.Configuration!=nullLookup.Configuration||current.RecordId!=nullLookup.RecordId)throw new ProductionWorkBlockedException();
+            current.DemandLocked(db);await admission!.DemandCloseoutDemoLockedAsync(db,current.RecordId,cancellationToken);
+        }
+        if(closeout is not null&&closeout.HandoffHost) {
+            try {
+                if(await Email.Pilot.EmailPilotCloseout.RecognizesWorkAsync(db,row.Id,cancellationToken))return await closeout.HandoffLockedAsync(db,row.Id,cancellationToken)?new(null,null,false,true):new(null,null,false,false,true);
+                await closeout.DemandClaimLockedAsync(db,row,cancellationToken);
+            }catch(Exception e)when(e is InvalidDataException or InvalidOperationException or System.Security.Cryptography.CryptographicException or System.Text.Json.JsonException or ArgumentException){return new(null,null,false,false,true);}
+        }
+        else if(closeout is not null)await closeout.DemandClaimLockedAsync(db,row,cancellationToken);
+        else if(await Email.Pilot.EmailPilotCloseout.RecognizesWorkAsync(db,row.Id,cancellationToken))
+            throw new InvalidDataException("Known closeout work requires its dedicated admission.");
         if (row.AvailableAt > now) return new(null, row.AvailableAt, false);
         if (row.Status == WorkStatus.Leased && row.LeaseExpiresAt > now) return new(null, row.LeaseExpiresAt, false);
         if (row.Kind == WorkKind.Email)
@@ -118,25 +137,26 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
             return new(null, null, true);
         }
         ProductionWorkCompletionClaim? completionClaim=null;
-        if(admission is not null&&row.Kind==WorkKind.Sealing)
+        if(effectiveAdmission is not null&&row.Kind==WorkKind.Sealing)
         {
             var expectedClaim=JsonSerializer.Deserialize<WorkItem>(JsonSerializer.Serialize(row))??throw new ProductionWorkBlockedException();
             expectedClaim.Status=WorkStatus.Leased;expectedClaim.Attempts=row.Attempts+1;expectedClaim.LeaseOwner=owner;
             expectedClaim.LeaseExpiresAt=now.AddSeconds(options.LeaseSeconds);
-            completionClaim=await admission.BeginCompletionClaimLockedAsync(db,expectedClaim,cancellationToken);
+            completionClaim=await effectiveAdmission.BeginCompletionClaimLockedAsync(db,expectedClaim,cancellationToken);
         }
         row.Status = WorkStatus.Leased;
         row.Attempts=row.Kind==WorkKind.Purge && row.Attempts==int.MaxValue ? int.MaxValue : row.Attempts+1;
         row.LeaseOwner = owner;
         if(originalCompletionMailUntil<=now)throw new ProductionWorkBlockedException();
         row.LeaseExpiresAt = originalCompletionMailUntil??now.AddSeconds(options.LeaseSeconds);
+        if(closeout?.PassHost==true){if(!closeout.CanSend)throw new InvalidDataException("Private dispatch admission expired.");row.LeaseExpiresAt=new[]{row.LeaseExpiresAt.Value,closeout.HostOptions.Until}.Min();}
         await db.SaveChangesAsync(cancellationToken);
-        if(completionClaim is not null)await admission!.PrepareCompletionClaimExpectedLockedAsync(db,completionClaim,cancellationToken);
+        if(completionClaim is not null)await effectiveAdmission!.PrepareCompletionClaimExpectedLockedAsync(db,completionClaim,cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         if(completionClaim is not null)
         {
             await transaction.DisposeAsync();
-            await admission!.AcknowledgeCompletionClaimAsync(completionClaim,cancellationToken);
+            await effectiveAdmission!.AcknowledgeCompletionClaimAsync(completionClaim,cancellationToken);
         }
         return new(new(row.Id, row.LeaseOwner.Value, row.Kind, row.Attempts, row.LeaseExpiresAt.Value), null, false);
     }
@@ -146,33 +166,42 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
     public async Task<DateTimeOffset?> FinishAsync(WorkLease lease, WorkResult result, CancellationToken cancellationToken)
     {
         if(lease.Kind==WorkKind.ProductionPurge)return await Deletion().FinishAsync(db,lease,result,cancellationToken);
+        var nullLookup=admission is not null&&closeout is not null&&lease.Kind==WorkKind.Email&&(await db.WorkItems.AsNoTracking().AnyAsync(x=>x.Id==lease.Id&&x.EnvelopeId==null,cancellationToken)||await db.EmailPilotCloseoutOperations.AsNoTracking().AnyAsync(x=>x.WorkId==lease.Id&&x.Kind==0&&x.Step==(int)Email.Pilot.EmailPilotCloseoutStep.Lookup,cancellationToken))
+            ?await closeout.ReadNullLookupAsync(lease.Id,lease,cancellationToken):null;
+        var effectiveAdmission=nullLookup is null?admission:null;
         Guid? recordId = null;
-        if (admission is not null)
+        if (effectiveAdmission is not null)
         {
             recordId = await db.WorkItems.AsNoTracking().Where(x => x.Id == lease.Id).Select(x => x.EnvelopeId).SingleAsync(cancellationToken);
             if (result.Outcome != WorkOutcome.Completed)
-                await admission.DemandAsync(lease.Id, recordId, lease.Kind, lease.Owner, lease.Attempt, cancellationToken);
+                await effectiveAdmission.DemandAsync(lease.Id, recordId, lease.Kind, lease.Owner, lease.Attempt, cancellationToken);
         }
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        if (admission is not null)
+        if(nullLookup is not null) {
+            var current=await closeout!.ReadNullLookupLockedAsync(db,lease.Id,lease,cancellationToken)??throw new ProductionWorkBlockedException();
+            if(current.Configuration!=nullLookup.Configuration||current.RecordId!=nullLookup.RecordId)throw new ProductionWorkBlockedException();
+            current.DemandLocked(db);await admission!.DemandCloseoutDemoLockedAsync(db,current.RecordId,cancellationToken);
+            if(result.Outcome==WorkOutcome.Completed&&!await db.EmailOutbox.AnyAsync(x=>x.Id==lease.Id&&x.Status==EmailStatus.Sent&&x.Attempts==1&&x.SubmissionStartedAt!=null,cancellationToken))throw new ProductionWorkBlockedException();
+        }
+        if (effectiveAdmission is not null)
         {
             _ = await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH (UPDLOCK, HOLDLOCK) WHERE [Id] = {recordId}")
                 .AsNoTracking().SingleOrDefaultAsync(cancellationToken) ?? throw new ProductionWorkBlockedException();
             if (result.Outcome == WorkOutcome.Completed)
-                await admission.DemandHandlerOutcomeLockedAsync(db, lease, recordId, cancellationToken);
-            else await admission.DemandLockedAsync(db, lease.Id, recordId, lease.Kind, lease.Owner, lease.Attempt, false, cancellationToken);
+                await effectiveAdmission.DemandHandlerOutcomeLockedAsync(db, lease, recordId, cancellationToken);
+            else await effectiveAdmission.DemandLockedAsync(db, lease.Id, recordId, lease.Kind, lease.Owner, lease.Attempt, false, cancellationToken);
         }
         var now = time.GetUtcNow();
         var retry = result.Outcome == WorkOutcome.Retry && (lease.Kind==WorkKind.Purge || lease.Attempt < options.MaximumAttempts);
         var status = retry ? WorkStatus.Queued : result.Outcome == WorkOutcome.Completed ? WorkStatus.Completed : WorkStatus.Failed;
         var at = retry ? now + Backoff(lease.Attempt) : now;
         var code = result.Outcome == WorkOutcome.Retry && !retry ? "attempts-exhausted" : result.Code;
-        if(admission is not null&&lease.Kind==WorkKind.Sealing&&result.Outcome==WorkOutcome.Completed)
+        if(effectiveAdmission is not null&&lease.Kind==WorkKind.Sealing&&result.Outcome==WorkOutcome.Completed)
         {
             var original=await db.WorkItems.AsNoTracking().SingleAsync(x=>x.Id==lease.Id,cancellationToken);
             var completed=JsonSerializer.Deserialize<WorkItem>(JsonSerializer.Serialize(original))??throw new ProductionWorkBlockedException();
             completed.Status=status;completed.AvailableAt=at;completed.LastError=code;completed.LeaseOwner=null;completed.LeaseExpiresAt=null;
-            await admission.PrepareCompletionFinishLockedAsync(db,lease,recordId,completed,cancellationToken);
+            await effectiveAdmission.PrepareCompletionFinishLockedAsync(db,lease,recordId,completed,cancellationToken);
         }
         var changed = await db.WorkItems.Where(x => x.Id == lease.Id && x.Kind == lease.Kind && x.Attempts == lease.Attempt &&
                 x.Status == WorkStatus.Leased && x.LeaseOwner == lease.Owner && x.LeaseExpiresAt == lease.Until && x.LeaseExpiresAt > now)
@@ -182,14 +211,14 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
         if (lease.Kind == WorkKind.Email && status == WorkStatus.Failed)
             await db.EmailOutbox.Where(x => x.Id == lease.Id && x.Status == EmailStatus.Queued)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Status, EmailStatus.Failed).SetProperty(x => x.LastError, code), cancellationToken);
-        if (admission is not null && result.Outcome == WorkOutcome.Completed)
+        if (effectiveAdmission is not null && result.Outcome == WorkOutcome.Completed)
         {
-            await admission.PrepareOutcomeLockedAsync(db, lease, recordId, cancellationToken);
+            await effectiveAdmission.PrepareOutcomeLockedAsync(db, lease, recordId, cancellationToken);
             if (lease.Until <= time.GetUtcNow()) throw new InvalidOperationException("Work lease is no longer owned.");
         }
         await transaction.CommitAsync(cancellationToken);
-        if (admission is not null && result.Outcome == WorkOutcome.Completed)
-            await admission.CompleteAsync(lease, recordId, cancellationToken);
+        if (effectiveAdmission is not null && result.Outcome == WorkOutcome.Completed)
+            await effectiveAdmission.CompleteAsync(lease, recordId, cancellationToken);
         return retry ? at : null;
     }
 
@@ -198,5 +227,16 @@ public sealed class WorkStore(QuillSignDbContext db, WorkOptions options, TimePr
     internal Task ReconcileCompletedAsync(WorkLease lease, Guid recordId, CancellationToken ct = default)
         =>lease.Kind==WorkKind.ProductionPurge?Deletion().ReconcileCompletedAsync(lease,recordId,ct):
             admission?.CompleteAsync(lease, recordId, ct) ?? throw new InvalidOperationException("Record admission is not configured.");
+    private async Task<WorkClaim?> ReadPrivateHandoffAsync(Guid id,CancellationToken ct)
+    {
+        await using var tx=await db.Database.BeginTransactionAsync(ct);
+        var row=await db.WorkItems.FromSqlInterpolated($"SELECT * FROM [WorkItems] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleOrDefaultAsync(ct);
+        if(row?.Kind==WorkKind.ProductionPurge)throw new InvalidOperationException("Production deletion requires its dedicated work admission.");
+        if(row is null||row.Status is WorkStatus.Completed or WorkStatus.Failed)return null;
+        try {
+            if(!await Email.Pilot.EmailPilotCloseout.RecognizesWorkAsync(db,id,ct))return null;
+            return await closeout!.HandoffLockedAsync(db,id,ct)?new(null,null,false,true):new(null,null,false,false,true);
+        }catch(Exception error)when(error is InvalidDataException or InvalidOperationException or System.Security.Cryptography.CryptographicException or JsonException or ArgumentException){return new(null,null,false,false,true);}
+    }
     private IProductionDeletionWorkAdmission Deletion()=>DeletionAdmission??throw new InvalidOperationException("Production deletion work admission is not configured.");
 }

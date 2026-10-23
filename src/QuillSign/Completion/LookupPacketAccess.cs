@@ -35,7 +35,7 @@ public sealed class LookupPacketAccess(QuillSignDbContext db, DocumentLookup loo
         var query = db.Envelopes.AsNoTracking().Where(x => x.PublicId == publicId && x.Status == EnvelopeStatus.Completed &&
             x.CompletedAt <= identity.RedeemedAt && (x.PurgeAfter == null || x.PurgeAfter > now) && (x.SenderEmail == identity.Email ||
             db.Signers.Any(s => s.EnvelopeId == x.Id && s.Email == identity.Email) || db.Recipients.Any(r => r.EnvelopeId == x.Id && r.Email == identity.Email)));
-        if (restriction.IsPilot) query = query.Where(x => x.Id == restriction.Request!.SubjectEnvelopeId);
+        if (restriction.IsPilot) query = query.Where(x => x.Id == restriction.SelectedRecord);
         else if (lookup.RequiresCohortExclusion) query = query.Where(x => !db.EmailPilotEnrollments.Any(p => p.SubjectEnvelopeId == x.Id));
         var id = await query.Select(x => (Guid?)x.Id).SingleOrDefaultAsync(ct);
         if (id is null) return null;

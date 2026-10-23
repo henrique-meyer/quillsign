@@ -41,7 +41,8 @@ public sealed class WorkProcessor(WorkStore store, IWorkSignals signals, IEnumer
             await signals.DeferAsync(delivery, delay, cancellationToken);
             return true;
         }
-        if (claim.Terminal)
+        if(claim.PrivateRefused){var delay=TimeSpan.FromMinutes(15);await signals.PutHintAsync(id,time.GetUtcNow()+delay,cancellationToken);await signals.DeferAsync(delivery,delay,cancellationToken);return true;}
+        if (claim.Terminal || claim.PrivateHandoff)
         {
             await signals.RemoveHintAsync(id, cancellationToken);
             await signals.AcknowledgeAsync(delivery, cancellationToken);

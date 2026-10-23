@@ -16,7 +16,7 @@ public sealed class DeclinePayloadProtection(IDataProtectionProvider provider)
         JsonSerializer.Deserialize<ProtectedWorkPayload>(value)?.Protected ?? throw new JsonException())) ?? throw new JsonException();
 }
 public sealed class DeclineNotificationWriter(QuillSignDbContext db,Func<IWorkSignals> signals,WorkOptions options,
-    DeclinePayloadProtection protection,TimeProvider time)
+    DeclinePayloadProtection protection,TimeProvider time,Email.Pilot.EmailPilotCloseout? closeout=null)
 {
     public async Task<Guid> PrepareAsync(SignerReadContext context,string? reason,CancellationToken ct)
     {
@@ -25,6 +25,7 @@ public sealed class DeclineNotificationWriter(QuillSignDbContext db,Func<IWorkSi
             PayloadJson = protection.Protect(new(context.Title,context.SignerName,context.Identity.Email,reason)),AvailableAt = time.GetUtcNow() };
         db.EmailOutbox.Add(email); db.WorkItems.Add(new WorkItem { Id = email.Id,EnvelopeId = email.EnvelopeId,Kind = WorkKind.Email,AvailableAt = email.AvailableAt });
         await db.SaveChangesAsync(ct);
+        if(closeout is not null)await closeout.BindDeclineWorkLockedAsync(db,context.Identity.EnvelopeId,Email.Pilot.EmailPilotCloseoutStep.DeclineNotice,email.Id,ct);
         // Disabled delivery never prevents declining. Persisted work remains for an explicit recovery run.
         if (options.Enabled) await signals().PutHintAsync(email.Id,email.AvailableAt,ct);
         return email.Id;

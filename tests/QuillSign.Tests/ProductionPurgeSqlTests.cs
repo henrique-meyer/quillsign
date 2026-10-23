@@ -24,7 +24,7 @@ public sealed class ProductionPurgeSqlTests(SqlDatabaseFixture fixture):IClassFi
     [Fact]
     public async Task Only_explicit_worker_execute_can_remove_owned_dependencies_and_preserve_globals_and_detached_work()
     {
-        var f=await Seed();await Provision();
+        var f=await Seed();await Provision();var unrelated=await CloseoutAssociation(f.Neighbor,Guid.NewGuid());
         foreach(var user in new[]{"app_runtime","app_worker"})
         {
             await using var db=fixture.Open();await db.Database.OpenConnectionAsync();
@@ -54,6 +54,8 @@ public sealed class ProductionPurgeSqlTests(SqlDatabaseFixture fixture):IClassFi
             Assert.Equal(f.Lease.Attempt,work.Attempts);Assert.Equal(Payload(f.Id,f.Deletion),work.PayloadJson);
             Assert.True(await db.Envelopes.AnyAsync(x=>x.Id==f.Neighbor));Assert.True(await db.EmailOutbox.AnyAsync(x=>x.Id==f.GlobalMail&&x.EnvelopeId==null));
             Assert.True(await db.ProductionOperatorAccessReceipts.AnyAsync(x=>x.Id==f.OperatorReceipt));
+            Assert.True(await db.EmailPilotCloseouts.AnyAsync(x=>x.Id==unrelated.Header));
+            Assert.True(await db.EmailPilotCloseoutOperations.AnyAsync(x=>x.Id==unrelated.Operation&&x.SubjectEnvelopeId==f.Neighbor));
             Assert.True(await db.Suppressions.AnyAsync(x=>x.Email==f.GlobalAddress));
             await using var tx=await db.Database.BeginTransactionAsync();Assert.False(await Call(db,f));await tx.RollbackAsync();
         }
@@ -103,17 +105,24 @@ public sealed class ProductionPurgeSqlTests(SqlDatabaseFixture fixture):IClassFi
         }
     }
     [Fact]
-    public async Task Future_closeout_direct_subject_association_refuses_without_deleting_global_receipts()
+    public async Task Closeout_direct_subject_association_refuses_without_deleting_global_receipts()
     {
-        var f=await Seed();await using var db=fixture.Open();
-        await db.Database.ExecuteSqlRawAsync("CREATE TABLE dbo.EmailPilotCloseoutOperations(SubjectEnvelopeId uniqueidentifier NOT NULL)");
-        try
-        {
-            await db.Database.ExecuteSqlInterpolatedAsync($"INSERT dbo.EmailPilotCloseoutOperations(SubjectEnvelopeId) VALUES({f.Id})");
-            await using var tx=await db.Database.BeginTransactionAsync();var e=await Assert.ThrowsAsync<SqlException>(()=>Call(db,f));Assert.Equal(50001,e.Number);
-            await tx.RollbackAsync();Assert.True(await db.Envelopes.AnyAsync(x=>x.Id==f.Id));
-        }
-        finally{await db.Database.ExecuteSqlRawAsync("DROP TABLE dbo.EmailPilotCloseoutOperations");}
+        var f=await Seed();var linked=await CloseoutAssociation(f.Id,f.Lease.Id);await using var db=fixture.Open();
+        await using var tx=await db.Database.BeginTransactionAsync();var e=await Assert.ThrowsAsync<SqlException>(()=>Call(db,f));
+        Assert.Equal(50001,e.Number);Assert.Contains("A closeout association prevents production deletion.",e.Message);
+        await tx.RollbackAsync();Assert.True(await db.Envelopes.AnyAsync(x=>x.Id==f.Id));
+        Assert.True(await db.EmailPilotCloseouts.AnyAsync(x=>x.Id==linked.Header));
+        Assert.True(await db.EmailPilotCloseoutOperations.AnyAsync(x=>x.Id==linked.Operation&&x.SubjectEnvelopeId==f.Id));
+    }
+    private async Task<(Guid Header,Guid Operation)> CloseoutAssociation(Guid record,Guid work)
+    {
+        await using var db=fixture.Open();var now=DateTimeOffset.UtcNow;
+        var header=new EmailPilotCloseoutHeaderRecord{Id=Guid.NewGuid(),CreatedAt=now,Until=now.AddMinutes(30),DeleteAfter=now.AddDays(1),
+            CapabilitySha256=new byte[32],ManifestSha256=new byte[32],ProtectedManifest="synthetic-global-closeout"};
+        db.Add(header);await db.SaveChangesAsync();
+        var operation=new EmailPilotCloseoutOperationRecord{Id=Guid.NewGuid(),CloseoutId=header.Id,Kind=0,Step=6,SubjectEnvelopeId=record,
+            WorkId=work,At=now,RequestSha256=new byte[32],ProtectedReceipt="synthetic-global-closeout-receipt"};
+        db.Add(operation);await db.SaveChangesAsync();return(header.Id,operation.Id);
     }
     private sealed record State(Guid Id,Guid Deletion,WorkLease Lease,byte[] Version,string Policy,DateTimeOffset Eligible,
         SortedDictionary<string,long> Counts,Guid Mail,Guid Neighbor,Guid GlobalMail,Guid OperatorReceipt,string GlobalAddress,long Revision=0,string? Fence=null);

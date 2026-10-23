@@ -29,6 +29,8 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
     public DbSet<SignerContactRevisionRecord> SignerContactRevisions => Set<SignerContactRevisionRecord>();
     public DbSet<SignerContactSession> SignerContactSessions => Set<SignerContactSession>();
     public DbSet<EmailPilotRunRecord> EmailPilotRuns => Set<EmailPilotRunRecord>();
+    public DbSet<EmailPilotCloseoutHeaderRecord> EmailPilotCloseouts => Set<EmailPilotCloseoutHeaderRecord>();
+    public DbSet<EmailPilotCloseoutOperationRecord> EmailPilotCloseoutOperations => Set<EmailPilotCloseoutOperationRecord>();
     public DbSet<EmailPilotSecretRecord> EmailPilotSecrets => Set<EmailPilotSecretRecord>();
     public DbSet<EmailPilotEnrollmentRecord> EmailPilotEnrollments => Set<EmailPilotEnrollmentRecord>();
     public DbSet<EmailPilotReservationRecord> EmailPilotReservations => Set<EmailPilotReservationRecord>();
@@ -240,6 +242,7 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
             }
         }
         EmailPilotModel.Configure(model);
+        EmailPilotCloseoutModel.Configure(model);
         EmailPilotLookupModel.Configure(model);
         ProductionRetentionModel.Configure(model);
         ProductionHoldRequestModel.Configure(model);
@@ -254,6 +257,9 @@ public sealed class QuillSignDbContext(DbContextOptions<QuillSignDbContext> opti
         if (ChangeTracker.Entries<ProductionRetentionPolicyRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<ProductionRetentionTerminalRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Production retention provenance is immutable. Migration and deletion require their separate privileged paths.");
+        if (ChangeTracker.Entries<EmailPilotCloseoutHeaderRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
+            ChangeTracker.Entries<EmailPilotCloseoutOperationRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Closeout authorization and consumed accounting are immutable. Secret erasure requires its privileged path.");
         if (ChangeTracker.Entries<EmailPilotRunRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<EmailPilotSecretRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||
             ChangeTracker.Entries<EmailPilotEnrollmentRecord>().Any(x => x.State is EntityState.Modified or EntityState.Deleted) ||

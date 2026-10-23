@@ -35,7 +35,9 @@ try {
         $env:ConnectionStrings__Database = $connection.ConnectionString
         dotnet tool restore
         if ($LASTEXITCODE -ne 0) { throw 'EF tool restore failed.' }
-        dotnet ef database update --project src/QuillSign/QuillSign.csproj
+        [string[]]$migrationBuildArguments = @()
+        if ($NoBuild) { $migrationBuildArguments = @('--configuration', 'Release', '--no-build') }
+        dotnet ef database update --project src/QuillSign/QuillSign.csproj @migrationBuildArguments
     } else {
         $env:QUILLSIGN_TEST_DATABASE = $connection.ConnectionString
         # Azure's connection format is not ADO.NET's (which would quote the base64 key).

@@ -15,6 +15,7 @@ public static class WorkCommands
     {
         var productionDeletionBatch=args.Length is 1 or 2&&args[0]=="recover-production-deletions";
         var productionDeletion=args.Length==2&&args[0] is "prepare-production-deletion" or "recover-production-deletion"&&Guid.TryParseExact(args[1],"N",out _);
+        var closeoutPass=args.Length==1&&args[0]=="closeout-pass";
         var republish = args.Length == 2 && args[0] == "publish-notification" && Guid.TryParseExact(args[1],"N",out _);
         var completion=args.Length==2 && args[0]=="resume-completion-notifications" && Guid.TryParseExact(args[1],"N",out _);
         var voids=args.Length==2 && args[0]=="resume-void-notifications" && Guid.TryParseExact(args[1],"N",out _);
@@ -26,12 +27,14 @@ public static class WorkCommands
         if(purgeRecovery && args.Length==2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out purgeBatch) || purgeBatch is <1 or >32))purgeRecovery=false;
         var batch=32;
         if(expiry && args.Length>=2 && (!int.TryParse(args[1],System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out batch) || batch is <1 or >64))expiry=false;
-        if (!productionDeletionBatch && !productionDeletion && !lookupRetention && !republish && !completion && !voids && !expiry && !scheduleExpiry && !schedulePurge && !purgeRecovery && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
+        if (!closeoutPass && !productionDeletionBatch && !productionDeletion && !lookupRetention && !republish && !completion && !voids && !expiry && !scheduleExpiry && !schedulePurge && !purgeRecovery && (args.Length != 1 || args[0] is not ("once" or "recover" or "listen" or "verify")))
         { Console.Error.WriteLine("Usage: work recover-production-deletions [opaque-continuation] OR work prepare-production-deletion|recover-production-deletion <32-character-record-id> OR work once|recover|listen|verify OR work resume-lookup-retention <32-character-request-id> OR work purge-recover [1-32] OR work expire [1-64] [continuation] OR work publish-notification <32-character-item-id> OR work resume-completion-notifications|resume-void-notifications|resume-signing-expiry|resume-demo-purge <32-character-envelope-id>"); return 2; }
         try
         {
             var builder = WebApplication.CreateBuilder();
             var sandboxConversion=new GotenbergOptions();var sandboxMaintenanceRequested=false;var sandboxMaintenanceInvalid=false;
+            var privateOptions=builder.Configuration.GetSection("EmailPilot:Closeout").Get<EmailPilotCloseoutOptions>()??new();privateOptions.Validate();
+            if(closeoutPass?privateOptions.HostRole!=EmailPilotCloseoutHostRole.Pass||!privateOptions.Enabled:privateOptions.HostRole==EmailPilotCloseoutHostRole.Pass)throw new InvalidOperationException("Private-pass configuration requires the closed closeout-pass command.");
             builder.Logging.ClearProviders(); // CLI failures must not expose private payloads/endpoints.
             builder.Services.AddQuillSignWork(builder.Configuration, builder.Environment, registerHandlers: args[0] != "recover" && !purgeRecovery);
             if(purgeRecovery) {
@@ -49,13 +52,14 @@ public static class WorkCommands
                 catch(Exception error) when(error is InvalidOperationException or FormatException)
                 {sandboxMaintenanceRequested=true;sandboxMaintenanceInvalid=true;}
             }
+            else if(args[0]=="recover")builder.Services.AddCloseoutHandoffRecovery(builder.Configuration,builder.Environment);
             else if (args[0] != "recover")
             {
                 builder.Services.AddRazorPages();
                 builder.Services.AddQuillSignDatabase(builder.Configuration);
                 builder.Services.AddQuillSignStorage(builder.Configuration, builder.Environment);
                 builder.Services.AddQuillSignEmail(builder.Configuration, builder.Environment);
-                builder.Services.AddRestrictedEmailPilotRuntime(builder.Configuration);
+                builder.Services.AddRestrictedEmailPilotRuntime(builder.Configuration,privatePass:closeoutPass);
             }
             if (args[0] == "listen" && !builder.Environment.IsDevelopment()) throw new InvalidOperationException("Listen is Development-only.");
             if(args[0]!="recover"&&!purgeRecovery)QuillSign.Lifecycle.ProductionHoldRuntime.AddProductionHoldRuntime(builder.Services,builder.Configuration);
@@ -107,6 +111,7 @@ public static class WorkCommands
                 else await deletion.RecoverAsync(record,timeout.Token);
                 Console.WriteLine("{\"operation\":\"production-deletion-maintenance\",\"status\":\"recorded\"}");return 0;
             }
+            if(closeoutPass){await using var passScope=app.Services.CreateAsyncScope();var result=await passScope.ServiceProvider.GetRequiredService<EmailPilotCloseoutPass>().RunAsync(timeout.Token);Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(result));return result.Refused==0&&result.Ambiguous==0?0:1;}
             var signals = app.Services.GetRequiredService<IWorkSignals>();
             var count = 0;
             if(lookupRetention) {

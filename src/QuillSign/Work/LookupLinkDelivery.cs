@@ -11,11 +11,12 @@ namespace QuillSign.Work;
 public sealed class LookupLinkDelivery(QuillSignDbContext db, LookupDeliveryOptions limits, LookupDeliveryProtection protection,
     DocumentLookupProtection links, Func<DocumentLookup> lookup, Func<LookupEmailTemplate> template, IEmailSender sender,
     EmailOptions emailOptions, WorkOptions workOptions, TimeProvider time, LookupContactRetention retention,
-    EmailPilotLookupAccess? pilot = null, Func<EmailPilotLookupSender>? pilotSender = null)
+    EmailPilotLookupAccess? pilot = null, Func<EmailPilotLookupSender>? pilotSender = null,EmailPilotCloseoutLookup? closeout=null)
 {
     private bool Enabled => emailOptions.Enabled && workOptions.Enabled;
     public async Task<WorkResult> ExecuteAsync(WorkLease lease, CancellationToken ct)
     {
+        if(closeout is not null && await closeout.IsKnownWorkAsync(lease.Id,ct))return await closeout.ExecuteAsync(lease,ct);
         var known = pilot is not null && await pilot.IsKnownWorkAsync(lease.Id, ct);
         var scope = known ? await pilot!.ReadWorkAsync(lease, false, ct) : null;
         if (known && scope is null) return new(WorkOutcome.Failed, "pilot-lookup-unavailable");
@@ -91,6 +92,7 @@ public sealed class LookupLinkDelivery(QuillSignDbContext db, LookupDeliveryOpti
     private async Task<WorkResult?> PolicyAsync(LookupMailPayload p, LookupContactRetentionSnapshot policy, EmailPilotLookupWorkScope? scope, CancellationToken ct)
     {
         limits.Validate();
+        if(p.CloseoutId is not null)return new(WorkOutcome.Failed,"closeout-lookup-unavailable");
         if (p.PilotRunId is not null && (scope is null || p.PilotRunId != scope.Manifest.RunId || p.Id != scope.Request.RequestId ||
             EmailPilotLookupRules.OriginalRequestSha256(p) != scope.Request.RequestSha256)) return new(WorkOutcome.Failed, "pilot-lookup-unavailable");
         if (scope is null ? !Enabled : !pilot!.Live(scope.Manifest) || scope.Until <= time.GetUtcNow())

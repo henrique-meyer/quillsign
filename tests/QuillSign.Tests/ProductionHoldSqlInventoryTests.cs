@@ -43,6 +43,13 @@ public sealed class ProductionHoldSqlInventoryTests(SqlDatabaseFixture fixture) 
             await db.SaveChangesAsync();
             db.Add(new SignerContactSession { SessionId = Guid.NewGuid(), EnvelopeId = id, SignerId = signer.Id, RevisionId = revision.Id,
                 SessionSha256 = SHA256.HashData(Guid.NewGuid().ToByteArray()), CreatedAt = clock.Now, ExpiresAt = clock.Now.AddHours(1) });
+            var closeout = new EmailPilotCloseoutHeaderRecord { Id = Guid.NewGuid(), CreatedAt = clock.Now,
+                Until = clock.Now.AddMinutes(10), DeleteAfter = clock.Now.AddDays(1), CapabilitySha256 = new byte[32],
+                ManifestSha256 = new byte[32], ProtectedManifest = "UnrelatedCloseoutSecretMarker" };
+            db.Add(closeout); await db.SaveChangesAsync();
+            db.Add(new EmailPilotCloseoutOperationRecord { Id = Guid.NewGuid(), CloseoutId = closeout.Id, Kind = 1, Step = 0,
+                SubjectEnvelopeId = other, WorkId = Guid.NewGuid(), At = clock.Now, EncodedBytes = 17,
+                RequestSha256 = new byte[32], ProtectedReceipt = "UnrelatedCloseoutReceiptMarker" });
             await db.SaveChangesAsync();
         }
         var snapshot = await Capture(id, request);
@@ -51,6 +58,7 @@ public sealed class ProductionHoldSqlInventoryTests(SqlDatabaseFixture fixture) 
         Assert.Equal(snapshot.PlaintextBytes, plain.LongLength);
         var json = System.Text.Encoding.UTF8.GetString(plain); Assert.Contains("Owned private payload", json); Assert.Contains("Owned contact history", json);
         Assert.DoesNotContain("UnrelatedGlobalMarker", json); Assert.DoesNotContain("UnrelatedRecordMarker", json);
+        Assert.DoesNotContain("UnrelatedCloseoutSecretMarker", json); Assert.DoesNotContain("UnrelatedCloseoutReceiptMarker", json);
         using var document = JsonDocument.Parse(plain);
         Assert.Equal(id, document.RootElement.GetProperty("RecordId").GetGuid());
         var counts = snapshot.Tables.ToDictionary(x => x.Table, x => x.Rows);
@@ -60,6 +68,16 @@ public sealed class ProductionHoldSqlInventoryTests(SqlDatabaseFixture fixture) 
         Assert.Contains("SignerFinishAcceptances", counts.Keys); Assert.Contains("CompletionPublicationResults", counts.Keys);
         Assert.Contains("CompletionSealOutputs", counts.Keys); Assert.Contains("SignaturePreviews", counts.Keys);
         Assert.DoesNotContain("Suppressions", counts.Keys); Assert.DoesNotContain("EmailPilotSecrets", counts.Keys);
+        Assert.DoesNotContain("EmailPilotCloseouts", counts.Keys); Assert.DoesNotContain("EmailPilotCloseoutOperations", counts.Keys);
+        await using (var unrelated = fixture.Open())
+        {
+            var closeout = await unrelated.EmailPilotCloseouts.SingleAsync(x => x.ProtectedManifest == "UnrelatedCloseoutSecretMarker");
+            unrelated.Add(new EmailPilotCloseoutOperationRecord { Id = Guid.NewGuid(), CloseoutId = closeout.Id, Kind = 1, Step = 1,
+                SubjectEnvelopeId = other, WorkId = Guid.NewGuid(), At = clock.Now, EncodedBytes = 18,
+                RequestSha256 = new byte[32], ProtectedReceipt = "AnotherUnrelatedCloseoutReceipt" });
+            await unrelated.SaveChangesAsync();
+        }
+        Assert.Equal(snapshot.StateSha256, (await Capture(id, request)).StateSha256);
         Assert.Throws<CryptographicException>(() => keys.CreateProtector(ProductionHoldSqlInventory.Version, other.ToString("N")).Unprotect(snapshot.ProtectedPayload));
     }
 
@@ -101,16 +119,31 @@ public sealed class ProductionHoldSqlInventoryTests(SqlDatabaseFixture fixture) 
         await Assert.ThrowsAsync<DocumentConflictException>(() => Capture(other, request));
     }
 
-    [Fact]
-    public async Task An_unexpected_pilot_association_is_not_archived_as_a_normal_production_record()
+    [Theory]
+    [InlineData("enrollment")][InlineData("closeout")]
+    public async Task An_unexpected_pilot_association_is_not_archived_as_a_normal_production_record(string kind)
     {
         var (id, request) = await Held();
         await using (var db = fixture.Open())
         {
-            var run = new EmailPilotRunRecord { Id = Guid.NewGuid(), CreatedAt = clock.Now, ExpiresAt = clock.Now.AddHours(1),
-                ManifestSha256 = new byte[32], CapabilitySha256 = new byte[32] }; db.Add(run); await db.SaveChangesAsync();
-            db.Add(new EmailPilotEnrollmentRecord { SubjectEnvelopeId = id, RunId = run.Id, Scenario = EmailPilotScenario.Completion,
-                EnrolledAt = clock.Now, ProtectedBinding = "synthetic-unexpected-pilot-binding" }); await db.SaveChangesAsync();
+            if (kind == "enrollment")
+            {
+                var run = new EmailPilotRunRecord { Id = Guid.NewGuid(), CreatedAt = clock.Now, ExpiresAt = clock.Now.AddHours(1),
+                    ManifestSha256 = new byte[32], CapabilitySha256 = new byte[32] }; db.Add(run); await db.SaveChangesAsync();
+                db.Add(new EmailPilotEnrollmentRecord { SubjectEnvelopeId = id, RunId = run.Id, Scenario = EmailPilotScenario.Completion,
+                    EnrolledAt = clock.Now, ProtectedBinding = "synthetic-unexpected-pilot-binding" });
+            }
+            else
+            {
+                var closeout = new EmailPilotCloseoutHeaderRecord { Id = Guid.NewGuid(), CreatedAt = clock.Now,
+                    Until = clock.Now.AddMinutes(10), DeleteAfter = clock.Now.AddDays(1), CapabilitySha256 = new byte[32],
+                    ManifestSha256 = new byte[32], ProtectedManifest = "synthetic-unexpected-closeout-binding" };
+                db.Add(closeout); await db.SaveChangesAsync();
+                db.Add(new EmailPilotCloseoutOperationRecord { Id = Guid.NewGuid(), CloseoutId = closeout.Id, Kind = 0, Step = 6,
+                    SubjectEnvelopeId = id, WorkId = Guid.NewGuid(), At = clock.Now, RequestSha256 = new byte[32],
+                    ProtectedReceipt = "synthetic-unexpected-closeout-receipt" });
+            }
+            await db.SaveChangesAsync();
         }
         await Assert.ThrowsAsync<InvalidDataException>(() => Capture(id, request));
     }

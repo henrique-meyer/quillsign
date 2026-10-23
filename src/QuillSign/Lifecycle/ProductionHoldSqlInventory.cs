@@ -27,15 +27,17 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
     private sealed record TableData(string Table, string[] Columns, long Count, string Sha256, JsonElement Rows);
     private static readonly JsonSerializerOptions Json = new() { Converters = { new JsonStringEnumConverter() } };
     private static readonly HashSet<Type> PilotTypes = [typeof(EmailPilotRunRecord), typeof(EmailPilotSecretRecord),
-        typeof(EmailPilotEnrollmentRecord), typeof(EmailPilotReservationRecord), typeof(EmailPilotLookupRequestRecord), typeof(EmailPilotLookupTokenRecord)];
-    private static readonly HashSet<Type> KnownTypes = [typeof(ProductionOperatorAccessReceipt),typeof(Envelope), typeof(Signer), typeof(Recipient), typeof(DocumentField),
+        typeof(EmailPilotEnrollmentRecord), typeof(EmailPilotReservationRecord), typeof(EmailPilotLookupRequestRecord), typeof(EmailPilotLookupTokenRecord),
+        typeof(EmailPilotCloseoutHeaderRecord), typeof(EmailPilotCloseoutOperationRecord)];
+    private static readonly HashSet<Type> KnownTypes = [typeof(ProductionOperatorAccessReceipt), typeof(Envelope), typeof(Signer), typeof(Recipient), typeof(DocumentField),
         typeof(AuthToken), typeof(AuditEvent), typeof(EmailOutbox), typeof(WorkItem), typeof(Suppression), typeof(SignaturePreview),
         typeof(SignerReviewCandidate), typeof(SignerFinishAcceptance), typeof(CompletionCandidate), typeof(CompletionSealOutput),
         typeof(CompletionPublicationIntent), typeof(CompletionPublicationResult), typeof(DocumentRetentionSnapshot),
         typeof(LookupContactRetentionSnapshot), typeof(SignerContactRevisionRecord), typeof(SignerContactSession),
         typeof(ProductionRetentionPolicyRecord), typeof(ProductionRetentionTerminalRecord), typeof(ProductionHoldRequestRecord), typeof(ProductionHoldControlRecord),
         typeof(EmailPilotRunRecord), typeof(EmailPilotSecretRecord), typeof(EmailPilotEnrollmentRecord), typeof(EmailPilotReservationRecord),
-        typeof(EmailPilotLookupRequestRecord), typeof(EmailPilotLookupTokenRecord)];
+        typeof(EmailPilotLookupRequestRecord), typeof(EmailPilotLookupTokenRecord),
+        typeof(EmailPilotCloseoutHeaderRecord), typeof(EmailPilotCloseoutOperationRecord)];
 
     // Private consumers must authenticate persisted bytes rather than trusting the
     // separately stored summary/hash or accepting a caller-supplied table list.
@@ -110,7 +112,8 @@ internal sealed class ProductionHoldSqlInventory(QuillSignDbContext db, IDataPro
         if (retained.Enrollment is null || await db.DocumentRetentionSnapshots.AnyAsync(x => x.EnvelopeId == id, ct) ||
             await db.EmailPilotEnrollments.AnyAsync(x => x.SubjectEnvelopeId == id, ct) ||
             await db.EmailPilotReservations.AnyAsync(x => x.SubjectEnvelopeId == id, ct) ||
-            await db.EmailPilotLookupRequests.AnyAsync(x => x.SubjectEnvelopeId == id, ct)) throw Invalid();
+            await db.EmailPilotLookupRequests.AnyAsync(x => x.SubjectEnvelopeId == id, ct) ||
+            await db.EmailPilotCloseoutOperations.AnyAsync(x => x.SubjectEnvelopeId == id, ct)) throw Invalid();
         var data = new List<TableData>(); long rows = 0, bytes = 0;
         foreach (var entity in entities.OrderBy(x => x.GetTableName(), StringComparer.Ordinal))
         {

@@ -824,6 +824,101 @@ namespace QuillSign.Data.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QuillSign.Data.EmailPilotCloseoutHeaderRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("CapabilitySha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("DeleteAfter")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("ManifestSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<string>("ProtectedManifest")
+                        .HasMaxLength(65536)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset>("Until")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("EmailPilotCloseouts", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailPilotCloseoutHeaderRecord_CapabilitySha256", "[CapabilitySha256] IS NULL OR DATALENGTH([CapabilitySha256]) = 32");
+
+                            t.HasCheckConstraint("CK_EmailPilotCloseoutHeaderRecord_ManifestSha256", "[ManifestSha256] IS NULL OR DATALENGTH([ManifestSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_PilotCloseout_Header", "[Id]<>'00000000-0000-0000-0000-000000000000' AND DATEPART(TZOFFSET,[CreatedAt])=0 AND DATEPART(TZOFFSET,[Until])=0 AND DATEPART(TZOFFSET,[DeleteAfter])=0 AND [Until]>[CreatedAt] AND [Until]<=DATEADD(minute,30,[CreatedAt]) AND [DeleteAfter]>[Until] AND DATALENGTH([CapabilitySha256])=32 AND DATALENGTH([ManifestSha256])=32");
+
+                            t.HasCheckConstraint("CK_PilotCloseout_Secret", "[ProtectedManifest] IS NULL OR DATALENGTH([ProtectedManifest]) BETWEEN 2 AND 131072");
+                        });
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotCloseoutOperationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("CloseoutId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("EncodedBytes")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ProtectedReceipt")
+                        .IsRequired()
+                        .HasMaxLength(8192)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<byte[]>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varbinary(32)");
+
+                    b.Property<int>("Step")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SubjectEnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("WorkId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CloseoutId", "Kind", "Step")
+                        .IsUnique();
+
+                    b.ToTable("EmailPilotCloseoutOperations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_EmailPilotCloseoutOperationRecord_RequestSha256", "[RequestSha256] IS NULL OR DATALENGTH([RequestSha256]) = 32");
+
+                            t.HasCheckConstraint("CK_PilotCloseout_Accounting", "([Kind]=0 AND [Step] BETWEEN 6 AND 9 AND [EncodedBytes]=0) OR ([Kind]=1 AND [EncodedBytes] BETWEEN 1 AND 1048576)");
+
+                            t.HasCheckConstraint("CK_PilotCloseout_Operation", "[Id]<>'00000000-0000-0000-0000-000000000000' AND [WorkId]<>'00000000-0000-0000-0000-000000000000' AND [SubjectEnvelopeId]<>'00000000-0000-0000-0000-000000000000' AND DATEPART(TZOFFSET,[At])=0 AND [Step] BETWEEN 0 AND 9 AND DATALENGTH([RequestSha256])=32 AND DATALENGTH([ProtectedReceipt]) BETWEEN 2 AND 16384");
+                        });
+                });
+
             modelBuilder.Entity("QuillSign.Data.EmailPilotEnrollmentRecord", b =>
                 {
                     b.Property<Guid>("SubjectEnvelopeId")
@@ -2504,6 +2599,15 @@ namespace QuillSign.Data.Migrations
                         .WithMany()
                         .HasForeignKey("EnvelopeId")
                         .OnDelete(DeleteBehavior.NoAction);
+                });
+
+            modelBuilder.Entity("QuillSign.Data.EmailPilotCloseoutOperationRecord", b =>
+                {
+                    b.HasOne("QuillSign.Data.EmailPilotCloseoutHeaderRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CloseoutId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("QuillSign.Data.EmailPilotEnrollmentRecord", b =>

@@ -36,7 +36,7 @@ public sealed class SignerInvitationProtection(IDataProtectionProvider provider)
     }
 }
 public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSignals> signals,WorkOptions work,EmailOptions email,
-    SignerInvitationProtection protection,TimeProvider time,EmailPilotEnvelopeAccess? pilot=null)
+    SignerInvitationProtection protection,TimeProvider time,EmailPilotEnvelopeAccess? pilot=null, EmailPilotCloseout? closeout=null)
 {
     public async Task<Guid> PrepareAsync(Guid envelopeId,Guid signerId,string recipient,CancellationToken ct,Guid? invitationId=null,
         Func<Guid,DateTimeOffset,CancellationToken,Task>? demandHint=null)
@@ -61,6 +61,7 @@ public sealed class SignerInvitationOutbox(QuillSignDbContext db,Func<IWorkSigna
         if(invitationId is Guid id) { if(id==Guid.Empty)throw new ArgumentException("Invalid invitation ID."); row.Id=id; }
         db.EmailOutbox.Add(row); db.WorkItems.Add(new WorkItem { Id = row.Id,EnvelopeId = envelopeId,Kind = WorkKind.Email,AvailableAt = row.AvailableAt });
         await db.SaveChangesAsync(ct);
+        if(closeout is not null)await closeout.BindDeclineWorkLockedAsync(db,envelopeId,EmailPilotCloseoutStep.DeclineInvitation,row.Id,ct);
         if(demandHint is not null)await demandHint(row.Id,row.AvailableAt,ct);
         await signals().PutHintAsync(row.Id,row.AvailableAt,ct);
         if(demandHint is not null)await demandHint(row.Id,row.AvailableAt,ct);

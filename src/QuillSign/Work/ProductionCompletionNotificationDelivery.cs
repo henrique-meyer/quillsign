@@ -39,7 +39,7 @@ public sealed partial class CompletionNotificationDelivery
             outgoing=await template().RenderAsync(prepared,payload,original.To,link,ct);
             Clocks();
             DemandAttachmentMode(prepared.Verified,outgoing);
-            await Guard(prepared,lease,original.To,payload,false,ct);Clocks();
+            await Guard(prepared,lease,original.To,payload,false,null,ct);Clocks();
             var issued=await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==link.TokenId,ct);
             tokenJson=JsonSerializer.Serialize(issued);
             payload=payload with{LastTokenId=link.TokenId};var at=time.GetUtcNow();
@@ -48,7 +48,7 @@ public sealed partial class CompletionNotificationDelivery
                     .SetProperty(x=>x.PayloadJson,protection.Protect(payload)),ct)!=1)throw new ProductionWorkBlockedException();
             await audit.AppendAsync(id,"completion_notification_attempt",null,null,null,ct,
                 AttemptEvidence(lease.Id,payload,link.ExpiresAt,outgoing.LinkOnly,prepared.Saved.Executed.Sha256,prepared.Saved.Certificate.Sha256),PartyType.System);
-            await Guard(prepared,lease,original.To,payload,true,ct);Clocks();
+            await Guard(prepared,lease,original.To,payload,true,null,ct);Clocks();
             submittedMail=JsonSerializer.Serialize(await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==lease.Id,ct));
             permit=await admission.PrepareDispatchLockedAsync(db,lease,id,ct)??throw new ProductionWorkBlockedException();
             Clocks();await tx.CommitAsync(ct);
@@ -94,7 +94,7 @@ public sealed partial class CompletionNotificationDelivery
         }
         async Task ExactPrepared() {
             _=await db.Envelopes.FromSqlInterpolated($"SELECT * FROM [Envelopes] WITH(UPDLOCK,HOLDLOCK) WHERE [Id]={id}").AsNoTracking().SingleAsync(ct);
-            await Guard(prepared,lease,original.To,payload,true,ct);
+            await Guard(prepared,lease,original.To,payload,true,null,ct);
             if(JsonSerializer.Serialize(await db.EmailOutbox.AsNoTracking().SingleAsync(x=>x.Id==lease.Id,ct))!=submittedMail ||
                 JsonSerializer.Serialize(await db.AuthTokens.AsNoTracking().SingleAsync(x=>x.Id==link.TokenId,ct))!=tokenJson)
                 throw new ProductionWorkBlockedException();

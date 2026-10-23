@@ -146,7 +146,7 @@ internal static partial class ProductionHoldRuntime
         foreach(var hook in Hooks){var property=hook.Target.GetProperty(hook.Property,System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance);
             if(property?.PropertyType!=hook.Value||property.SetMethod is null)throw new InvalidOperationException("Production admission hook registry changed.");}
         foreach(var descriptor in services.ToArray()) {
-            if(descriptor.ServiceType==typeof(WorkStore)){services.Remove(descriptor);services.AddScoped(sp=>new WorkStore(sp.GetRequiredService<QuillSignDbContext>(),sp.GetRequiredService<WorkOptions>(),sp.GetRequiredService<TimeProvider>(),sp.GetRequiredService<IProductionWorkAdmission>()){DeletionAdmission=sp.GetRequiredService<IProductionDeletionWorkAdmission>()});continue;}
+            if(descriptor.ServiceType==typeof(WorkStore)){services.Remove(descriptor);services.AddScoped(sp=>new WorkStore(sp.GetRequiredService<QuillSignDbContext>(),sp.GetRequiredService<WorkOptions>(),sp.GetRequiredService<TimeProvider>(),sp.GetRequiredService<IProductionWorkAdmission>(),sp.GetService<QuillSign.Email.Pilot.EmailPilotCloseout>()){DeletionAdmission=sp.GetRequiredService<IProductionDeletionWorkAdmission>()});continue;}
             var mapped=Hooks.Any(h=>h.Target==descriptor.ServiceType);
             if(!mapped&&descriptor.ServiceType!=typeof(IWorkHandler))continue;
             if(descriptor.Lifetime!=ServiceLifetime.Scoped||descriptor.ImplementationInstance is not null)throw new InvalidOperationException("Production admission boundaries require their original scoped lifetime.");

@@ -70,6 +70,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - name: Verify local database command arguments
+        shell: pwsh
+        run: ./scripts/dev/Test-LocalDatabaseArguments.ps1
       - name: Verify pinned PDF.js distribution
         # Vendor checks use only committed bytes and need no credentials or registry access.
         run: python scripts/dev/vendor_pdfjs.py --verify
@@ -90,11 +93,11 @@ jobs:
       - name: Exercise finite work commands
         shell: pwsh
         run: |
-          ./scripts/dev/Use-LocalDatabase.ps1 -Action Migrate
-          ./scripts/dev/Use-LocalDatabase.ps1 -Action RecoverWork
-          ./scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce
-          ./scripts/dev/Use-LocalDatabase.ps1 -Action VerifyWork
-          ./scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action Migrate -NoBuild
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action RecoverWork -NoBuild
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce -NoBuild
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action VerifyWork -NoBuild
+          ./scripts/dev/Use-LocalDatabase.ps1 -Action WorkOnce -NoBuild
       - name: Service diagnostics
         if: failure()
         run: |

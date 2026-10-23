@@ -116,7 +116,17 @@ public sealed class CompletionNotificationJobs(QuillSignDbContext db,CompletionA
             catch(Exception e) when(e is Azure.RequestFailedException or IOException or HttpRequestException or OperationCanceledException) { /* committed hints recover */ }
     }
 
-    internal async Task<CompletionAccessParty?> ResolveLocked(DownloadPublication saved,Guid id,string to,CompletionNotificationPayload p,CancellationToken ct)
+    internal Task<CompletionAccessParty?> ResolveLocked(DownloadPublication saved,Guid id,string to,CompletionNotificationPayload p,CancellationToken ct)
+        =>ResolveCanonicalLocked(saved,id,to,p,ct);
+    internal Task<CompletionAccessParty?> ResolveCloseoutLocked(DownloadPublication saved,Guid id,string to,CompletionNotificationPayload p,
+        Email.Pilot.EmailPilotCloseout.AliasFact alias,CancellationToken ct)
+    {
+        alias.DemandLocked(db,id,to,Template);
+        if(db.Database.CurrentTransaction is null||alias.AliasId!=id||alias.OriginalId!=Id(p)||alias.RecordId!=saved.EnvelopeId||
+            alias.RecordId!=p.EnvelopeId||alias.Template!=Template||alias.Recipient!=to||alias.Until<=time.GetUtcNow())return Task.FromResult<CompletionAccessParty?>(null);
+        return ResolveCanonicalLocked(saved,alias.OriginalId,to,p,ct);
+    }
+    private async Task<CompletionAccessParty?> ResolveCanonicalLocked(DownloadPublication saved,Guid id,string to,CompletionNotificationPayload p,CancellationToken ct)
     {
         await state.RecheckLockedAsync(saved,ct);
         if(!Shape(p) || Id(p)!=id || p.EnvelopeId!=saved.EnvelopeId || p.PublicationId!=saved.Id || p.Recipe!=Hex(saved.Recipe) || p.Revision!=Convert.ToBase64String(saved.Revision) ||
