@@ -2182,6 +2182,14 @@ Keep the same privacy-safe projections, targets, normal email/work behavior, 180
 - Review changed pure proofs, complete fixed argument vectors and original stream, command, timing and process-containment bounds before a separate source acceptance and explicit invocation selection.
 - Keep normal email and work enabled, MAIN outside pilot execution, and all previous evidence and failed outcomes immutable.
 
+### QUILS-139 image-token conservation preparation
+
+- Prepare only an additive private pure in-memory helper for the existing ordinary Web and Dispatch image-only delta; no product, environment, transport or deployment change.
+- Preserve the complete ordered container array and every non-image source token, including unknown members, numeric and Unicode forms, null, empty and absent values; refuse ambiguous names, malformed input, drift and exceeded bounds.
+- Keep owned inverse changes on fresh current input separate from full restoration or atomic rollback; no compare-and-swap, exclusive-writer assumption or concurrency guarantee is selected.
+- Run only narrow new local synthetic JSON conservation, refusal and no-output proofs. No hosted fixture, credential, HTTP, cloud, SQL, provider, job, controller or live allowance is admitted.
+- Require exact source and independent review before later use. Keep normal email and work enabled, MAIN outside pilot execution, and all accepted source, CI, artifact evidence and consumed outcomes unchanged.
+
 ## QUILS-140: Preserve privacy-safe SES refusal diagnostics for hosted pilot
 
 Status: Done after checked PR #146 merge; native Jira Done verified. Assigned to ChatGPT Codex. Source-only diagnostic follow-up to the QUILS-139 hosted rejection; public email and pilot sending remain disabled.
