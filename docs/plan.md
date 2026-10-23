@@ -1954,6 +1954,14 @@ The installed execution-list callback drops its response envelope, so its empty 
 
 Use consume-before-call with after-consume deadline reclamp, unchanged owned gated containment,30s child plus5s cleanup and180s original phase. Reserved after observations remain independent even after foreground failure, subject to the original bound; missing after results remain UNKNOWN. No retries, pagination, refunded attempts or automatic chain. Root plus independent final recipe review, then reader-source review and separate one-invocation selection precede actual controls. Normal Email, Work and transport remain ON, MAIN never becomes the positive pilot, and all existing production barriers remain intact. No resource/IAM/private transport/origin/deployment/controller/packet/window/header/business Run or SQL/provider action. Expected finite metadata cost is underUSD1 with no new recurring service; native In Progress and draft status remain.
 
+### QUILS-139 fixed metadata launcher recovery preparation
+
+The prior observation phase is closed: three bootstrap refusals remain consumed, aggregate actual usage is 122, and two unused positions are closed without refund or carry. Prepare a separate scope of at most five metadata observations (future ceiling 127); scope-qualified positions are distinct from actual consumption and never reopen the old phase.
+
+Use an additive dedicated launcher that admits only the five exact pinned argument vectors. Only the final query argument may exceed the ordinary 4,096-character bound when its exact hash and length match that slot; all other argument, launch-buffer, Windows command-line, gate, owned-process and same-buffer verification limits remain intact. Preserve existing launchers, readers, outcomes and artifacts.
+
+Keep the same privacy-safe projections, targets, normal email/work behavior, 180-second phase, child and cleanup bounds, independent after observations and strict metadata-only limitations. Update the native story and both matching plans before implementation, then require focused boundary evidence and root plus independent source review before separately selecting any single invocation. No resource, credential, provider, SQL, deployment, business window or signing authority follows from this preparation.
+
 ## QUILS-140: Preserve privacy-safe SES refusal diagnostics for hosted pilot
 
 Status: Done after checked PR #146 merge; native Jira Done verified. Assigned to ChatGPT Codex. Source-only diagnostic follow-up to the QUILS-139 hosted rejection; public email and pilot sending remain disabled.
