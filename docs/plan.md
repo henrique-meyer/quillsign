@@ -2173,6 +2173,15 @@ Use an additive dedicated launcher that admits only the five exact pinned argume
 
 Keep the same privacy-safe projections, targets, normal email/work behavior, 180-second phase, child and cleanup bounds, independent after observations and strict metadata-only limitations. Update the native story and both matching plans before implementation, then require focused boundary evidence and root plus independent source review before separately selecting any single invocation. No resource, credential, provider, SQL, deployment, business window or signing authority follows from this preparation.
 
+### QUILS-139 role-aware ordinary metadata preparation
+
+- Prepare only an additive private role-aware metadata projection, typed contract, semantic admission and fixed reader pins; no product or deployment change.
+- Bind the approved Web HTTP rule and Dispatch flat event rule, literals and own-role identity references to saved provenance; reject mixed layouts, malformed source types, unknown literals and cross-role references.
+- Keep finite additional key names explicitly unobserved in value and type; no opaque export, full restoration, equality, drain, header or runtime-permission proof.
+- Preserve consumed attempts and close unused slots without refund, carry or replay. A possible five-control observation is design only; preparation selects no new allowance or invocation.
+- Review changed pure proofs, complete fixed argument vectors and original stream, command, timing and process-containment bounds before a separate source acceptance and explicit invocation selection.
+- Keep normal email and work enabled, MAIN outside pilot execution, and all previous evidence and failed outcomes immutable.
+
 ## QUILS-140: Preserve privacy-safe SES refusal diagnostics for hosted pilot
 
 Status: Done after checked PR #146 merge; native Jira Done verified. Assigned to ChatGPT Codex. Source-only diagnostic follow-up to the QUILS-139 hosted rejection; public email and pilot sending remain disabled.
